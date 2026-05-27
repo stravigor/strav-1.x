@@ -21,7 +21,8 @@ The framework is in **M2 (HTTP + Database)** implementation. Documentation lands
 
 | Package | Doc status |
 |---|---|
-| `@strav/kernel` | M1 complete + M2 in progress (`Logger` shipped); see `docs/kernel/` |
+| `@strav/kernel` | M1 complete + M2 `Logger` shipped; see `docs/kernel/` |
+| `@strav/http` | M2 in progress — `Router`, `HttpContext`, `HttpKernel`, middleware, `ExceptionHandler`, `HttpProvider`; see `docs/http/` |
 | Others | Pending — land with their respective milestones (see `spec/implementation-plan.md`) |
 
 ## How to read
