@@ -1,0 +1,43 @@
+# OS
+.DS_Store
+Thumbs.db
+
+# Dependencies
+node_modules/
+**/node_modules/
+
+# Build outputs
+dist/
+**/dist/
+*.tsbuildinfo
+
+# Local storage produced by tests / runs
+storage/cache/
+storage/logs/
+storage/uploads/
+**/storage/cache/
+**/storage/logs/
+**/storage/uploads/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Bun
+.bun-cache/
+
+# Coverage
+coverage/
+**/coverage/
+
+# Editor
+.idea/
+.vscode/
+!.vscode/extensions.json
+!.vscode/settings.json
+*.swp
+*~
+guides
+spec
+scripts

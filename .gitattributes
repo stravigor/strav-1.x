@@ -1,0 +1,5 @@
+# Force LF on all text files
+* text=auto eol=lf
+
+# Lockfiles
+bun.lock binary
