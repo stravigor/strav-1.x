@@ -38,6 +38,7 @@ coverage/
 !.vscode/settings.json
 *.swp
 *~
-guides
-spec
-scripts
+# Preliminary research dirs (root-anchored — keeps `docs/**/guides/` tracked).
+/guides
+/spec
+/scripts
