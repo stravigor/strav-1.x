@@ -1,0 +1,10 @@
+{
+  "name": "@strav-tests/m1-boot",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "End-to-end smoke for M1: real bin/strav.ts wiring up an Application with ConfigProvider and a HelloCommand that depends on the container.",
+  "dependencies": {
+    "@strav/kernel": "workspace:*"
+  }
+}

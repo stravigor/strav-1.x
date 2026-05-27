@@ -2,9 +2,9 @@
 
 Foundation of the Strav framework. Ships the IoC container, the service-provider lifecycle, configuration, the event bus, helpers, encryption, storage, cache, i18n, logger, and the session abstraction.
 
-> **Status: 1.0.0-alpha — M1 in progress.**
-> Currently implemented: **Container**, `@inject()`, **ServiceProvider**, **Application**, full **EventBus** (cancelable, parallel, wildcards, batch), **ConfigRepository**, **ConfigProvider**, `env()` helper, **StravError** hierarchy + `asStravError`, helpers (`Clock`, `ulid`, `randomToken`, `sha256`, `hmacSha256`, `constantTimeEqual`, `randomUUID`), **ConsoleKernel** + `Command` framework.
-> Up next: `Logger`, M1 e2e smoke.
+> **Status: 1.0.0-alpha — M1 complete.**
+> Shipping: **Container**, `@inject()`, **ServiceProvider**, **Application**, full **EventBus** (cancelable, parallel, wildcards, batch), **ConfigRepository**, **ConfigProvider**, `env()`, **StravError** hierarchy + `asStravError`, helpers (`Clock`, `ulid`, `randomToken`, `sha256`, `hmacSha256`, `constantTimeEqual`, `randomUUID`), **ConsoleKernel** + `Command` framework, e2e boot smoke at `tests/e2e/m1-boot/`.
+> Up next (M2): `Logger`, `HttpKernel`, router, middleware, `Context`, request/response helpers.
 
 ## Install
 

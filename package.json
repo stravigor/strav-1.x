@@ -5,7 +5,8 @@
   "private": true,
   "type": "module",
   "workspaces": [
-    "packages/*"
+    "packages/*",
+    "tests/e2e/*"
   ],
   "scripts": {
     "typecheck": "tsc --noEmit",

@@ -182,6 +182,8 @@ After the request/job/command finishes, the kernel calls `scope.dispose()` to cl
 | `Container: service X is not registered.` | Calling `resolve(X)` on an unbound key | Use `make(X)` if it's a class, or register the binding |
 | `cannot make X — not marked with @inject()` | Class has constructor params but no `@inject()` decorator | Add `@inject()` above the class |
 | Constructor dep is `undefined` | TS decorator metadata disabled | Confirm `experimentalDecorators` + `emitDecoratorMetadata` in `tsconfig.json` |
+| `cannot make Object — not marked with @inject()` (when you DID add `@inject`) | A dep is imported with `import type { Foo }` — the runtime class reference is erased and `Reflect.getMetadata` falls back to `Object` | Make the dep a **value** import: `import { Foo } from '…'`. Linters that suggest `import type` are wrong for `@inject`ed deps |
+| Bun says "Cannot find module '@strav/kernel'" running a script outside `packages/` | Workspace resolution requires the consuming directory to be in `workspaces` | Add the dir to the root `package.json`'s `workspaces`, give it its own `package.json` with the `workspace:*` dep, then `bun install` |
 | `ReferenceError: Cannot access 'B' before initialization` at module load | Circular class refs in constructor params | Restructure — extract a common abstraction |
 | Scoped singleton seems to be shared across scopes | Bound as `singleton`, not `scoped` | Use `app.scoped(...)` |
 | Singleton seems to reset between tests | Test recreated the container without re-binding | Build a shared test app factory; see [Testing guide](../testing/guides/test-app.md) (lands in M4) |
