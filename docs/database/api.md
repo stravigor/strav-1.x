@@ -1,6 +1,6 @@
 # @strav/database — API Reference
 
-> **Status:** Reflects what's implemented as of M2 (foundation + ORM slice) — Database wrapper, DatabaseProvider, Schema DSL, SchemaRegistry, MigrationRunner, Model, Repository<T>, QueryBuilder, SQL emitter. RLS scoping, decorators, repository hooks, soft-delete integration, relationships + eager loading, pagination, joins/CTEs, schema-diff migration generator land in follow-up cuts.
+> **Status:** Reflects what's implemented as of M2 (foundation + ORM + DDL slice) — Database wrapper, DatabaseProvider, Schema DSL, SchemaRegistry, MigrationRunner, Model, Repository<T>, QueryBuilder, SQL emitter, DDL emitters. RLS scoping, decorators, repository hooks, soft-delete integration, relationships + eager loading, pagination, joins/CTEs, schema-diff migration generator, migration builder DSL land in follow-up cuts.
 
 ## `Database` / `PostgresDatabase`
 
@@ -356,3 +356,81 @@ function hasField(schema, name, kind?): boolean
 ```
 
 `emitInsert` mints a fresh ULID/UUID when the schema declares an `id` field and the caller didn't supply one. `emitUpdateById` auto-appends `updated_at = now()` when the schema declared `t.timestamps()` and the caller didn't supply a value — and throws when there's nothing to update (an "update" with no caller-supplied changes is a programmer error).
+
+## DDL emitters
+
+Schema → Postgres DDL. Used by migrations to keep the SQL in lock-step with the schema definition; also the foundation the schema-diff migration generator will land on.
+
+```ts
+interface EmittedDdl { sql: string }
+
+interface EmitOptions {
+  registry?: SchemaRegistry     // required when the schema has reference fields
+  ifExists?: boolean             // adds IF NOT EXISTS / IF EXISTS
+}
+
+function emitCreateTable(schema: Schema, opts?: EmitOptions): EmittedDdl
+function emitDropTable(name: string, opts?: { ifExists?: boolean }): EmittedDdl
+function emitAddColumn(schema: Schema, fieldName: string, opts?: EmitOptions): EmittedDdl
+function emitDropColumn(table: string, column: string, opts?: { ifExists?: boolean }): EmittedDdl
+
+// Building blocks — exposed for the eventual migration generator + bespoke shapes:
+function sqlTypeFor(field: SchemaField, registry?: SchemaRegistry): string
+function columnDefinition(field: SchemaField, registry?: SchemaRegistry): string
+function defaultSql(value: unknown): string
+function findPrimaryKey(schema: Schema): SchemaField
+function isPrimaryKeyKind(field: SchemaField): boolean
+```
+
+### Field-kind → Postgres type
+
+| Kind | SQL type | Notes |
+|---|---|---|
+| `id` | `char(26)` | ULID — exactly 26 Crockford base32 chars. Inline `PRIMARY KEY`. |
+| `uuid` | `uuid` | Inline `PRIMARY KEY`. |
+| `bigSerial` | `bigserial` | Inline `PRIMARY KEY`. Postgres auto-creates the sequence. |
+| `tenantedSerial` | `bigint` | Inline `PRIMARY KEY`. Per-tenant sequencing (trigger + sequence + RLS) lands with the tenancy slice. |
+| `string` | `varchar(N)` | `N` = `.max` (default 255). |
+| `text` | `text` | |
+| `integer` | `integer` | |
+| `boolean` | `boolean` | |
+| `decimal(p, s)` | `numeric(p, s)` | |
+| `json` | `jsonb` | Always jsonb — indexable, faster on read. |
+| `timestamp` | `timestamptz` / `timestamp` | `timestamptz` by default; `t.timestamp(..., { withTimezone: false })` gets `timestamp`. |
+| `enum` | `text` + `CHECK` | Postgres ENUM types are painful to alter; text + CHECK is editable in place. |
+| `reference` | _target PK type_ | Resolves through the registry — `t.reference('user_id').to(User)` adopts `User`'s PK type. |
+| `encrypted` | `bytea` | Ciphertext + nonce + tag are bytes. |
+
+### Column-definition layout
+
+`<name> <type> [PRIMARY KEY] [NOT NULL] [UNIQUE] [DEFAULT …] [REFERENCES …] [CHECK …]`
+
+`PRIMARY KEY` implies `NOT NULL` + `UNIQUE` in Postgres, so the emitter doesn't restate them on PK columns. Constraints are inlined per-column (no table-level `CONSTRAINT` declarations) — the emitter trades the slightly noisier per-column output for source-of-truth proximity.
+
+### Defaults
+
+`defaultSql(value)` serializes a default into inline SQL:
+
+| Value | Emitted |
+|---|---|
+| `{ sql: 'now()' }` | `now()` — the framework-wide raw-SQL marker (used by `t.timestamps()`). |
+| `'literal'` | `'literal'` (single-quoted, embedded quotes doubled) |
+| `42` / `true` / `1n` | inline literal |
+| `{ ... }` / `[ ... ]` | `'<json>'::jsonb` |
+| `null` | `NULL` |
+
+### References
+
+`t.reference('user_id').to(User).onDelete('cascade')` requires a `SchemaRegistry` in `EmitOptions` so the FK column type can match the target PK. The emitter throws — loud-fail at migration time — if the registry is missing or doesn't contain the target schema.
+
+The target PK column name is read from the target schema (`User.fields[0].name`), so `t.id('code')` on the target produces `REFERENCES "country" ("code")` rather than a guessed `("id")`.
+
+### What's NOT here
+
+Each lands in a follow-up cut:
+
+- **`RENAME TABLE` / `RENAME COLUMN` / `CHANGE COLUMN`** — renames need migration-time identity tracking; type changes need backfill semantics.
+- **`ADD INDEX` / `DROP INDEX`** — indexes aren't part of the Schema; explicit index ops belong to the migration builder DSL.
+- **Standalone `ADD FOREIGN KEY` / `DROP FOREIGN KEY`** — references inline into `CREATE TABLE` / `ADD COLUMN` already.
+- **Tenancy plumbing** — RLS policies, tenant-FK column injection on `tenanted: true` schemas, the composite `(tenant_id, id)` PK. The current emitter ignores `tenancy.tenanted`; the tenancy slice wraps the DDL with those policies.
+- **Schema-diff generator** — comparing registered schemas against the live DB and emitting an ordered migration. This DDL slice is the foundation.

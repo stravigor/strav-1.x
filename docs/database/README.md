@@ -2,9 +2,9 @@
 
 Postgres connection pool, schema DSL, migration runner, Model + Repository + QueryBuilder for Strav 1.0. Built on **Bun.SQL** (Bun's built-in Postgres driver) — no native modules.
 
-> **Status: 1.0.0-alpha — M2 in progress (foundation + ORM slice).**
-> Shipping: **PostgresDatabase** (connection pool, query/queryOne/execute/transaction), **DatabaseProvider** (config-driven lifecycle, lazy or eager connect), **defineSchema** + **Archetype** + **t.* builders**, **SchemaRegistry**, **MigrationRunner** (migrate/rollback/status, `_strav_migrations` tracking, per-migration transactions, batch grouping), **Model** (minimal — schema link + hydration), **Repository<T>** (find/findOrFail/findMany/first/all/create/update/delete/exists/count + .query()), **QueryBuilder** (where/orderBy/limit/offset/select + get/first/firstOrFail/count/exists/pluck; immutable chains), **SQL emitter** (auto-ULID, auto-`updated_at`, RETURNING).
-> Deferred (each is its own slice): **decorators** (`@encrypt` / `@hidden` / `@cast` / `@ulid`), **repository lifecycle hooks** (`<resource>.creating` / `.created` / etc. on the EventBus), **soft-delete integration** (`.withTrashed()`, `delete()` writing `deleted_at`), **relationships + eager loading**, **pagination helpers**, **joins + CTEs**, schema-diff → SQL **migration generator**, **multi-tenancy / RLS emission**, the **`db:migrate` / `db:rollback` / `db:status` console commands** (need `@strav/cli` integration).
+> **Status: 1.0.0-alpha — M2 in progress (foundation + ORM + DDL slice).**
+> Shipping: **PostgresDatabase** (connection pool, query/queryOne/execute/transaction), **DatabaseProvider** (config-driven lifecycle, lazy or eager connect), **defineSchema** + **Archetype** + **t.* builders**, **SchemaRegistry**, **MigrationRunner** (migrate/rollback/status, `_strav_migrations` tracking, per-migration transactions, batch grouping), **Model** (minimal — schema link + hydration), **Repository<T>** (find/findOrFail/findMany/first/all/create/update/delete/exists/count + .query()), **QueryBuilder** (where/orderBy/limit/offset/select + get/first/firstOrFail/count/exists/pluck; immutable chains), **SQL emitter** (auto-ULID, auto-`updated_at`, RETURNING), **DDL emitters** (`emitCreateTable` / `emitDropTable` / `emitAddColumn` / `emitDropColumn` — schema → Postgres DDL, full field-type → SQL mapping, references resolve via registry).
+> Deferred (each is its own slice): **decorators** (`@encrypt` / `@hidden` / `@cast` / `@ulid`), **repository lifecycle hooks** (`<resource>.creating` / `.created` / etc. on the EventBus), **soft-delete integration** (`.withTrashed()`, `delete()` writing `deleted_at`), **relationships + eager loading**, **pagination helpers**, **joins + CTEs**, **schema-diff migration generator** (compare registered schemas vs live DB), **migration builder DSL** (`m.createTable(name, fn)` / `m.addIndex(...)` etc. — the thin sugar on top of the DDL emitters), **multi-tenancy / RLS emission**, the **`db:migrate` / `db:rollback` / `db:status` console commands** (need `@strav/cli` integration).
 
 ## Install
 
@@ -62,29 +62,33 @@ export const userSchema = defineSchema('user', Archetype.Entity, (t) => {
 
 Migrations are plain objects with `name` / `up(db)` / `down(db)`. The runner sorts by name alphabetically — adopt the `YYYYMMDDHHMMSS_short_description` convention so the order is also a timeline.
 
+Use the DDL emitters to keep the SQL in lock-step with the schema:
+
 ```ts
 // database/migrations/20260528000000_create_users.ts
-import type { Migration } from '@strav/database'
+import { emitCreateTable, emitDropTable, type Migration } from '@strav/database'
+import { userSchema } from '../schemas/user_schema.ts'
 
 export const migration: Migration = {
   name: '20260528000000_create_users',
   async up(db) {
-    await db.execute(`
-      CREATE TABLE "user" (
-        id          char(26)    PRIMARY KEY,
-        email       varchar(320) NOT NULL UNIQUE,
-        name        varchar(255) NOT NULL,
-        deleted_at  timestamptz,
-        created_at  timestamptz NOT NULL DEFAULT now(),
-        updated_at  timestamptz NOT NULL DEFAULT now()
-      )
-    `)
+    await db.execute(emitCreateTable(userSchema).sql)
   },
   async down(db) {
-    await db.execute(`DROP TABLE "user"`)
+    await db.execute(emitDropTable(userSchema.name).sql)
   },
 }
 ```
+
+If the schema has reference fields, pass the registry so the FK columns adopt the right PK type:
+
+```ts
+async up(db) {
+  await db.execute(emitCreateTable(postSchema, { registry: schemas }).sql)
+}
+```
+
+Raw `db.execute('CREATE TABLE …')` still works — DDL emitters are a convenience, not a requirement.
 
 Register migrations + run them:
 
@@ -120,6 +124,8 @@ The console commands (`bun strav db:migrate` / `db:rollback` / `db:status`) land
 | `Repository<TModel>` | Injectable data-access object — `find` / `create` / `update` / `delete` / `query()` / `exists` / `count` |
 | `QueryBuilder<TModel>` | Fluent SELECT — `where` / `orderBy` / `limit` / `offset` / `select` / `get` / `first` / `count` / `pluck` |
 | `emitInsert` / `emitUpdateById` / `emitDeleteById` / `emitFindById` / `emitFindMany` | SQL emitter helpers used by Repository — direct use for raw SQL emission with the same conventions |
+| `emitCreateTable` / `emitDropTable` / `emitAddColumn` / `emitDropColumn` | DDL emitters — schema → Postgres SQL, used by migrations |
+| `sqlTypeFor` / `columnDefinition` / `defaultSql` / `findPrimaryKey` / `isPrimaryKeyKind` | DDL building blocks; exposed for migration generators and bespoke shapes |
 | `quoteIdent` / `selectColumnList` | Building blocks the emitter uses; exposed for raw-SQL escape hatches |
 
 ## Documentation

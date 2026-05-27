@@ -1,10 +1,11 @@
 // Public API of @strav/database.
 //
-// Foundation slice + ORM slice: connection pool (Bun.SQL), schema DSL,
-// schema registry, migration runner, Model class, Repository<T>, basic
-// QueryBuilder. RLS scoping, eager loading, encryption-at-rest, schema-
-// diff migration generator, repository hooks, pagination helpers, soft-
-// delete integration land in follow-up cuts.
+// Foundation slice + ORM slice + DDL-emission slice: connection pool
+// (Bun.SQL), schema DSL, schema registry, migration runner, Model class,
+// Repository<T>, QueryBuilder, schema → DDL emitters. RLS scoping, eager
+// loading, encryption-at-rest, schema-diff migration generator, repository
+// hooks, pagination helpers, soft-delete integration land in follow-up
+// cuts.
 
 export {
   type Database,
@@ -17,6 +18,19 @@ export {
   type DatabaseConfigShape,
   DatabaseProvider,
 } from './database_provider.ts'
+export {
+  columnDefinition,
+  defaultSql,
+  type EmitOptions,
+  type EmittedDdl,
+  emitAddColumn,
+  emitCreateTable,
+  emitDropColumn,
+  emitDropTable,
+  findPrimaryKey,
+  isPrimaryKeyKind,
+  sqlTypeFor,
+} from './ddl/index.ts'
 export {
   type AppliedMigration,
   type Migration,

@@ -4,30 +4,48 @@
 
 ## Authoring a migration
 
+The DDL emitters generate `CREATE TABLE` / `ALTER TABLE` SQL from a schema, so migrations stay in lock-step with the schema definition:
+
 ```ts
 // database/migrations/20260528103000_create_users.ts
-import type { Migration } from '@strav/database'
+import { emitCreateTable, emitDropTable, type Migration } from '@strav/database'
+import { userSchema } from '../schemas/user_schema.ts'
 
 export const migration: Migration = {
   name: '20260528103000_create_users',
   async up(db) {
-    await db.execute(`
-      CREATE TABLE "user" (
-        id          char(26)     PRIMARY KEY,
-        email       varchar(320) NOT NULL UNIQUE,
-        name        varchar(255) NOT NULL,
-        deleted_at  timestamptz,
-        created_at  timestamptz  NOT NULL DEFAULT now(),
-        updated_at  timestamptz  NOT NULL DEFAULT now()
-      )
-    `)
+    await db.execute(emitCreateTable(userSchema).sql)
     await db.execute(`CREATE INDEX idx_user_email ON "user" (email)`)
   },
   async down(db) {
-    await db.execute(`DROP TABLE "user"`)
+    await db.execute(emitDropTable(userSchema.name).sql)
   },
 }
 ```
+
+When the schema has reference fields, thread the registry so FK column types resolve:
+
+```ts
+async up(db) {
+  await db.execute(emitCreateTable(postSchema, { registry: schemas }).sql)
+}
+```
+
+Raw SQL still works — the emitters are an opt-in convenience:
+
+```ts
+async up(db) {
+  await db.execute(`
+    CREATE TABLE "user" (
+      id          char(26)     PRIMARY KEY,
+      email       varchar(320) NOT NULL UNIQUE,
+      created_at  timestamptz  NOT NULL DEFAULT now()
+    )
+  `)
+}
+```
+
+Indexes, partial indexes, and explicit constraints aren't part of the Schema today — write them as raw SQL inside the migration, or wait for the migration builder DSL slice (`m.addIndex(...)` etc.).
 
 Two methods:
 
@@ -119,9 +137,11 @@ Useful for `bun strav db:status` (which lands with `@strav/cli`'s db integration
 
 ## Why no auto-diff yet
 
-The spec calls for `bun strav make:migration` that compares a registered `Schema` against the live DB and emits SQL. That's a separate slice — it has its own complexity (column type mapping, default rewriting, FK ordering, RLS policy emission, manual conflict resolution) and benefits from being designed once the Repository / query layer is in place so the field-type → SQL mapping is shared.
+The spec calls for `bun strav make:migration` that compares a registered `Schema` against the live DB and emits SQL. That's a separate slice — it has its own complexity (reading `information_schema`, diff ordering, FK dependency ordering, RLS policy emission, manual conflict resolution).
 
-For now, write migrations by hand. The schemas serve as documentation and (soon) as runtime checks; SQL DDL stays explicit.
+The DDL emitters (`emitCreateTable` / `emitAddColumn` / `emitDropColumn`) are the foundation it'll build on. With those in place, the generator's job becomes: walk the registry, walk the live DB, decide what changed, and emit the right emitter call. That work is its own focused slice — landing today wouldn't be worth the breadth of the diff surface, but the foundation is now in place.
+
+For now, write migrations by hand using the emitters or raw SQL. The schemas serve as documentation and (soon) as runtime checks.
 
 ## Testing migrations without Postgres
 
