@@ -18,6 +18,7 @@ export {
   HttpContext,
   type HttpContextApi,
   type HttpContextConfigSlice,
+  type HttpContextExtensions,
   HttpRequest,
   type HttpRequestApi,
   HttpResponse,
@@ -29,6 +30,7 @@ export {
   type ExceptionHandlerOptions,
 } from './exception_handler.ts'
 export {
+  type ContextEnricher,
   type HandleOptions,
   HttpKernel,
   type HttpKernelOptions,

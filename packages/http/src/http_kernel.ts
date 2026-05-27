@@ -34,7 +34,7 @@ import { HttpContext } from './context/http_context.ts'
 import { HttpRequest } from './context/http_request.ts'
 import { HttpResponse } from './context/http_response.ts'
 import { buildServerInfo } from './context/server_info.ts'
-import type { HttpContextConfigSlice } from './context/types.ts'
+import type { HttpContextConfigSlice, HttpContext as HttpContextType } from './context/types.ts'
 import type { ExceptionHandler } from './exception_handler.ts'
 import { composeMiddleware, type FinalHandler } from './middleware/compose.ts'
 import type { MiddlewareRegistry } from './middleware/registry.ts'
@@ -80,6 +80,17 @@ export interface HandleOptions {
   trustProxy?: boolean
 }
 
+/**
+ * Hook for other packages (e.g., `@strav/auth`) to enrich the per-request
+ * `HttpContext` *before* middleware runs. Each enricher gets the freshly-built
+ * ctx and the request scope; runs sequentially in registration order.
+ *
+ * The `ctx` parameter is typed as the interface (not the class) so that
+ * extensions widened via the `HttpContextExtensions` interface (e.g.,
+ * `ctx.auth` from `@strav/auth`) typecheck inside enricher callbacks.
+ */
+export type ContextEnricher = (ctx: HttpContextType, scope: Container) => void | Promise<void>
+
 export class HttpKernel {
   private readonly app: Application
   private readonly router: Router
@@ -88,6 +99,7 @@ export class HttpKernel {
   private readonly globalMiddleware: readonly MiddlewareDef[]
   private readonly contextConfig: HttpContextConfigSlice
   private readonly plans = new Map<CompiledRoute, RoutePlan>()
+  private readonly contextEnrichers: ContextEnricher[] = []
 
   constructor(opts: HttpKernelOptions) {
     this.app = opts.app
@@ -98,6 +110,17 @@ export class HttpKernel {
       this.middlewareRegistry.resolve(name),
     )
     this.contextConfig = opts.contextConfig ?? {}
+  }
+
+  /**
+   * Register a callback that runs after the request's `HttpContext` is built
+   * but before middleware dispatch. Used by `@strav/auth` to attach
+   * `ctx.auth`, by future packages to attach `ctx.session`, etc. Runs in
+   * registration order; errors propagate to the kernel's exception handler.
+   */
+  addContextEnricher(enricher: ContextEnricher): this {
+    this.contextEnrichers.push(enricher)
+    return this
   }
 
   /**
@@ -155,6 +178,9 @@ export class HttpKernel {
     // Pick the final handler + route middleware. 404 / 405 paths still run
     // global middleware so opt-in features like CORS preflight can short-
     // circuit OPTIONS requests for paths the router has nothing for.
+    // Context enrichers — `@strav/auth` attaches `ctx.auth` here, future
+    // packages attach `ctx.session`, etc. Errors propagate into the
+    // try/catch below and funnel through ExceptionHandler.
     let routeMiddleware: readonly MiddlewareDef[] = []
     let finalHandler: FinalHandler
     if (match.kind === 'not-found') {
@@ -196,6 +222,9 @@ export class HttpKernel {
 
     let response: Response
     try {
+      for (const enricher of this.contextEnrichers) {
+        await enricher(ctx, scope)
+      }
       response = await chain.invoke(ctx)
     } catch (caught) {
       const error = caught instanceof Error ? caught : new Error(String(caught))

@@ -62,11 +62,26 @@ export interface CookieOptions {
 }
 
 /**
+ * Extension point for other `@strav/*` packages to widen `HttpContext`.
+ * Module augmentation against `@strav/http` merges into this interface and
+ * the merged shape is intersected into `HttpContext` below.
+ *
+ * Example — installed by `@strav/auth`:
+ * ```ts
+ * declare module '@strav/http' {
+ *   interface HttpContextExtensions { auth?: AuthContext }
+ * }
+ * ```
+ */
+// biome-ignore lint/suspicious/noEmptyInterface: extension point widened via augmentation
+export interface HttpContextExtensions {}
+
+/**
  * The handler-facing `HttpContext`. Implementations live in
  * `http_context.ts`; this interface is what middleware and controllers code
  * against.
  */
-export interface HttpContext {
+export interface HttpContext extends HttpContextExtensions {
   server: ServerInfo
   request: HttpRequestApi
   response: HttpResponseApi

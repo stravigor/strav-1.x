@@ -9,6 +9,7 @@ export type {
   CookieOptions,
   HttpContext as HttpContextApi,
   HttpContextConfigSlice,
+  HttpContextExtensions,
   HttpRequestApi,
   HttpResponseApi,
   ServerInfo,
