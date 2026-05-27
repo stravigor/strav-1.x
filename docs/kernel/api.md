@@ -424,6 +424,131 @@ env.required('APP_KEY')          // string (or throws)
 type EnvFn = typeof env
 ```
 
+## `Clock`
+
+Test-friendly "now" abstraction. Inject `Clock` instead of calling `Date.now()`.
+
+```ts
+interface Clock {
+  now(): Date          // current time as Date
+  millis(): number     // ms since epoch
+  iso(): string        // ISO-8601 string
+}
+```
+
+### `SystemClock`
+
+Real wall-clock implementation. The production binding.
+
+```ts
+class SystemClock implements Clock
+```
+
+### `FrozenClock`
+
+Manually-controlled clock for tests. Defaults to "now" if no argument is given.
+
+```ts
+class FrozenClock implements Clock {
+  constructor(time?: number | Date)
+  set(time: number | Date): void   // replace the frozen time
+  advance(ms: number): void        // move forward (or back, with negative)
+}
+```
+
+```ts
+const clock = new FrozenClock('2026-01-01T00:00:00Z')
+clock.advance(60 * 1000)
+clock.iso() // '2026-01-01T00:01:00.000Z'
+```
+
+`now()` returns a fresh `Date` per call — callers can mutate it without affecting the clock.
+
+## Crypto helpers
+
+Thin wrappers over `node:crypto`. Used for random tokens, fingerprints, signed values, constant-time comparisons. Password hashing (bcrypt/argon2) belongs in `@strav/auth`, not here.
+
+### `randomBytes(byteLength?)`
+
+```ts
+function randomBytes(byteLength?: number): Buffer
+```
+
+Cryptographically-strong random bytes. Defaults to 32. Throws `TypeError` if `byteLength` isn't a positive integer.
+
+### `randomToken(byteLength?)`
+
+```ts
+function randomToken(byteLength?: number): string
+```
+
+Random URL-safe base64url token. Default 32 random bytes → 43-character string. Use for opaque session/CSRF/API tokens.
+
+### `sha256(input)`
+
+```ts
+function sha256(input: string | Uint8Array): string
+```
+
+SHA-256 hex digest.
+
+### `hmacSha256(key, input)`
+
+```ts
+function hmacSha256(key: string | Uint8Array, input: string | Uint8Array): string
+```
+
+HMAC-SHA256 hex digest. Use to sign cookies, derive subkeys, fingerprint with a secret.
+
+### `constantTimeEqual(a, b)`
+
+```ts
+function constantTimeEqual(a: string | Uint8Array, b: string | Uint8Array): boolean
+```
+
+Constant-time equality. Returns `false` for length mismatch without comparing bytes. **Always use this to compare secrets** — `===` leaks timing info.
+
+Note on strings: compares **byte length**, not character length (UTF-8 byte count). `constantTimeEqual('é', 'e')` returns `false`.
+
+### `randomUUID()`
+
+```ts
+function randomUUID(): string
+```
+
+UUID v4. Re-export of `node:crypto`'s `randomUUID`.
+
+## ULID
+
+```ts
+function ulid(timestamp?: number): string
+function isUlid(value: unknown): value is string
+function decodeUlidTime(value: string): number
+```
+
+Universally-unique Lexicographically-sortable IDentifier. 26-character Crockford-Base32 — 10 chars of millisecond timestamp + 16 chars of randomness. Sortable as a string by creation time.
+
+### `ulid(timestamp?)`
+
+Default: current `Date.now()`. Pass a timestamp to override (useful with `FrozenClock` in tests).
+
+Guarantees within this generator:
+- **Monotonic within a millisecond**: successive calls with the same timestamp produce strictly-greater outputs (the random portion is incremented, not re-randomized).
+- **Sortable across milliseconds**: a later timestamp produces a lexicographically-greater ULID.
+
+Throws:
+- `TypeError` if timestamp is negative, `NaN`, or infinite.
+- `RangeError` if timestamp exceeds 48 bits (year 10889).
+- `Error` if monotonic overflow occurs within one millisecond (would require generating 2⁸⁰ IDs in 1 ms — won't happen).
+
+### `isUlid(value)`
+
+Type-guard. `true` iff `value` is a 26-character string containing only allowed Crockford characters (lenient — `I`/`L` → `1`, `O` → `0`, lowercase accepted).
+
+### `decodeUlidTime(value)`
+
+Returns the embedded timestamp in milliseconds since epoch. Throws `TypeError` on malformed input.
+
 ## `Container`
 
 The IoC container. Bind services, resolve them, auto-construct classes via `@inject()`.
