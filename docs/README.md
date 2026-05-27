@@ -24,6 +24,7 @@ The framework is in **M2 (HTTP + Database)** implementation. Documentation lands
 | `@strav/kernel` | M1 complete + M2 `Logger` shipped; see `docs/kernel/` |
 | `@strav/http` | M2 — Router, HttpContext, HttpKernel, middleware, ExceptionHandler, built-in middleware, FormRequest + `rule.*`; see `docs/http/` |
 | `@strav/auth` | M2 foundation — Hasher, Authenticatable, Guard/AuthManager/AuthContext, MemoryGuard, auth/guest middleware; see `docs/auth/` |
+| `@strav/database` | M2 foundation — Bun.SQL Database, defineSchema + Archetype + t.* builders, SchemaRegistry, MigrationRunner; see `docs/database/` |
 | Others | Pending — land with their respective milestones (see `spec/implementation-plan.md`) |
 
 ## How to read
