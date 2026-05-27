@@ -3,8 +3,8 @@
 Foundation of the Strav framework. Ships the IoC container, the service-provider lifecycle, configuration, the event bus, helpers, encryption, storage, cache, i18n, logger, and the session abstraction.
 
 > **Status: 1.0.0-alpha — M1 in progress.**
-> Currently implemented: **Container**, `@inject()`, **ServiceProvider**, **Application**, full **EventBus** (cancelable, parallel, wildcards, batch), **ConfigRepository**, **ConfigProvider**, `env()` helper.
-> Up next: `StravError` hierarchy, `Logger`, more helpers (ULID, crypto, clock), `ConsoleKernel`.
+> Currently implemented: **Container**, `@inject()`, **ServiceProvider**, **Application**, full **EventBus** (cancelable, parallel, wildcards, batch), **ConfigRepository**, **ConfigProvider**, `env()` helper, **StravError** hierarchy + `asStravError`.
+> Up next: `Logger`, more helpers (ULID, crypto, clock), `ConsoleKernel`, M1 e2e smoke.
 
 ## Install
 
@@ -47,6 +47,8 @@ app.make(UserService).greet('world')
 | `@inject()` | Class decorator marking constructor-injectable classes |
 | `isInjectable` | Runtime check for the marker |
 | `getParamTypes` | Read constructor param types via `reflect-metadata` |
+| `StravError` + subclasses | Typed error hierarchy: `ValidationError` (422), `AuthError` (401), `AuthorizationError` (403), `NotFoundError` (404), `ConflictError` (409), `RateLimitError` (429), `ConfigError` / `ServerError` (500) |
+| `isStravError` / `asStravError` | Type-guard + coercion helper for unknowns at kernel boundaries |
 
 ## Sub-path imports
 
@@ -69,5 +71,6 @@ import { Container } from '@strav/kernel'
 - [`guides/providers.md`](./guides/providers.md) — provider lifecycle, dependency ordering, boot rollback, common patterns.
 - [`guides/configuration.md`](./guides/configuration.md) — config files, env helpers, freeze contract, type-safe sections.
 - [`guides/events.md`](./guides/events.md) — multi-listener contract, sequential vs parallel, cancelable events, wildcards, batch registration, listener shapes.
+- [`guides/errors.md`](./guides/errors.md) — the `StravError` hierarchy, custom codes, `asStravError`, `toJSON` serialization, when not to use a typed error.
 
 More guides land as the kernel grows.

@@ -651,3 +651,145 @@ interface Binding<T = unknown> {
 
 type Unsubscribe = () => void
 ```
+
+## Exceptions
+
+The error hierarchy every Strav kernel and package raises from. See the [errors guide](./guides/errors.md) for usage patterns; this section is the type/signature reference.
+
+### `StravError` (abstract)
+
+```ts
+abstract class StravError extends Error {
+  readonly code: string
+  readonly status: number
+  readonly context: Readonly<Record<string, unknown>>
+  // inherited from Error: message, name, cause, stack
+
+  protected constructor(
+    message: string,
+    defaults: { code: string; status: number },
+    options?: StravErrorOptions,
+  )
+
+  toJSON(): ErrorJSON
+}
+```
+
+The protected constructor enforces "instantiate a subclass, never `StravError` itself". Each subclass passes its own `defaults`.
+
+### `StravErrorOptions`
+
+```ts
+interface StravErrorOptions {
+  /** Override the default code for this subclass. */
+  code?: string
+  /** Structured payload — copied into a frozen object. */
+  context?: Record<string, unknown>
+  /** Underlying cause (mirrors standard Error.cause). */
+  cause?: unknown
+}
+```
+
+### `ErrorJSON`
+
+```ts
+interface ErrorJSON {
+  name: string
+  code: string
+  status: number
+  message: string
+  context?: Record<string, unknown>  // omitted when empty
+}
+```
+
+`cause` and `stack` are never serialized.
+
+### Subclasses
+
+Each is constructed as `new SubClass(message?, options?)`. Default messages are listed below; pass any string to override.
+
+```ts
+class ValidationError    extends StravError  // 422 — 'validation-error'
+class AuthError          extends StravError  // 401 — 'auth-error'
+class AuthorizationError extends StravError  // 403 — 'authorization-error'
+class NotFoundError      extends StravError  // 404 — 'not-found'
+class ConflictError      extends StravError  // 409 — 'conflict'
+class RateLimitError     extends StravError  // 429 — 'rate-limited'
+class ConfigError        extends StravError  // 500 — 'config-error'  (no default message)
+class ServerError        extends StravError  // 500 — 'server-error'
+```
+
+Default messages:
+
+| Class | Default `message` |
+|---|---|
+| `ValidationError` | `Validation failed.` |
+| `AuthError` | `Authentication required.` |
+| `AuthorizationError` | `You are not authorized to perform this action.` |
+| `NotFoundError` | `Resource not found.` |
+| `ConflictError` | `Resource conflict.` |
+| `RateLimitError` | `Too many requests.` |
+| `ServerError` | `Internal server error.` |
+| `ConfigError` | _(message is required — no default)_ |
+
+### `ValidationError` (specifics)
+
+```ts
+class ValidationError extends StravError {
+  readonly errors: Readonly<Record<string, readonly string[]>>
+  constructor(message?: string, options?: ValidationErrorOptions)
+  override toJSON(): ValidationErrorJSON
+}
+
+interface ValidationErrorOptions extends StravErrorOptions {
+  errors?: Record<string, readonly string[]>
+}
+
+interface ValidationErrorJSON extends ErrorJSON {
+  errors: Record<string, readonly string[]>
+}
+```
+
+The `errors` map and each field's array are frozen at construction. `toJSON()` always includes `errors` (even when empty `{}`).
+
+### `RateLimitError` (specifics)
+
+```ts
+class RateLimitError extends StravError {
+  readonly retryAfter: number | undefined
+  constructor(message?: string, options?: RateLimitErrorOptions)
+  override toJSON(): RateLimitErrorJSON
+}
+
+interface RateLimitErrorOptions extends StravErrorOptions {
+  retryAfter?: number  // seconds; surfaced as Retry-After header
+}
+
+interface RateLimitErrorJSON extends ErrorJSON {
+  retryAfter?: number
+}
+```
+
+`retryAfter` is included in `toJSON()` only when defined.
+
+### `isStravError(err): err is StravError`
+
+```ts
+function isStravError(err: unknown): err is StravError
+```
+
+Type-guard. `true` iff `err` is an instance of any `StravError` subclass.
+
+### `asStravError(err, fallbackMessage?): StravError`
+
+```ts
+function asStravError(err: unknown, fallbackMessage?: string): StravError
+```
+
+Normalize any throwable into a `StravError`:
+
+- If `err` is a `StravError` already → returned unchanged.
+- Else if `err` is an `Error` → wrapped in `ServerError` (message carried through, original preserved as `cause`).
+- Else → wrapped in `ServerError` with `fallbackMessage` (default: `'Internal server error.'`); `cause` is the raw value.
+
+Used by kernel exception handlers to guarantee a `code` / `status` / `toJSON()`-shaped error before reporting or rendering.
