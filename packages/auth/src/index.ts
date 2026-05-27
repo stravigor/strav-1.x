@@ -22,3 +22,10 @@ export {
   type GuestMiddlewareOptions,
   guestMiddleware,
 } from './middleware/index.ts'
+export {
+  Session,
+  SessionGuard,
+  type SessionGuardOptions,
+  SessionRepository,
+  sessionSchema,
+} from './session/index.ts'

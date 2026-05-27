@@ -130,7 +130,63 @@ class MemoryGuard<U extends Authenticatable> implements Guard<U> {
 }
 ```
 
-**Not for production** — state is per-process, dies on restart, and the sessions map grows unbounded. The real `SessionGuard` ships with `@strav/database` (Postgres-backed storage + TTL); the real `TokenGuard` ships in the same milestone.
+**Not for production** — state is per-process, dies on restart, and the sessions map grows unbounded. Use `SessionGuard` (below) for production.
+
+## `SessionGuard`
+
+Production cookie-based guard backed by the `session` table.
+
+```ts
+class SessionGuard<U extends Authenticatable> implements Guard<U> {
+  constructor(options: {
+    name?: string                 // default 'session'
+    cookieName?: string           // default 'strav_session'
+    ttlSeconds?: number           // default 1209600 (14 days)
+    secure?: boolean              // default true — set false for HTTP dev
+    sessions: SessionRepository
+    userResolver: (id: string) => Authenticatable | null | Promise<…>
+  })
+}
+```
+
+- **`authenticate(ctx)`** — reads the cookie, calls `sessions.findValid(id)` (one round-trip), then `userResolver(session.user_id)`. Returns `null` for missing cookie / stale row / expired / deleted user.
+- **`login(ctx, user)`** — mints a ULID, inserts the row, sets the cookie. Cookie `expires` matches the row's `expires_at`.
+- **`logout(ctx)`** — deletes the row (if any), clears the cookie.
+
+Cookie defaults: `httpOnly: true`, `sameSite: 'lax'`, `secure: true`, `path: '/'`.
+
+Usually constructed by `AuthProvider` from the `'session'` driver config — apps don't `new SessionGuard(…)` directly. See [`guides/sessions.md`](./guides/sessions.md) for the full setup + production checklist.
+
+### `Session` Model
+
+```ts
+class Session extends Model {
+  static schema = sessionSchema
+  id: string
+  user_id: string
+  expires_at: Date
+  created_at: Date
+  updated_at: Date
+
+  isValid(now?: Date): boolean   // `expires_at > now`
+}
+```
+
+### `sessionSchema`
+
+The `@strav/database` Schema for the `session` table. Register it on your app's `SchemaRegistry` + migrate (`emitCreateTable(sessionSchema)`). The schema is bare-minimum on purpose — payload, last-seen, IP/UA columns land in follow-up slices.
+
+### `SessionRepository`
+
+```ts
+class SessionRepository extends Repository<Session> {
+  findValid(id: string, now?: Date): Promise<Session | null>
+  deleteExpired(now?: Date): Promise<number>
+  // …plus all Repository methods: find / findOrFail / findMany / create / update / delete / query / etc.
+}
+```
+
+`@inject()`-marked; the container resolves `PostgresDatabase` automatically. Apps that need to "kill all sessions for a user" use `.query().where('user_id', userId).get()` then delete each — a `killAllForUser` helper lands when the use case shows up.
 
 ## Middleware — `auth` / `guest`
 
@@ -162,7 +218,7 @@ Both middleware short-circuit by returning the thrown error through the kernel's
 
 ## `AuthProvider`
 
-`name = 'auth'`, `dependencies = ['config', 'http']`. Binds `Hasher`, `AuthManager`; auto-registers `auth` / `guest` middleware; installs a `ctx.auth` enricher on `HttpKernel`. `boot()` eagerly resolves the manager so config errors surface at boot.
+`name = 'auth'`, `dependencies = ['config', 'http']`. Binds `Hasher`, `SessionRepository`, `AuthManager`; auto-registers `auth` / `guest` middleware; installs a `ctx.auth` enricher on `HttpKernel`. `boot()` eagerly resolves the manager so config errors surface at boot.
 
 ```ts
 interface AuthConfigShape {
@@ -173,8 +229,17 @@ interface AuthConfigShape {
 
 type GuardConfigEntry =
   | { driver: 'custom'; service: string }
-  // Future: 'session' | 'token' | 'jwt' as their drivers land.
+  | {
+      driver: 'session'
+      userResolverService: string   // container binding with .find(id)
+      cookieName?: string
+      ttlSeconds?: number
+      secure?: boolean
+    }
+  // Future: 'token' | 'jwt' as their drivers land.
 ```
+
+The `'session'` driver requires `@strav/database`'s `DatabaseProvider` to have booted first (SessionRepository needs `PostgresDatabase`). `userResolverService` must point at a container binding that exposes `.find(id)` — every `@strav/database` Repository does. Misconfigured bindings throw `ConfigError` at boot.
 
 Each guard's `name` property MUST match its config key — the provider validates this at boot.
 

@@ -2,9 +2,9 @@
 
 Authentication primitives for Strav 1.0 — `Hasher` (argon2id), guards, the per-request `ctx.auth` façade, and `auth` / `guest` middleware.
 
-> **Status: 1.0.0-alpha — M2 in progress (foundation slice).**
-> Shipping: **Hasher** (Bun.password / argon2id), **Authenticatable** contract, **Guard** + **AuthManager** + **AuthContext** (`ctx.auth`), **MemoryGuard** (dev/test), **auth / guest middleware**, **AuthProvider** (auto-wires the lot + `ctx.auth` context enricher).
-> Deferred (need `@strav/database`): real **SessionGuard**, opaque-**TokenGuard**, **magic links**, **email verification**, **TOTP** (small but lives with the full auth flows). **JWT** driver opt-in: post-1.0. The `MemoryGuard` is a placeholder for tests + dev — production apps will swap it for SessionGuard / TokenGuard when those land.
+> **Status: 1.0.0-alpha — M2 in progress (foundation + SessionGuard slice).**
+> Shipping: **Hasher** (Bun.password / argon2id), **Authenticatable** contract, **Guard** + **AuthManager** + **AuthContext** (`ctx.auth`), **MemoryGuard** (dev/test), **SessionGuard** (production cookie-based, DB-backed via `@strav/database`), **Session** Model + Schema + **SessionRepository**, **auth / guest middleware**, **AuthProvider** (auto-wires the lot + the `'session'` driver entry).
+> Deferred (each its own slice): opaque-**TokenGuard** (next), **magic links**, **email verification**, **TOTP**, **session payload** (flash / CSRF / locale storage on a `jsonb` column), **sliding-window expiry** (touch `expires_at` on each request), **session-fixation prevention** (rotate session id on login), **session cleanup command** (`sessions:gc`). **JWT** driver opt-in: post-1.0.
 
 ## Install
 
@@ -12,7 +12,7 @@ Authentication primitives for Strav 1.0 — `Hasher` (argon2id), guards, the per
 bun add @strav/auth
 ```
 
-Peer deps: `@strav/kernel`, `@strav/http` (both already in the workspace).
+Peer deps: `@strav/kernel`, `@strav/http`, `@strav/database` (all in the workspace).
 
 ## Minimal app
 
@@ -66,6 +66,10 @@ export default {
 | `AuthContext` | Per-request façade attached as `ctx.auth`; delegates to the default guard view |
 | `AuthGuardView` | The per-guard view returned by `ctx.auth.guard(name)`; caches user per-request |
 | `MemoryGuard` | In-process guard for tests + dev (cookie → in-memory map) |
+| `SessionGuard` | Production cookie-based guard backed by the `session` table |
+| `Session` | Session row Model — id, user_id, expires_at, timestamps |
+| `sessionSchema` | The `@strav/database` Schema for the `session` table — register + migrate |
+| `SessionRepository` | Repository<Session> with `findValid(id)` and `deleteExpired(now?)` |
 | `authMiddleware` / `guestMiddleware` | Functions returned by the registered `auth` / `guest` middleware factories |
 | `AUTH_BUILTIN_NAMES` | String-key constants used in `config.http.middleware` and `route.middleware('...')` |
 | `AuthProvider` | ServiceProvider that binds Hasher + AuthManager and auto-wires `ctx.auth` |
@@ -76,3 +80,4 @@ export default {
 - [`api.md`](./api.md) — every public export with signature + semantics.
 - [`guides/setup.md`](./guides/setup.md) — wiring AuthProvider, building a custom guard, the `config.auth` shape, the `ctx.auth` lifecycle.
 - [`guides/middleware.md`](./guides/middleware.md) — `auth` / `guest` middleware (with the `:guardName` factory form), error responses, ordering.
+- [`guides/sessions.md`](./guides/sessions.md) — SessionGuard / Session schema + migration, what's deferred (sliding-window expiry, payload column, session rotation, cleanup command), production checklist.

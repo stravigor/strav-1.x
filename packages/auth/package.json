@@ -20,7 +20,8 @@
   },
   "dependencies": {
     "@strav/kernel": "workspace:*",
-    "@strav/http": "workspace:*"
+    "@strav/http": "workspace:*",
+    "@strav/database": "workspace:*"
   },
   "peerDependencies": {
     "@types/bun": ">=1.3.14"
