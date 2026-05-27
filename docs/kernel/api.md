@@ -2,8 +2,210 @@
 
 This page lists every public export of `@strav/kernel` with signature, semantics, and a minimal example.
 
-> **Status:** Reflects what's implemented as of M1.6 — `Container` and `@inject()`.
-> `Application`, `ServiceProvider`, `EventBus`, `ConfigRepository`, `Logger`, helpers, and the various subsystems will appear here as they land.
+> **Status:** Reflects what's implemented as of M1.7 — `Container`, `@inject()`, `ServiceProvider`, `Application`, and a minimal `EventBus`.
+> `ConfigRepository`, full `EventBus` (parallel + cancelable), `Logger`, helpers, and the various subsystems will appear here as they land.
+
+## `Application`
+
+`Application` extends `Container`. It adds provider orchestration: topological sort, register / boot / shutdown lifecycle, signal handlers, lifecycle events, and runtime-environment helpers.
+
+```ts
+import { Application, ServiceProvider } from '@strav/kernel'
+
+const app = new Application().useProviders([
+  new ConfigProvider(),
+  new LoggerProvider(),
+  new DatabaseProvider(),
+])
+
+await app.start()
+```
+
+### `use(provider)` / `useProviders(providers)`
+
+Register one or many providers. Must be called **before** `start()`. After the app boots, both throw.
+
+```ts
+app.use(new ConfigProvider())
+app.useProviders([new LoggerProvider(), new DatabaseProvider()])
+```
+
+### `start({ signalHandlers? })`
+
+Boot the application. Returns a Promise that resolves once every provider's `boot()` has finished.
+
+Sequence:
+
+1. Emit `app:starting`.
+2. Topologically sort providers by `dependencies`.
+3. Call every provider's `register(app)` (sync).
+4. Call every provider's `boot(app)` (async, in order).
+5. Install SIGINT / SIGTERM handlers (unless `signalHandlers: false`).
+6. Emit `app:booted`.
+
+On a `boot()` failure, the framework rolls back: every already-booted provider's `shutdown()` is called in reverse order, then the original error re-throws.
+
+Calling `start()` after the app is already booted is a no-op.
+
+### `shutdown()`
+
+Gracefully shut down. Calls every booted provider's `shutdown()` in **reverse boot order**. A 30-second hard timeout force-exits if a provider hangs. Per-provider errors are logged but do not stop the loop.
+
+After shutdown the container's instance cache is disposed (`dispose()`), signal handlers are removed, and `isBooted` returns `false`.
+
+Lifecycle events emitted: `app:shutdown` (before), `app:terminated` (after).
+
+Calling `shutdown()` twice is a no-op.
+
+### `onBooted(callback)`
+
+Shorthand for `app.events.once('app:booted', callback)`. Returns `this` for chaining.
+
+```ts
+new Application()
+  .useProviders([...])
+  .onBooted(() => log.info('ready'))
+  .start()
+```
+
+### `events: EventBus`
+
+Per-application event bus. Same lifetime as the app. Used internally for lifecycle events (`app:starting`, `app:booted`, `app:shutdown`, `app:terminated`) and available to user code.
+
+```ts
+app.events.on('app:booted', () => log.info('ready'))
+app.events.emit('user.created', user)
+```
+
+### `isBooted` / `isShuttingDown`
+
+Read-only state.
+
+```ts
+app.isBooted        // true after start() resolves
+app.isShuttingDown  // true while shutdown() is in progress
+```
+
+### Environment helpers
+
+```ts
+app.env()                   // 'local' | 'testing' | 'staging' | 'production'
+app.env('production')       // boolean — is the current env this one?
+app.isProduction()
+app.isLocal()
+app.isTesting()
+app.isStaging()
+```
+
+Reads `APP_ENV`. Defaults to `'production'` when unset (safe default).
+
+> When `ConfigRepository` lands in M1.8, these delegate to the config so caching artifacts pick up the right value at boot time.
+
+### `StartOptions`
+
+```ts
+interface StartOptions {
+  signalHandlers?: boolean   // default true; pass false to manage signals yourself
+}
+```
+
+### `AppEnv`
+
+```ts
+type AppEnv = 'local' | 'testing' | 'staging' | 'production'
+```
+
+## `ServiceProvider`
+
+Abstract base class. A provider is the only legal place to bind services and to run boot/shutdown work for a subsystem.
+
+```ts
+import { Application, ServiceProvider } from '@strav/kernel'
+
+class DatabaseProvider extends ServiceProvider {
+  readonly name = 'database'
+  readonly dependencies = ['config', 'logger']
+
+  register(app: Application): void {
+    app.singleton(Database, (c) => new Database(c.resolve('config')))
+  }
+
+  async boot(app: Application): Promise<void> {
+    await app.resolve(Database).connect()
+  }
+
+  async shutdown(app: Application): Promise<void> {
+    await app.resolve(Database).disconnect()
+  }
+}
+```
+
+### `name: string` (abstract)
+
+Unique provider name used by the topo-sort. Two providers with the same name → boot throws.
+
+### `dependencies: readonly string[]`
+
+Names of providers that must register and boot before this one. Defaults to `[]`. Unknown names → boot throws.
+
+### `register(app)`
+
+Synchronous binding pass. Runs before any provider's `boot()`. **Do not call `app.resolve(...)` here** — other providers may not have registered yet.
+
+### `boot(app)`
+
+Async initialization. Runs in dependency order after every provider's `register()` finished. Safe to resolve other services here, open connections, subscribe to events, etc.
+
+### `shutdown(app)`
+
+Async cleanup. Runs in reverse boot order on SIGINT / SIGTERM / `app.shutdown()`. Each provider gets up to its share of the 30-second total shutdown budget.
+
+## `EventBus`
+
+Per-application event dispatcher (M1.7 surface). Sequential dispatch, FIFO order, errors propagate.
+
+> M1.9 extends this with `emitParallel`, batch `subscribe`, wildcards, and the cancelable-vs-non-cancelable contract. The M1.7 surface below is the minimum the Application needs.
+
+```ts
+app.events.on('user.created', async (user) => {
+  await mailer.send(new WelcomeEmail(user))
+})
+```
+
+### `on<P>(name, fn)` → `Unsubscribe`
+
+Register a listener. Returns a function that removes the listener.
+
+```ts
+const off = app.events.on('user.created', listener)
+off()  // remove
+```
+
+### `once<P>(name, fn)` → `Unsubscribe`
+
+Same as `on` but fires at most once. The listener is removed from the dispatch list **before** its handler runs, so re-entrant emits don't re-trigger it.
+
+### `emit<P>(name, payload?)` → `Promise<void>`
+
+Dispatch `payload` to every registered listener, sequentially in registration order, awaiting async listeners. Resolves after the last listener returns.
+
+If a listener throws, the error propagates from `emit` and remaining listeners do not run. (M1.9 will refine this with the cancelable contract.)
+
+### `removeAllListeners(name?)`
+
+Remove listeners for one event name (with `name`) or all events (without).
+
+### `listenerCount(name)`
+
+Diagnostic. Returns the number of listeners registered for `name`.
+
+### `Listener<P>`
+
+```ts
+type Listener<P = unknown> = (payload: P, name?: string) => void | Promise<void>
+```
+
+The second argument is the event name — useful for listeners attached to multiple events (M1.9 batch subscribe).
 
 ## `Container`
 

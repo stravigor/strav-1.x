@@ -1,2 +1,1 @@
-// events subsystem — public exports land here.
-export {}
+export { EventBus, type Listener } from './event_bus.ts'
