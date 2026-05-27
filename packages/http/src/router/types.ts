@@ -8,13 +8,14 @@
  *   3. **Tuple** — `[Class, methodName]`. The kernel `make()`s the instance per
  *      request and calls `instance[methodName](ctx)`. The method name is
  *      narrowed at compile time via `ActionMethodNamesOf<T>`.
- *
- * `FormRequest`-as-first-parameter is a M2 follow-up; for this slice the action
- * signature is always `(ctx: HttpContext) => …`.
+ *   4. **FormRequest tuple** — `[Class, methodName, FormRequestSubclass]`. The
+ *      kernel pre-runs `FormRequest.from(ctx)` (authorize → transform →
+ *      validate → cache) and calls `instance[methodName](req, ctx)`.
  */
 
 import type { Constructor } from '@strav/kernel'
 import type { HttpContext } from '../context/types.ts'
+import type { FormRequest } from '../requests/form_request.ts'
 
 export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'OPTIONS' | 'HEAD'
 
@@ -42,8 +43,35 @@ export type ActionMethodNamesOf<T> = {
 /** Typed tuple form — `[UserController, 'show']`. */
 export type ActionRef<T = unknown> = readonly [Constructor<T>, ActionMethodNamesOf<T>]
 
+/**
+ * Names of `T`'s methods callable with `(req, ctx)` — i.e., any callable
+ * property. We can't constrain to "first arg is a FormRequest subclass"
+ * without runtime type info, so this is a looser check than
+ * `ActionMethodNamesOf<T>`. Typo-safety on the name is preserved.
+ */
+export type FormRequestActionMethodNamesOf<T> = {
+  // biome-ignore lint/suspicious/noExplicitAny: see note above
+  [K in keyof T]: T[K] extends (...args: any[]) => any ? K : never
+}[keyof T] &
+  string
+
+/**
+ * Tuple with a `FormRequest` pre-stage —
+ * `[UserController, 'store', StoreUserRequest]`. The kernel runs
+ * `FormRequest.from(ctx)` and calls `instance[methodName](req, ctx)`.
+ */
+export type FormRequestActionRef<T = unknown, R extends FormRequest = FormRequest> = readonly [
+  Constructor<T>,
+  FormRequestActionMethodNamesOf<T>,
+  new (ctx: HttpContext) => R,
+]
+
 /** Anything the router accepts as the route action. */
-export type RouteHandler<T = unknown> = ClosureHandler | SingleActionClass | ActionRef<T>
+export type RouteHandler<T = unknown> =
+  | ClosureHandler
+  | SingleActionClass
+  | ActionRef<T>
+  | FormRequestActionRef<T>
 
 /** Options accepted by `router.group({ ... }, callback)`. */
 export interface RouteGroupOptions {

@@ -2,7 +2,7 @@
 
 This page lists every public export of `@strav/http` with signature, semantics, and a minimal example.
 
-> **Status:** Reflects what's implemented as of M2 (in progress) — Router, HttpContext (with kernel-bound `requestId`), HttpKernel (request-id correlation), middleware composition + `MiddlewareRegistry.replace()`, ExceptionHandler, HttpProvider, and the built-in middleware set (`security_headers` / `cors` / `request_log`). `FormRequest`, sessions, Pages auto-router, WS/SSE, and the opt-in middleware set (`auth` / `throttle` / `csrf` / …) land in follow-up cuts.
+> **Status:** Reflects what's implemented as of M2 (in progress) — Router (with tuple-arity-3 FormRequest sugar), HttpContext (with kernel-bound `requestId`), HttpKernel (request-id correlation), middleware composition + `MiddlewareRegistry.replace()`, ExceptionHandler, HttpProvider, the built-in middleware set (`security_headers` / `cors` / `request_log`), and `FormRequest` + `rule.*` + registered custom rules. Sessions, Pages auto-router, WS/SSE, and the opt-in middleware set (`auth` / `throttle` / `csrf` / …) land in follow-up cuts.
 
 ## `Router`
 
@@ -30,11 +30,12 @@ router.match('GET', '/users/42')
 | `head(pattern, handler)` | HEAD |
 | `any(pattern, handler)` | every verb (returns `Route[]`) |
 
-Each returns a `Route` (or `Route[]` for `any`). The `handler` slot accepts three shapes:
+Each returns a `Route` (or `Route[]` for `any`). The `handler` slot accepts four shapes:
 
 - **Closure** — `(ctx) => Response | unknown | Promise<…>`. Non-Response values are JSON-encoded; `null`/`undefined` become 204.
 - **Single-action class** — a class whose instances expose `handle(ctx)`. The kernel `make()`s a fresh instance per request and calls `.handle(ctx)`.
 - **Typed tuple** — `[Controller, 'methodName']`. The method name is constrained to keys of `Controller` whose value is callable, so typos fail at compile time.
+- **FormRequest tuple** — `[Controller, 'methodName', FormRequestSubclass]`. The kernel pre-runs `FormRequest.from(ctx)` (authorize → transform → validate) and calls `controller.method(req, ctx)`. See [`FormRequest`](#formrequest).
 
 ### Path syntax
 
@@ -401,3 +402,84 @@ Preflight (`OPTIONS` with `Access-Control-Request-Method`) short-circuits with a
 ### `RequestLog`
 
 Class middleware. Captures `performance.now()` in `handle()` and emits one `http.request` line in `terminate()`. Fields: `method`, `path`, `status`, `duration_ms`, `ip`, `user_agent`, plus the `requestId` already carried by `ctx.log`. Runs for every status — 500s, 404s, 405s, etc. — but is skipped on CORS preflights when `cors` runs earlier in the chain.
+
+## `FormRequest`
+
+Typed-payload primitive. Subclasses define `rules()` (required) and may override `authorize(ctx)` and `transform(input)`. The static `from(ctx)` factory runs the lifecycle and returns a populated instance.
+
+```ts
+abstract class FormRequest<TValidated = Record<string, unknown>> {
+  constructor(ctx: HttpContext)             // use `from(ctx)`; calling new directly skips the lifecycle
+  abstract rules(): RulesShape
+  authorize(ctx: HttpContext): boolean | Promise<boolean>          // default: true
+  transform(input: Record<string, unknown>): Record<string, unknown> | Promise<…>  // default: identity
+  validated(): TValidated                   // throws if called before from(ctx) cached the payload
+
+  static from<R extends FormRequest>(this: new (ctx) => R, ctx: HttpContext): Promise<R>
+}
+
+type RulesShape = z.ZodType | Record<string, z.ZodType>
+```
+
+Lifecycle (`from(ctx)`):
+
+1. Construct — `new SomeRequest(ctx)`.
+2. `authorize(ctx)` — `false` throws `AuthorizationError` (`policy.denied`, 403). A thrown `StravError` propagates unchanged.
+3. `transform(rawBody)` — receives the parsed body or `{}`. Return the object to validate.
+4. Validate via Zod safe-parse. Failure throws `ValidationError` (`validation.failed`, 422) with `context.errors[field]: [{ code, message, context? }]`.
+5. Cache for `validated()`.
+
+Two dispatch shapes — see [guides/requests-and-validation.md](./guides/requests-and-validation.md) for the full recipe:
+
+```ts
+// Explicit (always works):
+async store(ctx: HttpContext) {
+  const req = await StoreUserRequest.from(ctx)
+  return ctx.response.created(await this.users.create(req.validated()))
+}
+
+// Tuple-arity-3 router sugar:
+router.post('/users', [UserController, 'store', StoreUserRequest])
+// → controller.store(req, ctx)
+```
+
+The spec's auto-detected `(req: StoreUserRequest, ctx)` signature is deferred — see [ADR: form-request-dispatch](../decisions/form-request-dispatch.md).
+
+## `rule` / `z`
+
+Thin Zod v4 façade. Each builder returns the concrete Zod schema (preserving `.min/.max/.email/.refine/etc`), so `z.*` schemas drop in on any field without bridging.
+
+```ts
+import { rule, z } from '@strav/http'
+
+rules() {
+  return {
+    email:    rule.email(),
+    name:     rule.string().min(1).max(255),
+    age:      z.number().int().min(13),                    // raw Zod
+    role:     rule.enum(['admin', 'staff']),
+    tags:     rule.array(rule.string()).max(10),
+    address:  rule.object({ city: rule.string() }).optional(),
+    password: rule.string().min(12).pipe(rule.custom('strong_password')),
+  }
+}
+```
+
+Available builders: `string`, `number`, `boolean`, `date`, `email`, `url`, `uuid`, `ulid`, `enum`, `array`, `object`, `union`, `optional`, `nullable`, `custom`, `z` (the raw Zod namespace).
+
+## Custom rules
+
+```ts
+import { registerRule, replaceRule, hasRule, clearRules, type RuleContext, type RuleFn, type RuleResult } from '@strav/http'
+
+registerRule('unique', async (value, ctx: RuleContext, args) => {
+  // ctx is the request's HttpContext — ctx.container, ctx.request, etc.
+  return true || 'rule.unique' || { code: 'rule.unique', context: { column: 'email' } }
+})
+```
+
+`RuleResult = true | false | string | { code: string; context?: Record<string, unknown> }`. `true` passes; everything else fails with the supplied code (or `rule.<name>` for bare `false`).
+
+`registerRule` throws on duplicates; `replaceRule` is the explicit override path (used in tests).
+
+`clearRules()` is the tear-down for test suites that register rules per-test.

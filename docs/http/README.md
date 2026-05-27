@@ -3,8 +3,8 @@
 Routing, request/response handling, and the HTTP kernel for Strav 1.0.
 
 > **Status: 1.0.0-alpha — M2 in progress.**
-> Shipping: **Router** (trie, params, optional params, wildcards, groups, named routes), **HttpContext** (server / request / response namespaces + typed `state` with kernel-bound `requestId`), **HttpRequest** (cached body parsing, query, cookies, content negotiation), **HttpResponse** (factories + pending header/cookie mutations), **middleware composition** (onion, short-circuit, terminating), **MiddlewareRegistry** (name → def, parameterized `name:args` factories, `replace` for built-in override), **HttpKernel** (`handle()` / `serve()`; baked-in request-id + correlated child logger), **ExceptionHandler** (default JSON + HTML, `StravError` mapping), **HttpProvider** (container wiring + boot-time precompile + built-in registration), **built-in middleware** (`security_headers`, `cors`, `request_log`).
-> Deferred for now: subdomain matching, `FormRequest` + Zod, sessions, Pages auto-router, WS/SSE, opt-in middleware (`auth`, `throttle`, `csrf`, etc.).
+> Shipping: **Router** (trie, params, optional params, wildcards, groups, named routes, tuple-arity-3 FormRequest sugar), **HttpContext** (server / request / response namespaces + typed `state` with kernel-bound `requestId`), **HttpRequest** (cached body parsing, query, cookies, content negotiation), **HttpResponse** (factories + pending header/cookie mutations), **middleware composition** (onion, short-circuit, terminating), **MiddlewareRegistry** (name → def, parameterized `name:args` factories, `replace` for built-in override), **HttpKernel** (`handle()` / `serve()`; baked-in request-id + correlated child logger), **ExceptionHandler** (default JSON + HTML, `StravError` mapping), **HttpProvider** (container wiring + boot-time precompile + built-in registration), **built-in middleware** (`security_headers`, `cors`, `request_log`), **FormRequest** (Zod-backed `rule.*` API, lifecycle, registered custom rules, spec-shaped validation error responses).
+> Deferred for now: subdomain matching, sessions, Pages auto-router, WS/SSE, opt-in middleware (`auth`, `throttle`, `csrf`, etc.), type-detected `(req, ctx)` action signature.
 
 ## Install
 
@@ -62,6 +62,9 @@ console.log(`listening on ${server.url}`)
 | `HttpProvider` | Provider that wires `Router`, `MiddlewareRegistry`, `ExceptionHandler`, `HttpKernel`, and auto-registers built-in middleware |
 | `securityHeadersMiddleware` / `corsMiddleware` / `RequestLog` | Built-in middleware shipped under canonical names (`security_headers`, `cors`, `request_log`) |
 | `BUILTIN_NAMES` | The string-key constants for `config.http.middleware` |
+| `FormRequest` | Typed-payload primitive — authorize → transform → validate → cache; `.from(ctx)` factory + tuple-arity-3 router sugar |
+| `rule` / `z` | Validation builders (thin Zod façade); raw Zod always interops |
+| `registerRule` / `replaceRule` | Named custom rules for `rule.custom(name, args?)` |
 
 ## Sub-path imports
 
@@ -82,3 +85,4 @@ import { Router, HttpKernel } from '@strav/http'
 - [`api.md`](./api.md) — every public export, signature, semantics.
 - [`guides/routing.md`](./guides/routing.md) — patterns, groups, named routes, handler shapes (closure / single-action / tuple), middleware composition.
 - [`guides/built-ins.md`](./guides/built-ins.md) — `security_headers`, `cors`, `request_log`; the kernel-level request-id; override pattern via `MiddlewareRegistry.replace()`.
+- [`guides/requests-and-validation.md`](./guides/requests-and-validation.md) — `FormRequest` lifecycle, dispatch shapes (`.from(ctx)` vs tuple-arity-3), `rule.*` builders, inline refines, registered custom rules, error-shape contract.

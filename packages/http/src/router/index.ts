@@ -9,6 +9,8 @@ export type {
   ActionRef,
   ClosureHandler,
   CompiledRoute,
+  FormRequestActionMethodNamesOf,
+  FormRequestActionRef,
   HttpMethod,
   RouteGroupOptions,
   RouteHandler,

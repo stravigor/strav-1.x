@@ -49,10 +49,25 @@ export {
   type NextFn,
 } from './middleware/index.ts'
 export {
+  clearRules,
+  FormRequest,
+  hasRule,
+  type RuleContext,
+  type RuleFn,
+  type RuleResult,
+  type RulesShape,
+  registerRule,
+  replaceRule,
+  rule,
+  z,
+} from './requests/index.ts'
+export {
   type ActionMethodNamesOf,
   type ActionRef,
   type ClosureHandler,
   type CompiledRoute,
+  type FormRequestActionMethodNamesOf,
+  type FormRequestActionRef,
   type HttpMethod,
   type MatchResult,
   type ResolveOptions,

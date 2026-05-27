@@ -302,12 +302,15 @@ export class HttpKernel {
       return async (ctx) => coerceResponse(await (handler as (c: typeof ctx) => unknown)(ctx))
     }
 
-    // Tuple [Class, method] form.
-    if (Array.isArray(handler) && handler.length === 2) {
-      const [Class, method] = handler
-      return async (ctx) => {
-        const instance = ctx.container.make(Class as new () => Record<string, unknown>)
-        const fn = (instance as Record<string, unknown>)[method as string]
+    // Tuple forms: [Class, method] or [Class, method, FormRequestClass].
+    if (Array.isArray(handler) && (handler.length === 2 || handler.length === 3)) {
+      const [Class, method, RequestClass] = handler
+      const callMethod = (
+        instance: Record<string, unknown>,
+        ctx: HttpContext,
+        ...extraArgs: unknown[]
+      ) => {
+        const fn = instance[method as string]
         if (typeof fn !== 'function') {
           throw asStravError(
             new Error(
@@ -315,7 +318,28 @@ export class HttpKernel {
             ),
           )
         }
-        const out = await (fn as (c: typeof ctx) => unknown).call(instance, ctx)
+        return (fn as (...args: unknown[]) => unknown).call(instance, ...extraArgs, ctx)
+      }
+
+      if (RequestClass) {
+        // FormRequest pre-stage: run authorize → transform → validate, then
+        // call `controller.method(req, ctx)`. Imported lazily to avoid a
+        // hard cycle (form_request.ts imports nothing from kernel-of-this-package).
+        type FormRequestCtor = new (ctx: HttpContext) => unknown
+        const Form = RequestClass as FormRequestCtor & {
+          from(ctx: HttpContext): Promise<unknown>
+        }
+        return async (ctx) => {
+          const instance = ctx.container.make(Class as new () => Record<string, unknown>)
+          const req = await Form.from(ctx)
+          const out = await callMethod(instance, ctx, req)
+          return coerceResponse(out)
+        }
+      }
+
+      return async (ctx) => {
+        const instance = ctx.container.make(Class as new () => Record<string, unknown>)
+        const out = await callMethod(instance, ctx)
         return coerceResponse(out)
       }
     }
