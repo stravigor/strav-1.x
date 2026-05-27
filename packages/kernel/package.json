@@ -32,6 +32,7 @@
     "access": "public"
   },
   "dependencies": {
+    "pino": "^10.3.1",
     "reflect-metadata": "^0.2.2"
   },
   "peerDependencies": {

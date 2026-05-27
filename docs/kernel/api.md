@@ -2,8 +2,8 @@
 
 This page lists every public export of `@strav/kernel` with signature, semantics, and a minimal example.
 
-> **Status:** Reflects what's implemented as of M1.9 — `Container`, `@inject()`, `ServiceProvider`, `Application`, full `EventBus` (parallel, cancelable, wildcards, batch), `ConfigRepository`, `ConfigProvider`, and the `env()` helper.
-> `Logger`, more helpers, `StravError` hierarchy, `ConsoleKernel`, and the remaining subsystems will appear here as they land.
+> **Status:** Reflects what's implemented as of M2 (in progress) — everything from M1 plus the `Logger` stack (`Logger`, `LogManager`, `LoggerProvider`, `compileRedactor`).
+> `HttpKernel`, router, middleware, request/response helpers, and the remaining M2 subsystems will appear here as they land.
 
 ## `Application`
 
@@ -359,6 +359,86 @@ export default [
 `ConfigProvider` has no dependencies (`name = 'config'`, `dependencies = []`), so it registers first. Other providers can `c.resolve<ConfigRepository>('config')` in their `register()` and `boot()` methods.
 
 In `boot()`, `ConfigProvider` registers a `once('app:booted', ...)` listener that calls `config.freeze()`. Because it boots first, its listener is the first to fire when `app:booted` is emitted — so any user-registered listener sees the frozen config.
+
+## `Logger`
+
+Thin wrapper around Pino. The kernel's logging primitive — every level method takes an **event identifier** (string) first and structured fields second.
+
+```ts
+import { Logger, inject } from '@strav/kernel'
+
+@inject()
+class UserService {
+  constructor(private log: Logger) {}
+  signIn(userId: string, ip: string): void {
+    this.log.info('user.signed_in', { userId, ip })
+  }
+}
+```
+
+### Methods
+
+| Method | Pino level |
+|---|---|
+| `trace(msg, fields?)` | 10 |
+| `debug(msg, fields?)` | 20 |
+| `info(msg, fields?)`  | 30 |
+| `warn(msg, fields?)`  | 40 |
+| `error(msg, fields?)` | 50 |
+| `fatal(msg, fields?)` | 60 |
+| `log(level, msg, fields?)` | dynamic; `'silent'` is a no-op |
+| `child(context)` | returns a new `Logger` pre-bound to `context` |
+| `channel(name)` | resolve a different channel (requires `LogManager` wiring; throws `ConfigError` otherwise) |
+| `raw` (getter) | the underlying `pino.Logger` — escape hatch, primarily for tests |
+
+Redaction (configured in `config.logger.redact`) is applied to `fields` and to `context` passed to `child()` before Pino sees the value.
+
+See `docs/kernel/guides/logger.md` for the full recipe (drivers, channels, request-scope correlation).
+
+## `LogManager`
+
+Builds and caches one `Logger` per configured channel. Constructed by `LoggerProvider`. The handful of methods most consumers touch:
+
+| Method | Purpose |
+|---|---|
+| `default()` | The logger for `config.logger.default` |
+| `channel(name)` | Resolve (and cache) any other channel |
+| `shutdown()` | Flush and close every destination that was opened |
+
+Validation happens in the constructor — unknown drivers, invalid levels, missing-stack-children, cyclic stack references all throw `ConfigError` at construction.
+
+## `LoggerProvider`
+
+`name = 'logger'`, `dependencies = ['config']`. Binds:
+
+- `LogManager` (singleton)
+- `Logger` (singleton — the default channel)
+- `'logger'` (string-key singleton — alias for `Logger`)
+
+`boot()` resolves the manager eagerly so misconfigured logging fails at boot, not at the first log call inside a request. `shutdown()` flushes every channel destination.
+
+```ts
+import { ConfigProvider, LoggerProvider } from '@strav/kernel'
+import loggerConfig from '../config/logger.ts'
+
+export default [
+  new ConfigProvider({ logger: loggerConfig }),
+  new LoggerProvider(),
+]
+```
+
+## `compileRedactor`
+
+Stand-alone redactor factory (the same one `LogManager` uses internally). Useful if you want the redaction guarantee outside the logger path — say, before forwarding an error context to Sentry.
+
+```ts
+import { compileRedactor } from '@strav/kernel'
+
+const redact = compileRedactor({ paths: ['password', '**.token'], censor: '***' })
+sentry.captureException(err, { contexts: { request: redact(ctx) } })
+```
+
+Returns a function `<T>(value: T) => T` that clones the input and replaces matching paths with the censor string.
 
 ## `env`
 

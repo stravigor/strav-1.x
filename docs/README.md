@@ -17,11 +17,11 @@ docs/
 
 ## Status
 
-The framework is in **M1 (Skeleton + Kernel)** implementation. Documentation lands package-by-package as packages ship:
+The framework is in **M2 (HTTP + Database)** implementation. Documentation lands package-by-package as packages ship:
 
 | Package | Doc status |
 |---|---|
-| `@strav/kernel` | M1 in progress — `docs/kernel/` lands with the Container implementation |
+| `@strav/kernel` | M1 complete + M2 in progress (`Logger` shipped); see `docs/kernel/` |
 | Others | Pending — land with their respective milestones (see `spec/implementation-plan.md`) |
 
 ## How to read

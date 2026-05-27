@@ -2,9 +2,9 @@
 
 Foundation of the Strav framework. Ships the IoC container, the service-provider lifecycle, configuration, the event bus, helpers, encryption, storage, cache, i18n, logger, and the session abstraction.
 
-> **Status: 1.0.0-alpha — M1 complete.**
-> Shipping: **Container**, `@inject()`, **ServiceProvider**, **Application**, full **EventBus** (cancelable, parallel, wildcards, batch), **ConfigRepository**, **ConfigProvider**, `env()`, **StravError** hierarchy + `asStravError`, helpers (`Clock`, `ulid`, `randomToken`, `sha256`, `hmacSha256`, `constantTimeEqual`, `randomUUID`), **ConsoleKernel** + `Command` framework, e2e boot smoke at `tests/e2e/m1-boot/`.
-> Up next (M2): `Logger`, `HttpKernel`, router, middleware, `Context`, request/response helpers.
+> **Status: 1.0.0-alpha — M2 in progress.**
+> Shipping: **Container**, `@inject()`, **ServiceProvider**, **Application**, full **EventBus** (cancelable, parallel, wildcards, batch), **ConfigRepository**, **ConfigProvider**, `env()`, **StravError** hierarchy + `asStravError`, helpers (`Clock`, `ulid`, `randomToken`, `sha256`, `hmacSha256`, `constantTimeEqual`, `randomUUID`), **ConsoleKernel** + `Command` framework, **Logger** + **LogManager** + **LoggerProvider** (Pino-backed; `stack`/`stderr`/`single`/`daily` drivers, deep-glob redaction), e2e boot smoke at `tests/e2e/m1-boot/`.
+> Up next (M2): `HttpKernel`, router, middleware, `Context`, request/response helpers.
 
 ## Install
 
@@ -18,19 +18,33 @@ bun add @strav/kernel
 import { Container, inject } from '@strav/kernel'
 
 @inject()
-class Logger {
-  info(msg: string) { console.log('[info]', msg) }
+class Mailer {
+  send(to: string, subject: string) { /* … */ }
 }
 
 @inject()
 class UserService {
-  constructor(private log: Logger) {}
-  greet(name: string) { this.log.info(`hello ${name}`) }
+  constructor(private mailer: Mailer) {}
+  welcome(email: string) { this.mailer.send(email, 'Welcome!') }
 }
 
-const app = new Container().singleton(Logger)
-app.make(UserService).greet('world')
-// [info] hello world
+const app = new Container().singleton(Mailer)
+app.make(UserService).welcome('user@example.com')
+```
+
+For a full app with `Application` + providers, the typical bootstrap is:
+
+```ts
+import { Application, ConfigProvider, LoggerProvider } from '@strav/kernel'
+import loggerConfig from './config/logger.ts'
+
+const app = new Application()
+  .useProviders([
+    new ConfigProvider({ logger: loggerConfig }),
+    new LoggerProvider(),
+  ])
+
+await app.start()
 ```
 
 ## What's here
@@ -50,6 +64,10 @@ app.make(UserService).greet('world')
 | `ConsoleKernel` | Argv → command dispatch, exit code; `static run({...})` convenience for `bin/strav.ts` |
 | `Command` / `CommandContext` / `ConsoleOutput` | The console command framework |
 | `parseArgv` | Standalone argv parser (positional + `--flag=val` / `--flag val` / `-f` / `--`) |
+| `Logger` | Pino-backed logger: `info`/`warn`/…, `child(ctx)`, `channel(name)`, redaction-before-serialize |
+| `LogManager` | Channel registry built from `config.logger`; one logger per channel, lifecycle owner |
+| `LoggerProvider` | Binds `Logger` / `LogManager` / `'logger'` alias; fails fast on bad config |
+| `compileRedactor` | Stand-alone path-based redactor (`password`, `*.password`, `**.token`); same engine the logger uses |
 | `Container` | IoC container with `register` / `singleton` / `scoped` / `bind` / `tag` / `when` |
 | `@inject()` | Class decorator marking constructor-injectable classes |
 | `isInjectable` | Runtime check for the marker |
@@ -81,5 +99,6 @@ import { Container } from '@strav/kernel'
 - [`guides/errors.md`](./guides/errors.md) — the `StravError` hierarchy, custom codes, `asStravError`, `toJSON` serialization, when not to use a typed error.
 - [`guides/helpers.md`](./guides/helpers.md) — `Clock` (test-friendly "now"), ULID generation, crypto primitives (random tokens, hashing, constant-time compare).
 - [`guides/console.md`](./guides/console.md) — Command anatomy, `ConsoleKernel.run`, argv parsing, output writers, DI in commands, long-running command patterns, test recipes.
+- [`guides/logger.md`](./guides/logger.md) — channels (`stack` / `stderr` / `single` / `daily`), levels, structured fields, child loggers, redaction (with deep `**` globs), lifecycle.
 
 More guides land as the kernel grows.
