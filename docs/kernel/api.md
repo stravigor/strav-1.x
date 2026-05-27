@@ -2,8 +2,8 @@
 
 This page lists every public export of `@strav/kernel` with signature, semantics, and a minimal example.
 
-> **Status:** Reflects what's implemented as of M1.8 — `Container`, `@inject()`, `ServiceProvider`, `Application`, minimal `EventBus`, `ConfigRepository`, `ConfigProvider`, and the `env()` helper.
-> Full `EventBus` (parallel + cancelable), `Logger`, more helpers, and the remaining subsystems will appear here as they land.
+> **Status:** Reflects what's implemented as of M1.9 — `Container`, `@inject()`, `ServiceProvider`, `Application`, full `EventBus` (parallel, cancelable, wildcards, batch), `ConfigRepository`, `ConfigProvider`, and the `env()` helper.
+> `Logger`, more helpers, `StravError` hierarchy, `ConsoleKernel`, and the remaining subsystems will appear here as they land.
 
 ## `Application`
 
@@ -162,9 +162,7 @@ Async cleanup. Runs in reverse boot order on SIGINT / SIGTERM / `app.shutdown()`
 
 ## `EventBus`
 
-Per-application event dispatcher (M1.7 surface). Sequential dispatch, FIFO order, errors propagate.
-
-> M1.9 extends this with `emitParallel`, batch `subscribe`, wildcards, and the cancelable-vs-non-cancelable contract. The M1.7 surface below is the minimum the Application needs.
+Per-application event dispatcher. Implements the full multi-listener contract from `spec/lifecycles.md`: sequential dispatch (`emit`), parallel dispatch (`emitParallel`), the cancelable-vs-non-cancelable error contract, wildcards (`*`, `prefix.*`), batch registration, and three listener shapes (function / class with `handle()` / instance with `handle()`).
 
 ```ts
 app.events.on('user.created', async (user) => {
@@ -172,40 +170,112 @@ app.events.on('user.created', async (user) => {
 })
 ```
 
-### `on<P>(name, fn)` → `Unsubscribe`
+### `on(name, listener)` → `Unsubscribe`
 
 Register a listener. Returns a function that removes the listener.
 
 ```ts
 const off = app.events.on('user.created', listener)
-off()  // remove
+off()
 ```
 
-### `once<P>(name, fn)` → `Unsubscribe`
+The listener can be:
 
-Same as `on` but fires at most once. The listener is removed from the dispatch list **before** its handler runs, so re-entrant emits don't re-trigger it.
+- A plain function: `(payload, name?) => void | Promise<void>`
+- A class with `handle()`: `@inject() class HandleUserCreated { handle(p) { ... } }` — the framework constructs it via the container on each dispatch
+- An object with `handle()`: `{ handle(p) { ... } }` — used as a singleton listener
 
-### `emit<P>(name, payload?)` → `Promise<void>`
+### Batch registration
 
-Dispatch `payload` to every registered listener, sequentially in registration order, awaiting async listeners. Resolves after the last listener returns.
+Four shapes — all return one `Unsubscribe` that removes every registration made by the call:
 
-If a listener throws, the error propagates from `emit` and remaining listeners do not run. (M1.9 will refine this with the cancelable contract.)
+```ts
+app.events.on('user.created', [listener1, listener2])
+app.events.on(['user.created', 'user.updated'], listener)
+app.events.on(['e1', 'e2'], [a, b])           // cross-product
+
+app.events.subscribe({
+  'user.created':   [sendWelcomeEmail, logAudit],
+  'user.deleted':   cleanupAccount,
+  'user.*':         logUserEvent,
+})
+```
+
+### `once(name, listener)` → `Unsubscribe`
+
+Fires at most once. The listener is removed from the dispatch list **before** its handler runs, so re-entrant emits don't re-trigger it.
+
+### `emit(name, payload?)` → `Promise<void>`
+
+Dispatch to every matching listener **sequentially** in registration order, awaiting async listeners.
+
+Error contract:
+
+- **Non-cancelable event**: a listener throw is caught and reported via the `onListenerError` handler (default `console.error`). Remaining listeners still run. `emit` resolves.
+- **Cancelable event**: the first listener throw rejects `emit`, subsequent listeners do **not** run.
+
+Default cancelable predicate matches the repository lifecycle gates: `*.creating`, `*.updating`, `*.deleting`, `*.restoring`. Override via `EventBusOptions.isCancelable`.
+
+### `emitParallel(name, payload?)` → `Promise<void>`
+
+Dispatch concurrently — `Promise.allSettled`-style.
+
+- **Forbidden on cancelable events.** Throws synchronously: cancellation requires sequential ordering.
+- Partial failure: errors reported via `onListenerError`, `emit` resolves.
+- Total failure (every listener failed): throws an `AggregateError` carrying every individual error.
+
+### Wildcards
+
+| Pattern | Matches |
+|---|---|
+| `*` | Every event |
+| `prefix.*` | `prefix.<one segment>` (e.g., `user.*` matches `user.created` but NOT `user.profile.updated`) |
+| exact name | Only that exact name |
+
+Wildcards interleave with specific listeners in registration order — there is one ordered dispatch list, not two.
+
+```ts
+app.events.on('user.*', (_, name) => log.info('user event', { name }))
+app.events.on('*',       (_, name) => metrics.increment('events.total'))
+```
 
 ### `removeAllListeners(name?)`
 
-Remove listeners for one event name (with `name`) or all events (without).
+Remove every listener for an exact pattern (with `name`) or every listener everywhere (without).
 
-### `listenerCount(name)`
+### `listenerCount(pattern)`
 
-Diagnostic. Returns the number of listeners registered for `name`.
+Diagnostic. Returns the number of listeners registered under an exact pattern. Wildcard listeners registered under `user.*` are counted there, not under `user.created`.
 
-### `Listener<P>`
+### `setErrorHandler(fn)`
+
+Replace the error handler used for non-cancelable listener throws. The Application wires its `ExceptionHandler` here when M1.10 lands.
+
+### `EventBusOptions`
+
+```ts
+interface EventBusOptions {
+  resolver?:        <T>(Class: Constructor<T>) => T
+  isCancelable?:    (name: string) => boolean
+  onListenerError?: (error: unknown, eventName: string) => void
+}
+```
+
+The `Application` constructs `app.events` with a resolver bound to `app.make`, so class listeners are auto-constructed via the container on each dispatch.
+
+### Listener types
 
 ```ts
 type Listener<P = unknown> = (payload: P, name?: string) => void | Promise<void>
-```
 
-The second argument is the event name — useful for listeners attached to multiple events (M1.9 batch subscribe).
+type ListenerClass<P = unknown> = new (...args: any[]) => ListenerInstance<P>
+
+interface ListenerInstance<P = unknown> {
+  handle(payload: P, name?: string): void | Promise<void>
+}
+
+type AnyListener<P = unknown> = Listener<P> | ListenerClass<P> | ListenerInstance<P>
+```
 
 ## `ConfigRepository`
 

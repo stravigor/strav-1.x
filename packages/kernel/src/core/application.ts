@@ -14,6 +14,7 @@
 import { EventBus } from '../events/event_bus.ts'
 import { Container } from './container.ts'
 import type { ServiceProvider } from './service_provider.ts'
+import type { Constructor } from './types.ts'
 
 /** How long shutdown is allowed to take before the process is force-exited. */
 const SHUTDOWN_TIMEOUT_MS = 30_000
@@ -31,8 +32,16 @@ export interface StartOptions {
 }
 
 export class Application extends Container {
-  /** Per-application event bus. Survives until the app is fully shut down. */
-  readonly events: EventBus = new EventBus()
+  /**
+   * Per-application event bus. Survives until the app is fully shut down.
+   *
+   * The bus is constructed with a resolver bound to `this.make` so class
+   * listeners are auto-constructed via the container on each dispatch. See
+   * `docs/kernel/guides/events.md`.
+   */
+  readonly events: EventBus = new EventBus({
+    resolver: <T>(Class: Constructor<T>): T => this.make(Class),
+  })
 
   private _providers: ServiceProvider[] = []
   private _bootedProviders: ServiceProvider[] = []
