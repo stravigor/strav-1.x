@@ -1,9 +1,10 @@
 // Public API of @strav/database.
 //
-// Foundation slice: connection pool (Bun.SQL), schema DSL, schema registry,
-// migration runner. Repository pattern, query builder, Model class, RLS
-// scoping, eager loading, encrypted-at-rest, schema-diff migration
-// generator all land in follow-up cuts.
+// Foundation slice + ORM slice: connection pool (Bun.SQL), schema DSL,
+// schema registry, migration runner, Model class, Repository<T>, basic
+// QueryBuilder. RLS scoping, eager loading, encryption-at-rest, schema-
+// diff migration generator, repository hooks, pagination helpers, soft-
+// delete integration land in follow-up cuts.
 
 export {
   type Database,
@@ -24,6 +25,25 @@ export {
   type MigrationRunResult,
   type MigrationStatus,
 } from './migrations/index.ts'
+export {
+  type BuiltQuery,
+  type EmittedSql,
+  emitDeleteById,
+  emitFindById,
+  emitFindMany,
+  emitInsert,
+  emitUpdateById,
+  hasField,
+  hydrateRow,
+  isModelClass,
+  Model,
+  type ModelClass,
+  QueryBuilder,
+  quoteIdent,
+  Repository,
+  selectColumnList,
+  type WhereOperator,
+} from './orm/index.ts'
 export {
   Archetype,
   type BigSerialField,

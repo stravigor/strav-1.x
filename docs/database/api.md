@@ -1,6 +1,6 @@
 # @strav/database — API Reference
 
-> **Status:** Reflects what's implemented as of M2 (database foundation slice) — Database wrapper, DatabaseProvider, Schema DSL, SchemaRegistry, MigrationRunner. Repository / Model / query builder / RLS / migration generator land in follow-up cuts.
+> **Status:** Reflects what's implemented as of M2 (foundation + ORM slice) — Database wrapper, DatabaseProvider, Schema DSL, SchemaRegistry, MigrationRunner, Model, Repository<T>, QueryBuilder, SQL emitter. RLS scoping, decorators, repository hooks, soft-delete integration, relationships + eager loading, pagination, joins/CTEs, schema-diff migration generator land in follow-up cuts.
 
 ## `Database` / `PostgresDatabase`
 
@@ -243,3 +243,116 @@ Each migration's `up()` / `down()` runs in its own transaction along with the tr
 The package ships an `InMemoryDatabase` stub for unit-testing the runner without Postgres (see `packages/database/tests/in_memory_database.ts`). It simulates the tracking-table queries the runner emits and records every other SQL string so tests can assert what a migration tried to run.
 
 Full Postgres integration tests need an actual database — those land with CI setup, separately from the package's unit suite.
+
+## `Model`
+
+```ts
+class Model {
+  static readonly schema: Schema | undefined   // subclasses MUST set
+}
+
+interface ModelClass<T extends Model = Model> {
+  schema: Schema
+  new (): T
+}
+
+function hydrateRow<T extends object>(schema: Schema, row, target: T): T
+function isModelClass(value: unknown): value is ModelClass
+```
+
+Subclasses declare `static schema = userSchema` and add typed fields. `hydrateRow` copies schema-declared columns from a DB row onto a fresh instance; the `Repository` calls it internally on every find/create/update.
+
+Decorators (`@encrypt` / `@hidden` / `@cast` / `@ulid`) land with the encryption + serialization slice. For now, the Model is a pure data holder.
+
+## `Repository<TModel>`
+
+Injectable data-access object. Subclasses declare `static schema = …` and `static model = …`; the base resolves them at construction.
+
+```ts
+abstract class Repository<TModel> {
+  static readonly schema: Schema
+  static readonly model: ModelClass
+
+  constructor(db: PostgresDatabase)
+
+  find(id): Promise<TModel | null>
+  findOrFail(id): Promise<TModel>             // throws NotFoundError
+  findMany(ids): Promise<TModel[]>             // empty list short-circuits
+  first(): Promise<TModel | null>
+  all(): Promise<TModel[]>
+
+  create(attrs: Partial<TModel>): Promise<TModel>
+  update(model: TModel, changes: Partial<TModel>): Promise<TModel>
+  delete(model: TModel): Promise<void>
+
+  query(): QueryBuilder<TModel>
+
+  exists(where: Partial<TModel>): Promise<boolean>
+  count(where?: Partial<TModel>): Promise<number>
+}
+```
+
+### What's automatic
+
+- **ULID on `create`** when the schema declared `t.id()` and the caller didn't supply `attrs.id`. UUID schemas (`t.uuid()`) get `crypto.randomUUID()`.
+- **`updated_at` bump on `update`** when the schema declared `t.timestamps()` and the caller didn't supply `changes.updated_at`.
+- **`created_at` / `updated_at` on `create`** — not bound at all when absent from attrs; the schema's `DEFAULT now()` fires. One source of time truth (the DB).
+- **`RETURNING *` on `create` / `update`** — Repository hydrates the canonical post-write row.
+
+### What's NOT automatic
+
+See [`guides/repositories.md`](./guides/repositories.md) — lifecycle hooks, soft-delete integration, relationships + eager loading, pagination, and the `tx?` parameter all land in follow-up slices.
+
+## `QueryBuilder<TModel>`
+
+Fluent SELECT builder. Returned by `Repository#query()`. Immutable per chain — every modifier returns a fresh builder.
+
+```ts
+class QueryBuilder<TModel> {
+  select(...columns: string[]): QueryBuilder<TModel>
+  where(col, value): QueryBuilder<TModel>
+  where(col, op: WhereOperator, value): QueryBuilder<TModel>
+  where(criteria: Partial<Record<string, unknown>>): QueryBuilder<TModel>
+  whereIn(col, values): QueryBuilder<TModel>
+  whereNotIn(col, values): QueryBuilder<TModel>
+  whereNull(col): QueryBuilder<TModel>
+  whereNotNull(col): QueryBuilder<TModel>
+  orderBy(col, dir?: 'asc' | 'desc'): QueryBuilder<TModel>
+  limit(n): QueryBuilder<TModel>
+  offset(n): QueryBuilder<TModel>
+
+  toSql(): { sql: string; params: unknown[] }
+
+  get(): Promise<TModel[]>
+  first(): Promise<TModel | null>             // implicit LIMIT 1
+  firstOrFail(): Promise<TModel>
+  count(): Promise<number>                     // SELECT COUNT(*) — ignores LIMIT
+  exists(): Promise<boolean>                   // SELECT 1 ... LIMIT 1
+  pluck<T>(column: string): Promise<T[]>
+}
+
+type WhereOperator =
+  | '=' | '<>' | '<' | '<=' | '>' | '>='
+  | 'like' | 'ilike'
+  | 'in' | 'not in'
+  | 'is null' | 'is not null'
+```
+
+Empty `whereIn`/`whereNotIn` arrays emit `FALSE`/`TRUE` so the query stays valid SQL.
+
+## SQL emitter
+
+Lower-level helpers the Repository + QueryBuilder compose. Exposed publicly for apps that need raw SQL emission with the same conventions (ULID auto-gen, identifier quoting, parameter binding, RETURNING).
+
+```ts
+function quoteIdent(name: string): string
+function selectColumnList(schema: Schema): string
+function emitInsert(schema, attrs): { sql, params }
+function emitUpdateById(schema, id, changes): { sql, params }   // throws on empty changes
+function emitDeleteById(schema, id): { sql, params }
+function emitFindById(schema, id): { sql, params }
+function emitFindMany(schema, ids): { sql, params }
+function hasField(schema, name, kind?): boolean
+```
+
+`emitInsert` mints a fresh ULID/UUID when the schema declares an `id` field and the caller didn't supply one. `emitUpdateById` auto-appends `updated_at = now()` when the schema declared `t.timestamps()` and the caller didn't supply a value — and throws when there's nothing to update (an "update" with no caller-supplied changes is a programmer error).
