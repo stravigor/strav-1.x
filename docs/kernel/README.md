@@ -3,8 +3,8 @@
 Foundation of the Strav framework. Ships the IoC container, the service-provider lifecycle, configuration, the event bus, helpers, encryption, storage, cache, i18n, logger, and the session abstraction.
 
 > **Status: 1.0.0-alpha — M1 in progress.**
-> Currently implemented: **Container**, `@inject()`, **ServiceProvider**, **Application**, minimal **EventBus** (M1.9 will extend).
-> Up next: `ConfigRepository`, `Logger`, helpers, full `EventBus`.
+> Currently implemented: **Container**, `@inject()`, **ServiceProvider**, **Application**, minimal **EventBus** (M1.9 will extend), **ConfigRepository**, **ConfigProvider**, `env()` helper.
+> Up next: `Logger`, more helpers (ULID, crypto, clock), full `EventBus`.
 
 ## Install
 
@@ -40,6 +40,9 @@ app.make(UserService).greet('world')
 | `Application` | `Container` + provider lifecycle (topo-sort, boot, shutdown, signals, events) |
 | `ServiceProvider` | Abstract base for `register` / `boot` / `shutdown` lifecycle |
 | `EventBus` | Minimal `on` / `once` / `emit` (M1.9 extends) |
+| `ConfigRepository` | Typed dotted-path config; frozen after `app:booted` |
+| `ConfigProvider` | Binds the repository, arranges the freeze on `app:booted` |
+| `env()` | Typed env-var reader for `config/*.ts` files |
 | `Container` | IoC container with `register` / `singleton` / `scoped` / `bind` / `tag` / `when` |
 | `@inject()` | Class decorator marking constructor-injectable classes |
 | `isInjectable` | Runtime check for the marker |
@@ -64,5 +67,6 @@ import { Container } from '@strav/kernel'
 - [`api.md`](./api.md) — every public export, signature, semantics.
 - [`guides/container.md`](./guides/container.md) — binding patterns, scopes, contextual + tagged bindings, common pitfalls.
 - [`guides/providers.md`](./guides/providers.md) — provider lifecycle, dependency ordering, boot rollback, common patterns.
+- [`guides/configuration.md`](./guides/configuration.md) — config files, env helpers, freeze contract, type-safe sections.
 
 More guides land as the kernel grows.

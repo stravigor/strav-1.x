@@ -2,8 +2,8 @@
 
 This page lists every public export of `@strav/kernel` with signature, semantics, and a minimal example.
 
-> **Status:** Reflects what's implemented as of M1.7 — `Container`, `@inject()`, `ServiceProvider`, `Application`, and a minimal `EventBus`.
-> `ConfigRepository`, full `EventBus` (parallel + cancelable), `Logger`, helpers, and the various subsystems will appear here as they land.
+> **Status:** Reflects what's implemented as of M1.8 — `Container`, `@inject()`, `ServiceProvider`, `Application`, minimal `EventBus`, `ConfigRepository`, `ConfigProvider`, and the `env()` helper.
+> Full `EventBus` (parallel + cancelable), `Logger`, more helpers, and the remaining subsystems will appear here as they land.
 
 ## `Application`
 
@@ -206,6 +206,153 @@ type Listener<P = unknown> = (payload: P, name?: string) => void | Promise<void>
 ```
 
 The second argument is the event name — useful for listeners attached to multiple events (M1.9 batch subscribe).
+
+## `ConfigRepository`
+
+Typed key-value store keyed by dotted path. Built from `config/*.ts` files, frozen after `app:booted`.
+
+```ts
+import { ConfigRepository } from '@strav/kernel'
+
+const config = app.resolve(ConfigRepository)
+// or
+const config = app.resolve<ConfigRepository>('config')
+```
+
+### `get(key)` / `get(key, default)`
+
+Read a value by dotted path. Returns `defaultValue` (or `undefined`) when the path is missing. Falsy values (`0`, `''`, `false`) are returned as-is, not replaced.
+
+```ts
+config.get<string>('app.name')                       // string | undefined
+config.get<string>('app.name', 'fallback')           // string
+config.get<number>('database.pool.max', 10)
+```
+
+### `has(key)`
+
+`true` if the dotted path resolves to a value (other than `undefined`).
+
+### `section<T>(key)`
+
+Read a typed sub-tree. Throws if the section is missing — use this when a section is required.
+
+```ts
+const db = config.section<DbConfig>('database')
+db.host  // typed
+```
+
+### `set(key, value)` / `merge(entries)`
+
+Write a value by dotted path. Intermediate path segments are created as needed. Throws after `freeze()` has been called.
+
+```ts
+config.set('cache.default', 'redis')
+config.merge({ 'app.name': 'test', 'db.host': '127.0.0.1' })
+```
+
+Use only during boot — once the app has fully booted, the repository is frozen.
+
+### `all()`
+
+Returns a deep-cloned snapshot of the entire config. Mutating the snapshot has no effect on the repository.
+
+### `freeze()` / `isFrozen()`
+
+Lock the repository. After `freeze()`, `set()` and `merge()` throw. The `ConfigProvider` calls this automatically when `app:booted` fires.
+
+### `ConfigData`
+
+```ts
+type ConfigData = Record<string, unknown>
+```
+
+The shape of the data the repository wraps. Each top-level key typically corresponds to a `config/<name>.ts` file's default export.
+
+## `ConfigProvider`
+
+Binds `ConfigRepository` and arranges the freeze-on-`app:booted` contract.
+
+```ts
+import { ConfigProvider } from '@strav/kernel'
+
+// In bootstrap/providers.ts
+import appConfig from '../config/app.ts'
+import dbConfig from '../config/database.ts'
+
+export default [
+  new ConfigProvider({ app: appConfig, database: dbConfig }),
+  // ... other providers
+]
+```
+
+`ConfigProvider` has no dependencies (`name = 'config'`, `dependencies = []`), so it registers first. Other providers can `c.resolve<ConfigRepository>('config')` in their `register()` and `boot()` methods.
+
+In `boot()`, `ConfigProvider` registers a `once('app:booted', ...)` listener that calls `config.freeze()`. Because it boots first, its listener is the first to fire when `app:booted` is emitted — so any user-registered listener sees the frozen config.
+
+## `env`
+
+Read environment variables with typed coercion + safe defaults. **Use only in `config/*.ts` files.**
+
+```ts
+import { env } from '@strav/kernel'
+
+export default {
+  name:     env('APP_NAME', 'my-app'),
+  port:     env.int('PORT', 3000),
+  debug:    env.bool('DEBUG', false),
+  trusted:  env.list('TRUSTED_IPS'),
+  key:      env.required('APP_KEY'),
+}
+```
+
+### `env(name)` / `env(name, default)`
+
+String. Returns `process.env[name]` or `defaultValue` if unset or empty.
+
+```ts
+env('APP_NAME')                  // string | undefined
+env('APP_NAME', 'my-app')        // string
+```
+
+### `env.int(name)` / `env.int(name, default)`
+
+Integer. Throws if the value is set but not a valid integer (e.g., `"3.14"` or `"abc"`).
+
+```ts
+env.int('PORT', 3000)
+env.int('TIMEOUT')               // number | undefined
+```
+
+### `env.bool(name)` / `env.bool(name, default)`
+
+Boolean. Recognises (case-insensitive): `1`, `true`, `yes`, `on`, `y` → `true`; `0`, `false`, `no`, `off`, `n`, `""` → `false`. Anything else throws.
+
+```ts
+env.bool('DEBUG', false)
+```
+
+### `env.list(name)` / `env.list(name, default)`
+
+String array. Splits on comma, trims each item, drops empties.
+
+```ts
+env.list('CORS_ORIGINS', ['*'])  // ['*'] or ['https://a.com', 'https://b.com']
+```
+
+### `env.required(name)`
+
+Throws `Error` if the env var is unset or empty. Returns a guaranteed `string`.
+
+```ts
+env.required('APP_KEY')          // string (or throws)
+```
+
+### `EnvFn`
+
+```ts
+type EnvFn = typeof env
+```
 
 ## `Container`
 

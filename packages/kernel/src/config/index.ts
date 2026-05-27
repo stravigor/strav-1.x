@@ -1,2 +1,1 @@
-// config subsystem — public exports land here.
-export {}
+export { type ConfigData, ConfigRepository } from './configuration.ts'

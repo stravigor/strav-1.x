@@ -1,2 +1,1 @@
-// providers subsystem — public exports land here.
-export {}
+export { ConfigProvider } from './config_provider.ts'

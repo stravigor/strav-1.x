@@ -1,2 +1,1 @@
-// helpers subsystem — public exports land here.
-export {}
+export { type EnvFn, env } from './env.ts'
