@@ -188,6 +188,74 @@ class SessionRepository extends Repository<Session> {
 
 `@inject()`-marked; the container resolves `PostgresDatabase` automatically. Apps that need to "kill all sessions for a user" use `.query().where('user_id', userId).get()` then delete each — a `killAllForUser` helper lands when the use case shows up.
 
+## `TokenGuard`
+
+Bearer-token guard. Authenticates via an `Authorization: Bearer <token>` header (both the header name and scheme are configurable for non-standard setups).
+
+```ts
+class TokenGuard<U extends Authenticatable> implements Guard<U> {
+  constructor(options: {
+    name?: string                 // default 'token'
+    headerName?: string           // default 'authorization'
+    scheme?: string               // default 'Bearer' (case-insensitive compare)
+    tokens: AccessTokenRepository
+    userResolver: (id: string) => Authenticatable | null | Promise<…>
+  })
+}
+```
+
+- **`authenticate(ctx)`** — pulls the bearer value off the configured header, calls `tokens.findByPlaintext(plaintext)` (one PK lookup + constant-time hash compare + expiry check), resolves the user. Returns `null` for missing/bad header, unknown token, hash mismatch, expired row, or deleted user.
+- **`login(ctx, user)`** — **throws.** Bearer tokens are minted out-of-band, not by a login flow. Apps mint tokens by calling `AccessTokenRepository.createToken(userId, name, opts?)` from a token-management endpoint.
+- **`logout(ctx)`** — revokes (deletes) the current request's token. Idempotent: missing header / invalid token / already-deleted row all no-op.
+
+### Token format
+
+Plaintext shape: `<row_id>|<secret>`.
+- `row_id` — the AccessToken row's PK (ULID, 26 chars). Cleartext on the wire; it's just a public identifier.
+- `secret` — 32 random bytes, base64url-encoded (~43 chars). Hashed (SHA-256, hex) for storage; the plaintext is shown to the user *once* by `createToken`.
+
+Lookup is a PK hit, not a hash scan. Same pattern Laravel Sanctum, GitHub PATs, and Stripe API keys use.
+
+### `AccessToken` Model
+
+```ts
+class AccessToken extends Model {
+  static schema = accessTokenSchema
+  id: string
+  user_id: string
+  name: string
+  hash: string                  // SHA-256 hex of the secret half
+  expires_at: Date | null       // null = never expires
+  created_at: Date
+  updated_at: Date
+
+  isValid(now?: Date): boolean  // `expires_at === null || expires_at > now`
+}
+```
+
+### `accessTokenSchema`
+
+The `@strav/database` Schema for `access_token`. Register it on your app's `SchemaRegistry` + migrate (`emitCreateTable(accessTokenSchema)`). See [`guides/tokens.md`](./guides/tokens.md) for the full migration.
+
+### `AccessTokenRepository`
+
+```ts
+class AccessTokenRepository extends Repository<AccessToken> {
+  createToken(
+    userId: string,
+    name: string,
+    opts?: { expiresInSeconds?: number | null },
+  ): Promise<{ plaintext: string; model: AccessToken }>
+
+  findByPlaintext(plaintext: string, now?: Date): Promise<AccessToken | null>
+
+  revokeAllForUser(userId: string): Promise<number>
+  // …plus all Repository methods.
+}
+```
+
+`createToken` returns the plaintext exactly once — store nothing on the server. `findByPlaintext` is what the guard calls per-request: parses `id|secret`, looks up by id, constant-time-compares `sha256(secret)` vs stored hash, checks `expires_at`. `revokeAllForUser` is the "log out everywhere" / "user deleted" helper.
+
 ## Middleware — `auth` / `guest`
 
 Both registered as **factory** entries on the `MiddlewareRegistry`. The `:` suffix on the registry name selects the guard:
@@ -218,7 +286,7 @@ Both middleware short-circuit by returning the thrown error through the kernel's
 
 ## `AuthProvider`
 
-`name = 'auth'`, `dependencies = ['config', 'http']`. Binds `Hasher`, `SessionRepository`, `AuthManager`; auto-registers `auth` / `guest` middleware; installs a `ctx.auth` enricher on `HttpKernel`. `boot()` eagerly resolves the manager so config errors surface at boot.
+`name = 'auth'`, `dependencies = ['config', 'http']`. Binds `Hasher`, `SessionRepository`, `AccessTokenRepository`, `AuthManager`; auto-registers `auth` / `guest` middleware; installs a `ctx.auth` enricher on `HttpKernel`. `boot()` eagerly resolves the manager so config errors surface at boot.
 
 ```ts
 interface AuthConfigShape {
@@ -236,10 +304,16 @@ type GuardConfigEntry =
       ttlSeconds?: number
       secure?: boolean
     }
-  // Future: 'token' | 'jwt' as their drivers land.
+  | {
+      driver: 'token'
+      userResolverService: string
+      headerName?: string           // default 'authorization'
+      scheme?: string               // default 'Bearer'
+    }
+  // Future: 'jwt' lands with its slice.
 ```
 
-The `'session'` driver requires `@strav/database`'s `DatabaseProvider` to have booted first (SessionRepository needs `PostgresDatabase`). `userResolverService` must point at a container binding that exposes `.find(id)` — every `@strav/database` Repository does. Misconfigured bindings throw `ConfigError` at boot.
+Both the `'session'` and `'token'` drivers require `@strav/database`'s `DatabaseProvider` to have booted first (their Repositories need `PostgresDatabase`). `userResolverService` must point at a container binding that exposes `.find(id)` — every `@strav/database` Repository does. Misconfigured bindings throw `ConfigError` at boot.
 
 Each guard's `name` property MUST match its config key — the provider validates this at boot.
 

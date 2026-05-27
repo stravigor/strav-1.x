@@ -2,9 +2,9 @@
 
 Authentication primitives for Strav 1.0 — `Hasher` (argon2id), guards, the per-request `ctx.auth` façade, and `auth` / `guest` middleware.
 
-> **Status: 1.0.0-alpha — M2 in progress (foundation + SessionGuard slice).**
-> Shipping: **Hasher** (Bun.password / argon2id), **Authenticatable** contract, **Guard** + **AuthManager** + **AuthContext** (`ctx.auth`), **MemoryGuard** (dev/test), **SessionGuard** (production cookie-based, DB-backed via `@strav/database`), **Session** Model + Schema + **SessionRepository**, **auth / guest middleware**, **AuthProvider** (auto-wires the lot + the `'session'` driver entry).
-> Deferred (each its own slice): opaque-**TokenGuard** (next), **magic links**, **email verification**, **TOTP**, **session payload** (flash / CSRF / locale storage on a `jsonb` column), **sliding-window expiry** (touch `expires_at` on each request), **session-fixation prevention** (rotate session id on login), **session cleanup command** (`sessions:gc`). **JWT** driver opt-in: post-1.0.
+> **Status: 1.0.0-alpha — M2 in progress (foundation + Session + Token slices).**
+> Shipping: **Hasher** (Bun.password / argon2id), **Authenticatable** contract, **Guard** + **AuthManager** + **AuthContext** (`ctx.auth`), **MemoryGuard** (dev/test), **SessionGuard** (production cookie-based, DB-backed), **TokenGuard** (bearer-token, DB-backed; `<id>|<secret>` plaintext with SHA-256 hash storage + constant-time verification), **Session** + **AccessToken** Models / Schemas / Repositories, **auth / guest middleware**, **AuthProvider** (auto-wires the lot + `'session'` / `'token'` driver entries).
+> Deferred (each its own slice): **magic links**, **email verification**, **TOTP**, **session payload** (flash / CSRF / locale storage on a `jsonb` column), **sliding-window expiry**, **session-fixation prevention** (rotate session id on login), **session cleanup command** (`sessions:gc`), **token abilities / scopes** (lands with auth policies), **token `last_used_at` updates** (needs write batching). **JWT** driver opt-in: post-1.0.
 
 ## Install
 
@@ -70,6 +70,10 @@ export default {
 | `Session` | Session row Model — id, user_id, expires_at, timestamps |
 | `sessionSchema` | The `@strav/database` Schema for the `session` table — register + migrate |
 | `SessionRepository` | Repository<Session> with `findValid(id)` and `deleteExpired(now?)` |
+| `TokenGuard` | Bearer-token guard backed by the `access_token` table |
+| `AccessToken` | Token row Model — id, user_id, name, hash, expires_at, timestamps |
+| `accessTokenSchema` | The `@strav/database` Schema for the `access_token` table — register + migrate |
+| `AccessTokenRepository` | Repository<AccessToken> with `createToken` / `findByPlaintext` / `revokeAllForUser` |
 | `authMiddleware` / `guestMiddleware` | Functions returned by the registered `auth` / `guest` middleware factories |
 | `AUTH_BUILTIN_NAMES` | String-key constants used in `config.http.middleware` and `route.middleware('...')` |
 | `AuthProvider` | ServiceProvider that binds Hasher + AuthManager and auto-wires `ctx.auth` |
@@ -81,3 +85,4 @@ export default {
 - [`guides/setup.md`](./guides/setup.md) — wiring AuthProvider, building a custom guard, the `config.auth` shape, the `ctx.auth` lifecycle.
 - [`guides/middleware.md`](./guides/middleware.md) — `auth` / `guest` middleware (with the `:guardName` factory form), error responses, ordering.
 - [`guides/sessions.md`](./guides/sessions.md) — SessionGuard / Session schema + migration, what's deferred (sliding-window expiry, payload column, session rotation, cleanup command), production checklist.
+- [`guides/tokens.md`](./guides/tokens.md) — TokenGuard / AccessToken schema + migration, token format, minting and verifying, what's deferred (abilities/scopes, `last_used_at`), production checklist.

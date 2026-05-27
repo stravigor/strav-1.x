@@ -3,21 +3,22 @@
  *
  * Bindings:
  *   - `Hasher` (singleton)
- *   - `SessionRepository` (singleton; resolved via `@inject()` against PostgresDatabase)
+ *   - `SessionRepository` + `AccessTokenRepository` (singletons; resolved
+ *     via `@inject()` against PostgresDatabase)
  *   - `AuthManager` (singleton; built from `config.auth.default`)
  *   - The `auth` / `guest` middleware on `MiddlewareRegistry` (auto-registered)
  *
  * The provider's `boot()`:
  *   - Reads `config.auth.guards` and registers each guard with the manager.
- *     Built-in drivers: `memory`, `session`. (`token` lands with the next
- *     auth slice.) Custom guards register themselves in their own provider.
+ *     Built-in drivers: `custom`, `session`, `token`. Custom guards
+ *     register themselves in their own provider.
  *   - Installs an HTTP context enricher that attaches `ctx.auth` to every
  *     request.
  *
- * Depends on `'http'` for the kernel + MiddlewareRegistry. `session` driver
- * use depends on `'database'` being booted first (the SessionRepository
- * needs `PostgresDatabase`); apps using session guards must list it in
- * `useProviders([…DatabaseProvider, AuthProvider])`.
+ * Depends on `'http'` for the kernel + MiddlewareRegistry. The `session`
+ * and `token` drivers depend on `'database'` being booted first (their
+ * Repositories need `PostgresDatabase`); apps using either must list
+ * DatabaseProvider before AuthProvider in `useProviders([...])`.
  */
 
 import { HttpKernel, MiddlewareRegistry } from '@strav/http'
@@ -36,6 +37,8 @@ import { guestMiddleware } from './middleware/guest_middleware.ts'
 import { AUTH_BUILTIN_NAMES } from './middleware/index.ts'
 import { SessionGuard } from './session/session_guard.ts'
 import { SessionRepository } from './session/session_repository.ts'
+import { AccessTokenRepository } from './token/access_token_repository.ts'
+import { TokenGuard } from './token/token_guard.ts'
 
 export interface AuthConfigShape {
   /** Default guard name; matches a key in `guards`. */
@@ -75,7 +78,22 @@ export type GuardConfigEntry =
       /** HTTPS-only cookie. Default true. Flip to false for local HTTP dev. */
       secure?: boolean
     }
-// Future: 'token' | 'jwt' driver descriptors land with their respective slices.
+  | {
+      /**
+       * Bearer-token guard. Reads `Authorization: Bearer <token>` and
+       * verifies via `AccessTokenRepository.findByPlaintext`. Tokens are
+       * minted out-of-band (typically a token-management endpoint) by
+       * calling `tokens.createToken(userId, name, opts?)`.
+       */
+      driver: 'token'
+      /** Container binding key the user loader is registered under. */
+      userResolverService: string
+      /** Request header to read. Default `'authorization'`. */
+      headerName?: string
+      /** Scheme prefix. Default `'Bearer'`. Case-insensitive. */
+      scheme?: string
+    }
+// Future: 'jwt' driver descriptor lands with its slice.
 
 export class AuthProvider extends ServiceProvider {
   override readonly name = 'auth'
@@ -87,11 +105,12 @@ export class AuthProvider extends ServiceProvider {
       return new Hasher(config?.hasher ?? {})
     })
 
-    // SessionRepository is `@inject()`-marked; the container resolves
-    // its PostgresDatabase constructor param automatically. Bound here
-    // so a) apps using `driver: 'session'` get it for free, and b) apps
-    // not using sessions don't pay for it (lazy resolution).
+    // SessionRepository + AccessTokenRepository are `@inject()`-marked;
+    // the container resolves their PostgresDatabase constructor param
+    // automatically. Bound here so apps using `driver: 'session' | 'token'`
+    // get them for free; apps not using them don't pay (lazy resolution).
     app.singleton(SessionRepository)
+    app.singleton(AccessTokenRepository)
 
     app.singleton(AuthManager, (c) => {
       const config = c.resolve(ConfigRepository).get('auth') as AuthConfigShape | undefined
@@ -176,7 +195,18 @@ export class AuthProvider extends ServiceProvider {
         userResolver,
       })
     }
-    // Future: 'token' / 'jwt'. Today's exhaustive check surfaces typos loud.
+    if (entry.driver === 'token') {
+      const tokens = app.resolve(AccessTokenRepository)
+      const userResolver = this.buildUserResolver(app, name, entry.userResolverService)
+      return new TokenGuard({
+        name,
+        headerName: entry.headerName,
+        scheme: entry.scheme,
+        tokens,
+        userResolver,
+      })
+    }
+    // Future: 'jwt'. Today's exhaustive check surfaces typos loud.
     throw new ConfigError(
       `AuthProvider: guard "${name}" uses driver "${(entry as { driver: string }).driver}" which is not implemented yet. ` +
         `Register a custom guard on the container and use { driver: 'custom', service: '<name>' }.`,

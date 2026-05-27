@@ -29,3 +29,12 @@ export {
   SessionRepository,
   sessionSchema,
 } from './session/index.ts'
+export {
+  AccessToken,
+  AccessTokenRepository,
+  accessTokenSchema,
+  type CreateTokenOptions,
+  type MintedToken,
+  TokenGuard,
+  type TokenGuardOptions,
+} from './token/index.ts'
