@@ -2,7 +2,7 @@
 
 This page lists every public export of `@strav/http` with signature, semantics, and a minimal example.
 
-> **Status:** Reflects what's implemented as of M2 (in progress) — Router, HttpContext, HttpKernel, middleware composition, ExceptionHandler, HttpProvider. `FormRequest`, sessions, Pages auto-router, WS/SSE, and the opt-in middleware set land in follow-up cuts.
+> **Status:** Reflects what's implemented as of M2 (in progress) — Router, HttpContext (with kernel-bound `requestId`), HttpKernel (request-id correlation), middleware composition + `MiddlewareRegistry.replace()`, ExceptionHandler, HttpProvider, and the built-in middleware set (`security_headers` / `cors` / `request_log`). `FormRequest`, sessions, Pages auto-router, WS/SSE, and the opt-in middleware set (`auth` / `throttle` / `csrf` / …) land in follow-up cuts.
 
 ## `Router`
 
@@ -234,6 +234,19 @@ expect(res.status).toBe(200)
 
 Errors at any layer funnel through the resolved `ExceptionHandler`. The kernel never throws past its boundary.
 
+### Request-id correlation
+
+Built into `handle()` — not a middleware:
+
+1. Pull `X-Request-Id` off the request. If it parses as a ULID, use it; otherwise mint a fresh one via `ulid()`.
+2. Write `ctx.state.requestId`, queue `X-Request-Id` on the response, bind `ctx.log = base.child({ requestId })`.
+
+ULID-only validation prevents log-injection / cardinality attacks via the upstream header. Apps that need a different scheme subclass `HttpKernel` and override `resolveRequestId(request): string`.
+
+### 404 / 405 still run middleware
+
+Unmatched and method-mismatched paths still flow through the global middleware chain (with a final handler that throws `NotFoundError` or returns the 405 Response). This lets `cors` answer browser preflights for any URL and lets `request_log` capture not-found access patterns.
+
 ## `ExceptionHandler`
 
 Concrete class with default implementations of `report` and `renderHttp`. Apps subclass and bind their own before `HttpProvider.boot()`; if none is bound, the provider falls back to the default.
@@ -305,6 +318,12 @@ Plain registrations look up by `name`; factory registrations split `name:args` a
 
 Unknown names + invalid arg shapes throw `ConfigError`.
 
+`register` throws on duplicates. `replace(name, def)` is the override path — used by apps that want to swap a framework built-in:
+
+```ts
+reg.replace('cors', myCustomCors)
+```
+
 ### `composeMiddleware(defs, finalHandler, scope)`
 
 Builds a runnable onion. The result has `invoke(ctx)` and `terminatingInstances()`. Class middleware that exposes a `terminate(ctx, response)` method gets collected — `HttpKernel` fires those after the response is sent (best-effort, errors are logged).
@@ -322,6 +341,8 @@ Order: middleware runs in declaration order on the way in, reverse on the way ou
 
 `boot()` calls `Router.compile()` + `HttpKernel.precompile()`. Routes should be registered during the `register()` phase of a downstream provider (depending on `'http'`) so they're in place before this runs.
 
+`register()` also installs the three framework built-ins on the registry under the canonical names from `BUILTIN_NAMES`. Apps override individual built-ins via `MiddlewareRegistry.replace(name, def)` from a downstream provider's `register()`.
+
 ### Config slice (`config.http`)
 
 | Key | Effect |
@@ -330,3 +351,53 @@ Order: middleware runs in declaration order on the way in, reverse on the way ou
 | `appDomain` | Registrable apex; everything before it is parsed as `ctx.server.subdomain` |
 | `trustProxy` | Honor `X-Forwarded-Host` / `X-Forwarded-Proto` (per-request — `kernel.handle(req, { trustProxy: true })` works the same) |
 | `exposeStackTrace` | Default `ExceptionHandler` includes stack on responses; defaults to `!app.isProduction()` |
+| `cors` | Options for the built-in `cors` middleware (see below) |
+| `securityHeaders` | Options for the built-in `security_headers` middleware (see below) |
+
+## Built-in middleware
+
+`HttpProvider` auto-registers three middleware under canonical names — use them by string in `config.http.middleware` or per-route `.middleware()`. See `guides/built-ins.md` for the full recipe.
+
+### `BUILTIN_NAMES`
+
+```ts
+import { BUILTIN_NAMES } from '@strav/http'
+// → { cors: 'cors', requestLog: 'request_log', securityHeaders: 'security_headers' }
+```
+
+### `securityHeadersMiddleware(options?)`
+
+Function middleware. Appends defensive headers via `ctx.response.header(...)`. Defaults match `spec/http.md`:
+
+```
+Content-Security-Policy:        default-src 'self'
+X-Frame-Options:                DENY
+X-Content-Type-Options:         nosniff
+Referrer-Policy:                strict-origin-when-cross-origin
+Strict-Transport-Security:      max-age=63072000
+Cross-Origin-Opener-Policy:     same-origin
+Cross-Origin-Resource-Policy:   same-origin
+```
+
+`options.headers` overrides per key — string replaces, `null` removes.
+
+### `corsMiddleware(options?)`
+
+Function middleware. Cross-origin handling.
+
+```ts
+interface CorsOptions {
+  origin?: '*' | string | readonly string[] | ((origin: string) => boolean)  // default '*'
+  methods?: readonly string[]
+  headers?: readonly string[]
+  exposedHeaders?: readonly string[]
+  credentials?: boolean
+  maxAge?: number
+}
+```
+
+Preflight (`OPTIONS` with `Access-Control-Request-Method`) short-circuits with a 204 — works for any URL because the kernel runs global middleware on the 404/405 path as well. `origin: '*'` implicitly disables credentials (per the CORS spec).
+
+### `RequestLog`
+
+Class middleware. Captures `performance.now()` in `handle()` and emits one `http.request` line in `terminate()`. Fields: `method`, `path`, `status`, `duration_ms`, `ip`, `user_agent`, plus the `requestId` already carried by `ctx.log`. Runs for every status — 500s, 404s, 405s, etc. — but is skipped on CORS preflights when `cors` runs earlier in the chain.

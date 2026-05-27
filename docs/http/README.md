@@ -3,7 +3,7 @@
 Routing, request/response handling, and the HTTP kernel for Strav 1.0.
 
 > **Status: 1.0.0-alpha — M2 in progress.**
-> Shipping: **Router** (trie, params, optional params, wildcards, groups, named routes), **HttpContext** (server / request / response namespaces + typed `state`), **HttpRequest** (cached body parsing, query, cookies, content negotiation), **HttpResponse** (factories + pending header/cookie mutations), **middleware composition** (onion, short-circuit, terminating), **MiddlewareRegistry** (name → def, parameterized `name:args` factories), **HttpKernel** (`handle()` / `serve()`), **ExceptionHandler** (default JSON + HTML, `StravError` mapping), **HttpProvider** (container wiring + boot-time precompile).
+> Shipping: **Router** (trie, params, optional params, wildcards, groups, named routes), **HttpContext** (server / request / response namespaces + typed `state` with kernel-bound `requestId`), **HttpRequest** (cached body parsing, query, cookies, content negotiation), **HttpResponse** (factories + pending header/cookie mutations), **middleware composition** (onion, short-circuit, terminating), **MiddlewareRegistry** (name → def, parameterized `name:args` factories, `replace` for built-in override), **HttpKernel** (`handle()` / `serve()`; baked-in request-id + correlated child logger), **ExceptionHandler** (default JSON + HTML, `StravError` mapping), **HttpProvider** (container wiring + boot-time precompile + built-in registration), **built-in middleware** (`security_headers`, `cors`, `request_log`).
 > Deferred for now: subdomain matching, `FormRequest` + Zod, sessions, Pages auto-router, WS/SSE, opt-in middleware (`auth`, `throttle`, `csrf`, etc.).
 
 ## Install
@@ -59,7 +59,9 @@ console.log(`listening on ${server.url}`)
 | `MiddlewareRegistry` | Name → middleware-def map; supports `name:args` factories |
 | `composeMiddleware` | Function-level onion composer; collects terminating instances |
 | `ExceptionHandler` | Default JSON/HTML renderer + `StravError` → HTTP-status mapping; subclass to customize |
-| `HttpProvider` | Provider that wires `Router`, `MiddlewareRegistry`, `ExceptionHandler`, `HttpKernel` |
+| `HttpProvider` | Provider that wires `Router`, `MiddlewareRegistry`, `ExceptionHandler`, `HttpKernel`, and auto-registers built-in middleware |
+| `securityHeadersMiddleware` / `corsMiddleware` / `RequestLog` | Built-in middleware shipped under canonical names (`security_headers`, `cors`, `request_log`) |
+| `BUILTIN_NAMES` | The string-key constants for `config.http.middleware` |
 
 ## Sub-path imports
 
@@ -79,3 +81,4 @@ import { Router, HttpKernel } from '@strav/http'
 
 - [`api.md`](./api.md) — every public export, signature, semantics.
 - [`guides/routing.md`](./guides/routing.md) — patterns, groups, named routes, handler shapes (closure / single-action / tuple), middleware composition.
+- [`guides/built-ins.md`](./guides/built-ins.md) — `security_headers`, `cors`, `request_log`; the kernel-level request-id; override pattern via `MiddlewareRegistry.replace()`.

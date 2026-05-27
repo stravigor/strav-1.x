@@ -25,8 +25,10 @@ import {
   type Application,
   asStravError,
   type Container,
+  isUlid,
   Logger,
   NotFoundError,
+  ulid,
 } from '@strav/kernel'
 import { HttpContext } from './context/http_context.ts'
 import { HttpRequest } from './context/http_request.ts'
@@ -127,7 +129,17 @@ export class HttpKernel {
     const params = match.kind === 'found' ? match.params : {}
     const httpRequest = new HttpRequest(request, params)
     const httpResponse = new HttpResponse()
-    const log = this.requestScopedLogger(scope)
+
+    // Per-request correlation: honor a trusted upstream `X-Request-Id` when it
+    // looks like a ULID; otherwise mint a fresh one. The ID lands on
+    // ctx.state.requestId, the response Set-Cookie/header queue, and the
+    // request-scoped child logger so every log line inside the request
+    // carries it without each call having to wire it in.
+    const requestId = this.resolveRequestId(request)
+    httpResponse.header('X-Request-Id', requestId)
+
+    const baseLogger = this.requestScopedLogger(scope)
+    const log = baseLogger.child({ requestId })
 
     const ctx = new HttpContext({
       server,
@@ -135,23 +147,27 @@ export class HttpKernel {
       response: httpResponse,
       container: scope,
       log,
+      requestId,
     })
     scope.singleton(HttpContext, () => ctx)
     scope.singleton('http.context', () => ctx)
 
-    let response: Response
-    const terminating: Array<{
-      handle: { terminate?: (ctx: HttpContext, res: Response) => unknown }
-    }> = []
-    try {
-      if (match.kind === 'not-found') {
+    // Pick the final handler + route middleware. 404 / 405 paths still run
+    // global middleware so opt-in features like CORS preflight can short-
+    // circuit OPTIONS requests for paths the router has nothing for.
+    let routeMiddleware: readonly MiddlewareDef[] = []
+    let finalHandler: FinalHandler
+    if (match.kind === 'not-found') {
+      finalHandler = () => {
         throw new NotFoundError(`Route ${request.method} ${url.pathname} not found.`, {
           code: 'http.not-found',
           context: { method: request.method, path: url.pathname },
         })
       }
-      if (match.kind === 'method-not-allowed') {
-        response = new Response(
+    } else if (match.kind === 'method-not-allowed') {
+      const allowed = match.allowed
+      finalHandler = () =>
+        new Response(
           JSON.stringify({
             error: {
               code: 'http.method-not-allowed',
@@ -162,22 +178,25 @@ export class HttpKernel {
             status: 405,
             headers: {
               'content-type': 'application/json; charset=utf-8',
-              Allow: match.allowed.join(', '),
+              Allow: allowed.join(', '),
             },
           },
         )
-      } else {
-        const plan = this.planFor(match.route)
-        const chain = composeMiddleware(
-          [...this.globalMiddleware, ...plan.middleware],
-          plan.finalHandler,
-          scope,
-        )
-        response = await chain.invoke(ctx)
-        for (const inst of chain.terminatingInstances()) {
-          terminating.push({ handle: inst })
-        }
-      }
+    } else {
+      const plan = this.planFor(match.route)
+      routeMiddleware = plan.middleware
+      finalHandler = plan.finalHandler
+    }
+
+    const chain = composeMiddleware(
+      [...this.globalMiddleware, ...routeMiddleware],
+      finalHandler,
+      scope,
+    )
+
+    let response: Response
+    try {
+      response = await chain.invoke(ctx)
     } catch (caught) {
       const error = caught instanceof Error ? caught : new Error(String(caught))
       try {
@@ -197,6 +216,14 @@ export class HttpKernel {
         )
       }
     }
+
+    // Collect terminating instances *after* the chain returns or throws —
+    // every middleware that actually ran (incl. the one that threw) is in
+    // the list, regardless of whether the chain produced a Response or an
+    // error.
+    const terminating: Array<{
+      handle: { terminate?: (ctx: HttpContext, res: Response) => unknown }
+    }> = chain.terminatingInstances().map((inst) => ({ handle: inst }))
 
     const finalResponse = httpResponse.applyPending(response)
 
@@ -312,11 +339,20 @@ export class HttpKernel {
         'HttpKernel: no Logger registered. Make sure LoggerProvider runs before HttpProvider.',
       )
     }
-    const base = scope.resolve(Logger)
-    // Caller middleware (e.g., request_id) layers requestId onto this. For
-    // now we return the base logger; child binding is the responsibility of
-    // request_log/request_id middleware once that lands.
-    return base
+    return scope.resolve(Logger)
+  }
+
+  /**
+   * Pull `X-Request-Id` off the request when it looks like a ULID; otherwise
+   * mint a fresh one. We deliberately accept only ULIDs (26 Crockford
+   * characters) — a "trust whatever the caller passed" policy is a classic
+   * log-injection / cardinality footgun, and apps that need a different
+   * scheme can subclass `HttpKernel` to override.
+   */
+  private resolveRequestId(request: Request): string {
+    const upstream = request.headers.get('x-request-id')
+    if (upstream && isUlid(upstream)) return upstream
+    return ulid()
   }
 }
 

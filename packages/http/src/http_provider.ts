@@ -16,6 +16,14 @@
  */
 
 import { type Application, ConfigRepository, Logger, ServiceProvider } from '@strav/kernel'
+import {
+  BUILTIN_NAMES,
+  type CorsOptions,
+  corsMiddleware,
+  RequestLog,
+  type SecurityHeadersOptions,
+  securityHeadersMiddleware,
+} from './built_in/index.ts'
 import type { HttpContextConfigSlice } from './context/types.ts'
 import { ExceptionHandler } from './exception_handler.ts'
 import { HttpKernel } from './http_kernel.ts'
@@ -31,6 +39,10 @@ export interface HttpConfigShape {
   trustProxy?: boolean
   /** Expose stack traces in error responses (use only outside production). */
   exposeStackTrace?: boolean
+  /** Configuration for the built-in `cors` middleware. */
+  cors?: CorsOptions
+  /** Configuration for the built-in `security_headers` middleware. */
+  securityHeaders?: SecurityHeadersOptions
 }
 
 export class HttpProvider extends ServiceProvider {
@@ -39,7 +51,11 @@ export class HttpProvider extends ServiceProvider {
 
   override register(app: Application): void {
     app.singleton(Router, () => new Router())
-    app.singleton(MiddlewareRegistry, () => new MiddlewareRegistry())
+    app.singleton(MiddlewareRegistry, () => {
+      const registry = new MiddlewareRegistry()
+      this.registerBuiltins(app, registry)
+      return registry
+    })
 
     // Only fall back to the default if the app hasn't already bound its own.
     if (!app.has(ExceptionHandler)) {
@@ -70,5 +86,28 @@ export class HttpProvider extends ServiceProvider {
     const router = app.resolve(Router)
     router.compile()
     app.resolve(HttpKernel).precompile()
+  }
+
+  /**
+   * Register the framework built-in middleware. Each registers under a
+   * canonical name (see `BUILTIN_NAMES`). Apps override a built-in by
+   * calling `MiddlewareRegistry.replace(name, def)` from a downstream
+   * provider's `register()` — see `docs/http/guides/built-ins.md`.
+   */
+  private registerBuiltins(app: Application, registry: MiddlewareRegistry): void {
+    const config = (app.resolve(ConfigRepository).get('http') as HttpConfigShape | undefined) ?? {}
+
+    if (!registry.has(BUILTIN_NAMES.securityHeaders)) {
+      registry.register(
+        BUILTIN_NAMES.securityHeaders,
+        securityHeadersMiddleware(config.securityHeaders ?? {}),
+      )
+    }
+    if (!registry.has(BUILTIN_NAMES.cors)) {
+      registry.register(BUILTIN_NAMES.cors, corsMiddleware(config.cors ?? {}))
+    }
+    if (!registry.has(BUILTIN_NAMES.requestLog)) {
+      registry.register(BUILTIN_NAMES.requestLog, RequestLog)
+    }
   }
 }

@@ -28,7 +28,8 @@ export class HttpContext implements HttpContextInterface {
   readonly response: HttpResponseApi
   readonly state: AppContextState
   readonly container: Container
-  readonly log: Logger
+  /** Writable — see the interface for why middleware may reassign. */
+  log: Logger
 
   constructor(opts: {
     server: ServerInfo
@@ -36,12 +37,13 @@ export class HttpContext implements HttpContextInterface {
     response: HttpResponseApi
     container: Container
     log: Logger
+    requestId: string
   }) {
     this.server = opts.server
     this.request = opts.request
     this.response = opts.response
     this.container = opts.container
     this.log = opts.log
-    this.state = {} as AppContextState
+    this.state = { requestId: opts.requestId } as AppContextState
   }
 }

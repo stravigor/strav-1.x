@@ -33,6 +33,22 @@ export class MiddlewareRegistry {
     return this
   }
 
+  /**
+   * Replace an existing registration. The override path for framework
+   * built-ins: a `RoutesProvider` (or similar) that depends on `'http'` can
+   * swap `'cors'`, `'security_headers'`, `'request_log'`, etc. by calling
+   * `replace(name, …)` from its own `register()`.
+   */
+  replace(name: string, entry: MiddlewareEntry, options: { factory?: boolean } = {}): this {
+    this.entries.set(name, entry)
+    if (options.factory) {
+      this.factories.add(name)
+    } else {
+      this.factories.delete(name)
+    }
+    return this
+  }
+
   /** True when `name` (or its `name:args` prefix) is registered. */
   has(reference: string): boolean {
     const key = reference.split(':')[0] ?? ''

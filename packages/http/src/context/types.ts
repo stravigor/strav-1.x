@@ -13,23 +13,26 @@
 import type { Container, Logger } from '@strav/kernel'
 
 /**
- * Strongly-typed per-request state bag. Empty by default; consumers extend it
- * via module augmentation:
+ * Strongly-typed per-request state bag. Framework-owned fields are declared
+ * here; consumers add their own via module augmentation:
  *
  * ```ts
  * declare module '@strav/http' {
  *   interface AppContextState {
- *     requestId: string
  *     currentUser?: User
+ *     tenantId?: string
  *   }
  * }
  * ```
  *
- * The framework writes `requestId` here by default once `request_id`
- * middleware lands. Until then, consumers may write whatever they declare.
+ * The kernel always populates `requestId` — apps don't opt in. `ctx.log` is
+ * pre-bound to a child logger correlated with the same value so every log
+ * line inside a request carries it.
  */
-// biome-ignore lint/suspicious/noEmptyInterface: extended via module augmentation
-export interface AppContextState {}
+export interface AppContextState {
+  /** ULID per request, or the trusted upstream `X-Request-Id`. */
+  requestId: string
+}
 
 export interface ServerInfo {
   /** Raw `Host` header value. */
@@ -69,6 +72,11 @@ export interface HttpContext {
   response: HttpResponseApi
   state: AppContextState
   container: Container
+  /**
+   * Request-scoped child logger. Pre-bound by the kernel with `requestId`.
+   * Middleware (auth, tenant, …) may reassign with a further-child to layer in
+   * `userId` / `tenantId`; the property is writable for that reason.
+   */
   log: Logger
 }
 
