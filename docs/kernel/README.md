@@ -3,8 +3,8 @@
 Foundation of the Strav framework. Ships the IoC container, the service-provider lifecycle, configuration, the event bus, helpers, encryption, storage, cache, i18n, logger, and the session abstraction.
 
 > **Status: 1.0.0-alpha — M1 in progress.**
-> Currently implemented: **Container**, `@inject()`, **ServiceProvider**, **Application**, full **EventBus** (cancelable, parallel, wildcards, batch), **ConfigRepository**, **ConfigProvider**, `env()` helper, **StravError** hierarchy + `asStravError`, helpers (`Clock`, `ulid`, `randomToken`, `sha256`, `hmacSha256`, `constantTimeEqual`, `randomUUID`).
-> Up next: `Logger`, `ConsoleKernel`, M1 e2e smoke.
+> Currently implemented: **Container**, `@inject()`, **ServiceProvider**, **Application**, full **EventBus** (cancelable, parallel, wildcards, batch), **ConfigRepository**, **ConfigProvider**, `env()` helper, **StravError** hierarchy + `asStravError`, helpers (`Clock`, `ulid`, `randomToken`, `sha256`, `hmacSha256`, `constantTimeEqual`, `randomUUID`), **ConsoleKernel** + `Command` framework.
+> Up next: `Logger`, M1 e2e smoke.
 
 ## Install
 
@@ -47,6 +47,9 @@ app.make(UserService).greet('world')
 | `ulid` / `isUlid` / `decodeUlidTime` | Lexicographically-sortable IDs (26-char Crockford-Base32) |
 | `randomBytes` / `randomToken` / `randomUUID` | Strong random material |
 | `sha256` / `hmacSha256` / `constantTimeEqual` | Hashing + safe comparison primitives |
+| `ConsoleKernel` | Argv → command dispatch, exit code; `static run({...})` convenience for `bin/strav.ts` |
+| `Command` / `CommandContext` / `ConsoleOutput` | The console command framework |
+| `parseArgv` | Standalone argv parser (positional + `--flag=val` / `--flag val` / `-f` / `--`) |
 | `Container` | IoC container with `register` / `singleton` / `scoped` / `bind` / `tag` / `when` |
 | `@inject()` | Class decorator marking constructor-injectable classes |
 | `isInjectable` | Runtime check for the marker |
@@ -77,5 +80,6 @@ import { Container } from '@strav/kernel'
 - [`guides/events.md`](./guides/events.md) — multi-listener contract, sequential vs parallel, cancelable events, wildcards, batch registration, listener shapes.
 - [`guides/errors.md`](./guides/errors.md) — the `StravError` hierarchy, custom codes, `asStravError`, `toJSON` serialization, when not to use a typed error.
 - [`guides/helpers.md`](./guides/helpers.md) — `Clock` (test-friendly "now"), ULID generation, crypto primitives (random tokens, hashing, constant-time compare).
+- [`guides/console.md`](./guides/console.md) — Command anatomy, `ConsoleKernel.run`, argv parsing, output writers, DI in commands, long-running command patterns, test recipes.
 
 More guides land as the kernel grows.

@@ -3,6 +3,7 @@
 
 export * from './cache/index.ts'
 export * from './config/index.ts'
+export * from './console/index.ts'
 export * from './core/index.ts'
 export * from './encryption/index.ts'
 export * from './events/index.ts'

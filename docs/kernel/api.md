@@ -777,6 +777,154 @@ interface Binding<T = unknown> {
 type Unsubscribe = () => void
 ```
 
+## `ConsoleKernel`
+
+Transport-layer kernel for command-line entry points. Builds on top of `Application`. See the [console guide](./guides/console.md) for usage; this section is the type/signature reference.
+
+```ts
+class ConsoleKernel {
+  readonly app: Application
+
+  constructor(app: Application, output?: ConsoleOutput)
+
+  /** Register one or more command classes. Returns this. */
+  register(...Classes: CommandClass[]): this
+
+  /** All registered command classes (for introspection / tests). */
+  commands(): readonly CommandClass[]
+
+  /** Dispatch one argv and return the exit code. Assumes app.isBooted. */
+  handle(argv: readonly string[]): Promise<number>
+
+  /** Convenience entry: build (or accept) an app, boot, dispatch, shutdown. */
+  static run(options: ConsoleRunOptions): Promise<number>
+}
+```
+
+### `ConsoleRunOptions`
+
+```ts
+interface ConsoleRunOptions {
+  argv: readonly string[]
+  app?: Application                   // pre-built; otherwise kernel constructs one
+  providers?: readonly ServiceProvider[]
+  commands?: readonly CommandClass[]
+  signalHandlers?: boolean            // default false for console
+  output?: ConsoleOutputOptions
+}
+```
+
+`run`:
+1. Uses `options.app` if provided; otherwise constructs a fresh `Application`.
+2. Registers `providers` (if any) via `app.useProviders`.
+3. Constructs a `ConsoleKernel` and registers `commands`.
+4. If the app isn't already booted, calls `app.start({ signalHandlers })`.
+5. Dispatches `argv` via `handle`.
+6. Shuts the app down — even on exception — when `run` started it.
+
+Returns the exit code. Caller decides whether to `process.exit`.
+
+### Special argv handled by `handle`
+
+| `argv[0]` | Behaviour |
+|---|---|
+| `undefined` (empty argv) | Print list, return 0 |
+| `'list'` | Print list, return 0 |
+| `'--help'` / `'-h'` | Print list, return 0 |
+| unknown command | Error to stderr, return 1 |
+
+## `Command` (abstract)
+
+```ts
+abstract class Command {
+  abstract handle(ctx: CommandContext): CommandResult
+}
+
+type CommandResult = Promise<number | void> | number | void
+```
+
+Subclasses must declare two static fields that the kernel reads at registration time **without instantiating the class**:
+
+```ts
+class HelloCommand extends Command {
+  static readonly signature = 'hello'                 // command name
+  static readonly description = 'Print a greeting'
+  async handle(ctx: CommandContext): Promise<void> {
+    ctx.out.line('hi')
+  }
+}
+```
+
+### `CommandClass`
+
+```ts
+type CommandClass<T extends Command = Command> = Constructor<T> & {
+  readonly signature: string
+  readonly description: string
+}
+```
+
+### `CommandContext`
+
+```ts
+interface CommandContext {
+  readonly args: readonly string[]
+  readonly flags: Readonly<Record<string, string | boolean>>
+  readonly out: ConsoleOutput
+  readonly app: Application
+}
+```
+
+## `ConsoleOutput`
+
+Minimal ANSI output writer.
+
+```ts
+class ConsoleOutput {
+  constructor(options?: ConsoleOutputOptions)
+  line(msg?: string): void          // stdout + '\n', never colored
+  info(msg: string): void           // blue, stdout
+  success(msg: string): void        // green, stdout
+  warn(msg: string): void           // yellow, stdout
+  error(msg: string): void          // red, stderr
+  write(msg: string): void          // raw stdout
+  writeError(msg: string): void     // raw stderr
+}
+
+interface ConsoleOutputOptions {
+  stdout?: NodeJS.WritableStream
+  stderr?: NodeJS.WritableStream
+  useColor?: boolean                // default: stdout.isTTY
+}
+```
+
+Pass `useColor: false` in tests for plain-text assertions, or `useColor: true` to assert escape sequences.
+
+## `parseArgv`
+
+```ts
+function parseArgv(argv: readonly string[]): ParsedArgv
+
+interface ParsedArgv {
+  command: string | undefined        // first non-flag token, if any
+  args: string[]                     // positional after the command
+  flags: Record<string, string | boolean>
+}
+```
+
+Recognized forms:
+
+| Token | Effect |
+|---|---|
+| `--flag` | `{ flag: true }` |
+| `--flag=value` | `{ flag: 'value' }` |
+| `--flag value` | `{ flag: 'value' }` (next token consumed iff it doesn't start with `-`) |
+| `-f` | `{ f: true }` |
+| `--` | Ends flag parsing |
+| anything else | First → `command`; rest → `args` |
+
+Caveat: `--flag value` form swallows the next token. Put flags after the command, or use `--flag=value`.
+
 ## Exceptions
 
 The error hierarchy every Strav kernel and package raises from. See the [errors guide](./guides/errors.md) for usage patterns; this section is the type/signature reference.

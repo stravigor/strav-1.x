@@ -9,6 +9,7 @@
     ".": "./src/index.ts",
     "./core": "./src/core/index.ts",
     "./config": "./src/config/index.ts",
+    "./console": "./src/console/index.ts",
     "./events": "./src/events/index.ts",
     "./exceptions": "./src/exceptions/index.ts",
     "./helpers": "./src/helpers/index.ts",
