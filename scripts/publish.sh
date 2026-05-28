@@ -104,7 +104,13 @@ is_private() {
 }
 
 fix_workspace_deps() {
-  local pkg_file=$1 version=$2 tmp_file="${pkg_file}.tmp"
+  # NOTE: split into separate declarations — combining on one line
+  # ("local pkg_file=$1 version=$2 tmp_file=${pkg_file}.tmp") trips
+  # `set -u` because bash sees the ${pkg_file} reference before the
+  # assignment on the same line completes.
+  local pkg_file=$1
+  local version=$2
+  local tmp_file="${pkg_file}.tmp"
   jq --arg v "$version" '
     def fix_deps:
       if . == null then null
