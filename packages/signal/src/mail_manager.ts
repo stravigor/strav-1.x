@@ -29,7 +29,8 @@
  *     await mail.via('priority').send({ to, subject, ... })
  */
 
-import { ConfigError, type Logger, type LogManager } from '@strav/kernel'
+import { ConfigError, type Container, type Logger, type LogManager } from '@strav/kernel'
+import type { MailableClass, MailablePayloadOf } from './mailable.ts'
 import type { MailRecipient, Message } from './message.ts'
 import type { Transport } from './transport.ts'
 import { ArrayTransport } from './transports/array_transport.ts'
@@ -82,6 +83,16 @@ export class MailManager {
   constructor(
     private readonly config: MailConfig,
     private readonly logManager: LogManager,
+    /**
+     * Optional `Container` used by the `send(MailableClass, payload)`
+     * overload to construct mailables via `@inject()` reflection. Apps
+     * that only ever call `send(message)` can omit it; the Mailable
+     * overload throws a clear error if called without one wired.
+     *
+     * The `MailProvider` passes the resolving container automatically,
+     * so apps using the provider don't pass anything by hand.
+     */
+    private readonly container?: Container,
   ) {
     this.validate(config)
   }
@@ -90,8 +101,29 @@ export class MailManager {
    * Send `message` via the default transport. Applies `config.mail.from`
    * if the message lacks one.
    */
-  async send(message: Message): Promise<void> {
-    await this.via().send(this.applyDefaultFrom(message))
+  async send(message: Message): Promise<void>
+  /**
+   * Sync-send overload — constructs the `Mailable` subclass via the
+   * container (so `@inject()` deps resolve), calls `build(payload)`,
+   * then sends through the default transport. No queue hop; the
+   * caller's process does the work.
+   *
+   * For async / retry / dead-letter semantics, dispatch through the
+   * queue instead — `await queue.dispatch(WelcomeEmail, payload)`.
+   * Mailables ARE Jobs, so the queue's `Worker` handles them with no
+   * additional wiring beyond a `JobRegistry.register(WelcomeEmail)`.
+   */
+  async send<T extends MailableClass>(
+    MailableClass: T,
+    payload: MailablePayloadOf<T>,
+  ): Promise<void>
+  async send(arg1: Message | MailableClass, payload?: unknown): Promise<void> {
+    if (typeof arg1 === 'function') {
+      const message = await this.buildMailable(arg1, payload)
+      await this.via().send(this.applyDefaultFrom(message))
+      return
+    }
+    await this.via().send(this.applyDefaultFrom(arg1))
   }
 
   /**
@@ -129,6 +161,16 @@ export class MailManager {
   }
 
   // ─── Internals ─────────────────────────────────────────────────────────────
+
+  private async buildMailable(MailableClass: MailableClass, payload: unknown): Promise<Message> {
+    if (this.container === undefined) {
+      throw new ConfigError(
+        'MailManager: send(MailableClass, payload) requires a Container — wire MailProvider instead of constructing MailManager directly.',
+      )
+    }
+    const mailable = this.container.make(MailableClass)
+    return mailable.build(payload as never)
+  }
 
   private applyDefaultFrom(message: Message): Message {
     if (message.from !== undefined) return message

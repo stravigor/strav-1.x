@@ -70,6 +70,7 @@
       "version": "1.0.0-alpha.2",
       "dependencies": {
         "@strav/kernel": "workspace:*",
+        "@strav/queue": "workspace:*",
       },
       "peerDependencies": {
         "@types/bun": ">=1.3.14",
@@ -89,6 +90,16 @@
         "@strav/database": "workspace:*",
         "@strav/http": "workspace:*",
         "@strav/kernel": "workspace:*",
+      },
+    },
+    "tests/e2e/m3-mail-queue": {
+      "name": "@strav-tests/m3-mail-queue",
+      "version": "0.0.0",
+      "dependencies": {
+        "@strav/database": "workspace:*",
+        "@strav/kernel": "workspace:*",
+        "@strav/queue": "workspace:*",
+        "@strav/signal": "workspace:*",
       },
     },
   },
@@ -116,6 +127,8 @@
     "@strav-tests/m1-boot": ["@strav-tests/m1-boot@workspace:tests/e2e/m1-boot"],
 
     "@strav-tests/m2-http-db": ["@strav-tests/m2-http-db@workspace:tests/e2e/m2-http-db"],
+
+    "@strav-tests/m3-mail-queue": ["@strav-tests/m3-mail-queue@workspace:tests/e2e/m3-mail-queue"],
 
     "@strav/auth": ["@strav/auth@workspace:packages/auth"],
 

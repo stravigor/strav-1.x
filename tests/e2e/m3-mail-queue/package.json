@@ -1,0 +1,13 @@
+{
+  "name": "@strav-tests/m3-mail-queue",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "M3 end-to-end smoke — dispatches a Mailable through DatabaseQueue, runs it via Worker, asserts delivery on the ArrayTransport.",
+  "dependencies": {
+    "@strav/kernel": "workspace:*",
+    "@strav/database": "workspace:*",
+    "@strav/queue": "workspace:*",
+    "@strav/signal": "workspace:*"
+  }
+}

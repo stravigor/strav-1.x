@@ -35,7 +35,7 @@ export class MailProvider extends ServiceProvider {
           'MailProvider: `config.mail` is missing. Add a `config/mail.ts` file (see docs/signal/README.md).',
         )
       }
-      return new MailManager(raw as MailConfig, c.resolve(LogManager))
+      return new MailManager(raw as MailConfig, c.resolve(LogManager), c)
     })
     app.singleton('mail', (c) => c.resolve(MailManager))
   }

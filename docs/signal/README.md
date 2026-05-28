@@ -1,8 +1,8 @@
 # @strav/signal
 
-Outbound communication for Strav 1.0 — slice 1 ships the **mail core** (`Message` shape + `Transport` contract + `ArrayTransport` + `LogTransport` + `MailManager` + `MailProvider`). Mailable classes, real transports (SMTP / Resend / SendGrid), notifications, broadcast, and SSE land in subsequent slices.
+Outbound communication for Strav 1.0. The mail layer is functionally complete in slice 2 — `Message` shape + `Transport` contract + `ArrayTransport` + `LogTransport` + `MailManager` + `MailProvider` + `Mailable<TPayload>` (typed `Job` for queue-dispatched email). Real transports (SMTP / Resend / SendGrid), inbound parsers, notifications, broadcast, and SSE land in subsequent slices.
 
-> **Status: 1.0.0-alpha — mail core only.** Shipping: `Message` types + `Transport` interface + `ArrayTransport` + `LogTransport` + `MailManager` (multi-transport with default-`from` substitution) + `MailProvider` (wires `config.mail` into the container).
+> **Status: 1.0.0-alpha — mail layer functionally complete.** Shipping: `Message` types + `Transport` interface + `ArrayTransport` + `LogTransport` + `MailManager` (multi-transport with default-`from` substitution + Mailable-aware `send` overload) + `MailProvider` + `Mailable` base class (Mailables ARE Jobs — dispatch via the standard `Queue.dispatch`).
 
 ## Install
 
@@ -23,6 +23,8 @@ Peer dep: `@strav/kernel`.
 | `MailManager` | The public mail surface. Builds + caches one `Transport` per configured entry. `send(message)` routes through the default; `via(name?)` returns a named transport; `shutdown()` closes them |
 | `MailConfig` / `MailTransportConfig` | The `config.mail` shape — `{ default, from?, transports }` with `transports: Record<string, MailTransportConfig>` |
 | `MailProvider` | Reads `config('mail')`, binds `MailManager` + the `'mail'` alias, calls `shutdown()` on app teardown. Depends on `'config'` + `'logger'` |
+| `Mailable<TPayload>` | Typed `Job` subclass. Override `build(payload)` to return a `Message`; the base `handle()` builds + sends via the default transport. Dispatch with `queue.dispatch(YourMailable, payload)` for async delivery, or `mail.send(YourMailable, payload)` for inline sync delivery |
+| `MailableClass<TPayload>` / `MailablePayloadOf<T>` | Constructor type + payload extractor — mirrors `JobClass` / `PayloadOf` from `@strav/queue` |
 
 ## Minimal example
 
@@ -87,9 +89,37 @@ class SignupController {
 
 - [`api.md`](./api.md) — every public export with signatures + semantics.
 
+## Queue-dispatched mail
+
+```ts
+import { JobRegistry } from '@strav/queue'
+import { Mailable, type Message } from '@strav/signal'
+
+class WelcomeEmail extends Mailable<{ name: string }> {
+  static override readonly jobName = 'mail.welcome'
+
+  build(payload: { name: string }): Message {
+    return {
+      to: `${payload.name.toLowerCase()}@example.com`,
+      subject: `Welcome, ${payload.name}`,
+      text: `Hi ${payload.name}!`,
+    }
+  }
+}
+
+// At startup:
+app.singleton(JobRegistry, () => new JobRegistry().register(WelcomeEmail))
+
+// In a controller:
+await queue.dispatch(WelcomeEmail, { name: 'Alice' })  // Worker handles it
+// OR inline:
+await mail.send(WelcomeEmail, { name: 'Alice' })       // sync — no queue
+```
+
+Mailables ARE Jobs — they participate in the full job lifecycle (retries, backoff, abort-aware shutdown, `failed()` hook, `strav_failed_jobs` dead-letter). See [`api.md`](./api.md) for the full Mailable reference.
+
 ## What's NOT here yet
 
-- **`Mailable` classes** — a typed base class so `class WelcomeEmail extends Mailable<{ userId: string }>` becomes the canonical "an email I want to send" abstraction, and `mail.queue(new WelcomeEmail({ userId }))` dispatches via `@strav/queue`. The queue dep is already satisfied; the abstraction lands in slice 2.
 - **Real transports** — SMTP, Resend, SendGrid. Drop-in `Transport` implementations once the underlying SDKs are decided on.
 - **Inbound parsers** — Postmark + Mailgun webhook bodies → normalised `InboundMessage`.
 - **Notifications** — `BaseNotification` + `Notifiable` mixin + channel drivers (mail, database, webhook, broadcast).

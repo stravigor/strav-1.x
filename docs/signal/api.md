@@ -1,6 +1,6 @@
 # @strav/signal — API Reference
 
-> **Status:** Mail core — `Message` + `Transport` + `ArrayTransport` + `LogTransport` + `MailManager` + `MailProvider`. Mailable + real transports + notifications + broadcast + SSE follow in later slices.
+> **Status:** Mail core + `Mailable` queue-dispatch shipped. Real transports + notifications + broadcast + SSE follow in later slices.
 
 ## `Message`
 
@@ -134,9 +134,14 @@ The shape `config/mail.ts` exports. Validated eagerly by `MailManager` at constr
 
 ```ts
 class MailManager {
-  constructor(config: MailConfig, logManager: LogManager)
+  constructor(
+    config: MailConfig,
+    logManager: LogManager,
+    container?: Container,                       // required for the Mailable overload
+  )
 
   send(message: Message): Promise<void>          // routes through default transport
+  send<T extends MailableClass>(MailableClass: T, payload: MailablePayloadOf<T>): Promise<void>
   via(name?: string): Transport                  // resolve a named transport (default if omitted)
   shutdown(): Promise<void>                      // close every cached transport
 }
@@ -144,7 +149,16 @@ class MailManager {
 
 The public mail surface. Validates `config` at construction: `default` must be a known transport, every entry must have a known `driver`. Transports are built lazily on first `via(name)` then cached.
 
-**The `from` substitution.** If a `Message` omits `from`, the manager substitutes `config.mail.from` (when set) before handing off to the transport. A `from` already on the message wins — per-message overrides are never overridden. If neither is set, the transport sees `from: undefined` and may throw (per its provider's requirements).
+**The two `send` overloads.**
+
+```ts
+await mail.send({ to: 'a@x', subject: 'hi', text: 'h' })        // raw Message
+await mail.send(WelcomeEmail, { userId: 'u-1' })                 // build via Mailable
+```
+
+The Mailable overload constructs the subclass via the `Container` (so `@inject()` deps resolve the same way the queue Worker resolves them), calls `build(payload)`, then sends the resulting `Message` through the default transport. Apps using `MailProvider` get the container wired automatically; constructing `MailManager` by hand without one and then calling the Mailable overload throws `ConfigError`.
+
+**The `from` substitution.** If a `Message` omits `from`, the manager substitutes `config.mail.from` (when set) before handing off to the transport. A `from` already on the message wins — per-message overrides are never overridden. If neither is set, the transport sees `from: undefined` and may throw (per its provider's requirements). Applies to Mailable-built messages too.
 
 **Multi-transport apps.** Apps with one default + named overrides do:
 
@@ -172,6 +186,120 @@ Reads `config('mail')`, builds a `MailManager`, binds:
 `boot()` eagerly constructs the manager so config errors surface during app start, not on the first send call. `shutdown()` calls `MailManager.shutdown()` to close every cached transport — best-effort, swallows errors.
 
 `ConfigProvider` + `LoggerProvider` must be registered before `MailProvider`. The provider declares the dependency, so `Application.start()` orders them automatically.
+
+## `Mailable<TPayload>`
+
+```ts
+@inject()
+abstract class Mailable<TPayload = unknown> extends Job<TPayload> {
+  constructor(protected readonly mail: MailManager)
+  abstract build(payload: TPayload): Message | Promise<Message>
+  handle(context: JobContext<TPayload>): Promise<void>   // base impl: build + mail.send
+}
+
+interface MailableClass<TPayload = unknown> {
+  new (...args: any[]): Mailable<TPayload>
+  readonly jobName: string                               // inherited from Job
+}
+
+type MailablePayloadOf<T> = T extends MailableClass<infer P> ? P : never
+```
+
+A typed `Job` that builds and sends a mail message. Subclasses override `build(payload)` to produce a `Message`; the base class's `handle()` implementation calls `build()` then `mail.send(message)`.
+
+Mailables ARE Jobs — they participate in the full job lifecycle (retries, backoff, abort-aware shutdown, `failed()` hook, dead-letter via `strav_failed_jobs`). There is no separate `MailableRegistry`: mailables register with the same `JobRegistry` apps use for any other Job:
+
+```ts
+const registry = new JobRegistry().register(WelcomeEmail)
+```
+
+### Defining a Mailable
+
+Simple — no extra deps:
+
+```ts
+import { Mailable } from '@strav/signal'
+
+class WelcomeEmail extends Mailable<{ name: string }> {
+  static override readonly jobName = 'mail.welcome'
+
+  build(payload: { name: string }): Message {
+    return {
+      to: `${payload.name.toLowerCase()}@example.com`,
+      subject: `Welcome, ${payload.name}`,
+      text: `Hi ${payload.name} — thanks for signing up.`,
+    }
+  }
+}
+```
+
+The subclass inherits `Mailable`'s `@inject()` metadata + constructor, so `container.make(WelcomeEmail)` resolves `MailManager` automatically.
+
+With extra deps:
+
+```ts
+import { inject } from '@strav/kernel'
+import { Mailable, MailManager } from '@strav/signal'
+
+@inject()
+class InvoiceEmail extends Mailable<{ userId: string }> {
+  static override readonly jobName = 'mail.invoice'
+  constructor(
+    mail: MailManager,
+    private readonly users: UserRepository,
+  ) {
+    super(mail)
+  }
+
+  async build({ userId }: { userId: string }): Promise<Message> {
+    const user = await this.users.findOrFail(userId)
+    return { to: user.email, subject: 'Your invoice', text: `Hi ${user.name}` }
+  }
+}
+```
+
+Subclass adds `@inject()` + a constructor listing all deps + calls `super(mail)`.
+
+### Dispatching
+
+```ts
+// Sync — no queue hop:
+await mail.send(WelcomeEmail, { name: 'Alice' })
+
+// Async — through the queue, with retries / dead-letter:
+await queue.dispatch(WelcomeEmail, { name: 'Alice' })
+```
+
+The sync path constructs the Mailable via the container, calls `build()`, sends. No persistence. Use it inside request handlers when the latency budget allows an inline send.
+
+The async path is the standard `Queue.dispatch` — no Mailable-specific code. The Worker picks up the row, constructs the Mailable, runs `handle()` (which calls `build()` then `mail.send()`). On failure, the standard retry + backoff + dead-letter machinery applies — Mailables don't bypass the queue's failure semantics.
+
+### Per-attempt config
+
+Inherited from `Job` — set as static overrides:
+
+```ts
+class WelcomeEmail extends Mailable<{ name: string }> {
+  static override readonly jobName = 'mail.welcome'
+  static override readonly maxAttempts = 3
+  static override readonly queue = 'mail'           // route to a dedicated queue
+  static override readonly timeout = 30             // seconds per attempt
+}
+```
+
+### Failure hook
+
+Inherited too — `failed(ctx)` fires on each failed attempt + once on terminal failure:
+
+```ts
+class WelcomeEmail extends Mailable<{ name: string }> {
+  static override readonly jobName = 'mail.welcome'
+  async build(payload) { ... }
+  override async failed(ctx: JobFailedContext<{ name: string }>) {
+    ctx.log.error('welcome-email failed', { name: ctx.payload.name, error: ctx.error })
+  }
+}
+```
 
 ## Configuration example
 
@@ -205,10 +333,9 @@ export default {
 
 ## What this doesn't ship yet
 
-The mail core is the minimum surface for "an app can send mail and tests can assert on what was sent." Still to land in subsequent signal slices:
+The mail layer is functionally complete in slice 2 — apps can send mail synchronously, define typed `Mailable` subclasses, and queue them through `@strav/queue` for retried async delivery. Still to land in subsequent signal slices:
 
-- **`Mailable`** — typed `Mailable<TPayload>` base class so apps subclass with a `build()` method returning a `Message`. `mail.send(mailable)` builds + sends; `mail.queue(mailable)` dispatches via `@strav/queue` (the dep is already in place).
-- **Real transports** — `SmtpTransport` (via nodemailer or a Bun-native SMTP client), `ResendTransport`, `SendGridTransport`.
+- **Real transports** — `SmtpTransport` (via nodemailer or a Bun-native SMTP client), `ResendTransport`, `SendGridTransport`. Drop-in `Transport` implementations.
 - **Inbound parsers** — Postmark + Mailgun webhook bodies → normalised `InboundMessage`.
 - **Notifications** — `BaseNotification` + `Notifiable` mixin + `notifications` table + channel drivers (mail, database, webhook, broadcast).
 - **Broadcast** — pub/sub primitive + channel auth.

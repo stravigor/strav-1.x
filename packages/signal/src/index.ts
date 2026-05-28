@@ -1,20 +1,22 @@
-// Public API of @strav/signal — slice 1: mail core.
+// Public API of @strav/signal — mail layer.
 //
-// V1 ships:
+// Shipping:
 //   - The `Message` shape + `MailRecipient` / `MailAddress` /
 //     `MessageAttachment`.
 //   - The `Transport` driver contract.
 //   - Two transports: `ArrayTransport` (in-memory recorder for tests)
 //     + `LogTransport` (writes to a `Logger` channel — local-dev).
 //   - `MailManager` — multi-transport orchestration with `via(name?)`,
-//     default-`from` substitution, and lazy/cached transport construction.
+//     default-`from` substitution, lazy/cached transport construction,
+//     and a Mailable-aware `send(MailableClass, payload)` overload.
 //   - `MailProvider` — wires `MailManager` into the container from
 //     `config('mail')`.
+//   - `Mailable<TPayload>` — typed `Job` subclass; `build(payload)` is
+//     the override point, `handle()` is auto-implemented to send via
+//     the default transport. Dispatch via `queue.dispatch(MailableClass,
+//     payload)` like any other Job.
 //
 // Still to land in later signal slices:
-//   - `Mailable` base class + queue-dispatch integration (so apps can
-//     `mail.queue(new WelcomeEmail(user))` and have a Worker handle the
-//     send).
 //   - Real transports: SMTP, Resend, SendGrid.
 //   - Inbound parsers: Postmark, Mailgun.
 //   - Notifications (`BaseNotification`, `Notifiable`, channel drivers).
@@ -22,6 +24,7 @@
 
 export { type MailConfig, MailManager, type MailTransportConfig } from './mail_manager.ts'
 export { MailProvider } from './mail_provider.ts'
+export { Mailable, type MailableClass, type MailablePayloadOf } from './mailable.ts'
 export type { MailAddress, MailRecipient, Message, MessageAttachment } from './message.ts'
 export type { Transport } from './transport.ts'
 export { ArrayTransport } from './transports/array_transport.ts'
