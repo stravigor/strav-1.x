@@ -38,6 +38,7 @@
       "name": "@strav/database",
       "version": "1.0.0-alpha.3",
       "dependencies": {
+        "@strav/cli": "workspace:*",
         "@strav/kernel": "workspace:*",
       },
       "peerDependencies": {
@@ -70,6 +71,7 @@
       "name": "@strav/queue",
       "version": "1.0.0-alpha.3",
       "dependencies": {
+        "@strav/cli": "workspace:*",
         "@strav/database": "workspace:*",
         "@strav/kernel": "workspace:*",
       },

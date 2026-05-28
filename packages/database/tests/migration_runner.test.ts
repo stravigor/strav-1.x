@@ -1,4 +1,7 @@
 import { beforeEach, describe, expect, test } from 'bun:test'
+import { mkdir, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { type Migration, MigrationRunner } from '../src/index.ts'
 import { InMemoryDatabase } from './in_memory_database.ts'
 
@@ -138,5 +141,83 @@ describe('MigrationRunner — list', () => {
     const runner = new MigrationRunner(db)
     runner.registerAll([mig('z'), mig('a'), mig('m')])
     expect(runner.list().map((m) => m.name)).toEqual(['a', 'm', 'z'])
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// discover
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('MigrationRunner — discover', () => {
+  let tempDir: string
+
+  beforeEach(async () => {
+    tempDir = join(tmpdir(), `strav-discover-${Date.now()}-${Math.random().toString(36).slice(2)}`)
+    await mkdir(tempDir, { recursive: true })
+  })
+
+  async function writeMigrationFile(filename: string, content: string): Promise<void> {
+    await writeFile(join(tempDir, filename), content, 'utf8')
+  }
+
+  test('discovers migration objects exported from a glob', async () => {
+    await writeMigrationFile(
+      '20260601_add_users.ts',
+      `export const migration = {
+         name: '20260601_add_users',
+         async up(db) { await db.execute('CREATE TABLE users ()') },
+         async down(db) { await db.execute('DROP TABLE users') },
+       }`,
+    )
+    await writeMigrationFile(
+      '20260602_add_posts.ts',
+      `export const migration = {
+         name: '20260602_add_posts',
+         async up(db) { await db.execute('CREATE TABLE posts ()') },
+         async down(db) { await db.execute('DROP TABLE posts') },
+       }`,
+    )
+
+    const runner = new MigrationRunner(db)
+    await runner.discover('*.ts', { cwd: tempDir })
+    expect(runner.list().map((m) => m.name)).toEqual(['20260601_add_users', '20260602_add_posts'])
+
+    await rm(tempDir, { recursive: true, force: true })
+  })
+
+  test('files without migration exports are silently skipped', async () => {
+    await writeMigrationFile('helper.ts', `export function notAMigration() { return 42 }`)
+    await writeMigrationFile(
+      '20260601_real.ts',
+      `export const migration = {
+         name: '20260601_real',
+         async up() {},
+         async down() {},
+       }`,
+    )
+
+    const runner = new MigrationRunner(db)
+    await runner.discover('*.ts', { cwd: tempDir })
+    expect(runner.list().map((m) => m.name)).toEqual(['20260601_real'])
+
+    await rm(tempDir, { recursive: true, force: true })
+  })
+
+  test('re-discovering the same migration is idempotent', async () => {
+    await writeMigrationFile(
+      '20260601_x.ts',
+      `export const migration = {
+         name: '20260601_x',
+         async up() {},
+         async down() {},
+       }`,
+    )
+
+    const runner = new MigrationRunner(db)
+    await runner.discover('*.ts', { cwd: tempDir })
+    await runner.discover('*.ts', { cwd: tempDir })
+    expect(runner.list()).toHaveLength(1)
+
+    await rm(tempDir, { recursive: true, force: true })
   })
 })

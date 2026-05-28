@@ -1,5 +1,6 @@
 // Migration subsystem — public exports.
 
+export { resolveMigrationRunner } from './resolve_runner.ts'
 export {
   type MigrationRollbackResult,
   MigrationRunner,

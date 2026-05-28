@@ -87,7 +87,35 @@ Two methods:
 
 The `db` parameter is a `DatabaseExecutor` — same `query` / `queryOne` / `execute` surface as the top-level `Database`, but scoped to the per-migration transaction the runner opens.
 
-## Registering + running
+## Running via the CLI
+
+For apps using `@strav/cli`, the migrate commands wrap the runner and auto-discover migration files from `config.database.migrationsPath` (default `'database/migrations/**/*.ts'`):
+
+```bash
+bun strav migrate            # apply pending migrations
+bun strav migrate:rollback   # roll back the last batch
+bun strav migrate:rollback --batch=2   # roll back the last two batches
+bun strav migrate:rollback --batch=all # roll back everything
+bun strav migrate:status     # table of applied + pending
+bun strav migrate:fresh      # APP_ENV=local|testing only — drops public schema then migrates
+bun strav migrate:generate -m "add users"   # diff schemas vs DB → write a migration file
+```
+
+Add `DatabaseConsoleProvider` to your `bootstrap/providers.ts` so the commands resolve:
+
+```ts
+import { DatabaseConsoleProvider, DatabaseProvider } from '@strav/database'
+
+export const providers = [
+  new DatabaseProvider(),
+  new DatabaseConsoleProvider(),
+  // …
+]
+```
+
+`MigrationRunner` is bound by `DatabaseProvider` as an empty singleton; the commands call `resolveMigrationRunner(app)` which runs `runner.discover(path)` on demand. Non-console boots (web server, queue worker) don't pay the discovery cost.
+
+## Registering manually
 
 ```ts
 import { MigrationRunner, PostgresDatabase } from '@strav/database'
@@ -101,7 +129,7 @@ const result = await runner.migrate()
 // → { applied: ['20260528103000_create_users', '20260528103100_create_leads'], batch: 1 }
 ```
 
-Order at registration time doesn't matter — execution is alphabetical by `name`.
+Order at registration time doesn't matter — execution is alphabetical by `name`. `runner.discover('database/migrations/*.ts')` is the auto-discovery alternative; it imports each file and registers every value that looks like a `Migration`.
 
 ## The tracking table
 

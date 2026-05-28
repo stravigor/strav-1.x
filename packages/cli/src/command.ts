@@ -19,8 +19,13 @@
  * kernel, which surfaces them via stderr + returns exit 1.
  */
 
-import { type CommandContext, type CommandResult, Command as KernelCommand } from '@strav/kernel'
-import { type BoundArgv, bindArgv, UsageError } from './binder.ts'
+import {
+  type Application,
+  type CommandContext,
+  type CommandResult,
+  Command as KernelCommand,
+} from '@strav/kernel'
+import { bindArgv, UsageError } from './binder.ts'
 import { ExitCode } from './exit_codes.ts'
 import { parseSignature, type Signature } from './signature.ts'
 
@@ -79,6 +84,7 @@ export abstract class Command extends KernelCommand {
     const Class = this.constructor as typeof Command
     const signature = Class.parsedSignature()
     this.output = ctx.out
+    this.app = ctx.app
 
     // `<cmd> --help` short-circuits to per-command help.
     if (ctx.flags.help === true || ctx.flags.h === true) {
@@ -86,19 +92,19 @@ export abstract class Command extends KernelCommand {
       return 0
     }
 
-    // The kernel's argv parser already split positional vs flag tokens; we just
-    // need to fold them back into the BoundArgv shape `execute()` expects.
-    let bound: BoundArgv
+    // UsageError → POSIX exit code 2 + per-command usage line on stderr.
+    // The catch covers BOTH the binder (signature mismatch) AND execute()
+    // itself — commands often validate flag values after binding (e.g.,
+    // `--batch=not-a-number`) and throw UsageError. Other exceptions still
+    // get the kernel's generic exit-1 + stack-trace treatment.
     try {
-      bound = bindArgv(signature, {
+      const bound = bindArgv(signature, {
         command: signature.name,
         args: [...ctx.args],
         flags: { ...ctx.flags },
       })
+      return await this.execute(bound)
     } catch (err) {
-      // UsageError → POSIX exit code 2 + per-command usage line on stderr.
-      // We catch it here (not in the kernel) so other exceptions still get
-      // the kernel's generic exit-1 + stack-trace treatment.
       if (err instanceof UsageError) {
         this.error(err.message)
         this.error(`Usage: ${formatUsage(signature)}`)
@@ -106,7 +112,6 @@ export abstract class Command extends KernelCommand {
       }
       throw err
     }
-    return this.execute(bound)
   }
 
   /**
@@ -146,6 +151,13 @@ export abstract class Command extends KernelCommand {
 
   /** Set by `handle()` before calling `execute()`. */
   protected output!: CommandContext['out']
+  /**
+   * The booted `Application` — set by `handle()` before `execute()` runs.
+   * Use it to resolve services that don't fit through constructor injection
+   * (e.g., when a command's deps are dynamic, or when subset boot binds a
+   * service that the command's static `@inject()` doesn't know about).
+   */
+  protected app!: Application
 
   /** Implement the command. Return a number for an explicit exit code, void for 0. */
   abstract execute(argv: ExecuteArgs): CommandResult

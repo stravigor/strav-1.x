@@ -21,6 +21,14 @@
 //   - Encryption key rotation, blind-index helpers, per-tenant keys
 
 export {
+  DatabaseConsoleProvider,
+  Migrate,
+  MigrateFresh,
+  MigrateGenerate,
+  MigrateRollback,
+  MigrateStatus,
+} from './console/index.ts'
+export {
   AdminDatabase,
   type Database,
   type DatabaseExecutor,
@@ -32,6 +40,7 @@ export {
   DATABASE_KEY,
   type DatabaseConfigShape,
   DatabaseProvider,
+  DEFAULT_MIGRATIONS_PATH,
 } from './database_provider.ts'
 export {
   type CreateIndexOptions,
@@ -78,6 +87,7 @@ export {
   MigrationRunner,
   type MigrationRunResult,
   type MigrationStatus,
+  resolveMigrationRunner,
 } from './migrations/index.ts'
 export {
   applyCastsToDb,

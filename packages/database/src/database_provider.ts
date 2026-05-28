@@ -21,6 +21,7 @@ import {
   PostgresDatabase,
   type PostgresDatabaseOptions,
 } from './database.ts'
+import { MigrationRunner } from './migrations/runner.ts'
 
 export interface DatabaseConfigShape extends PostgresDatabaseOptions {
   /**
@@ -30,6 +31,13 @@ export interface DatabaseConfigShape extends PostgresDatabaseOptions {
   lazyConnect?: boolean
   /** Seconds to wait for in-flight queries before forcing close. Default 5. */
   shutdownTimeoutSeconds?: number
+  /**
+   * Glob (or array of globs) where migration files live. Used by
+   * `resolveMigrationRunner(app)` — i.e., the `migrate:*` console commands.
+   * Web/queue boots don't pay the discovery cost because they don't call
+   * the helper. Default `'database/migrations/**\/*.ts'`.
+   */
+  migrationsPath?: string | readonly string[]
   /**
    * Optional second connection wired for the BYPASSRLS Postgres role.
    * When present, `DatabaseProvider` binds an {@link AdminDatabase}
@@ -44,6 +52,9 @@ export interface DatabaseConfigShape extends PostgresDatabaseOptions {
    */
   admin?: PostgresDatabaseOptions
 }
+
+/** Default glob the migration commands look at when `config.database.migrationsPath` is unset. */
+export const DEFAULT_MIGRATIONS_PATH = 'database/migrations/**/*.ts'
 
 /** String-key alias under which `Database` is also bound. */
 export const DATABASE_KEY = 'database'
@@ -72,6 +83,11 @@ export class DatabaseProvider extends ServiceProvider {
     // String-key alias so apps can `c.resolve<Database>('database')` without
     // pulling in the concrete class.
     app.singleton(DATABASE_KEY, (c) => c.resolve(PostgresDatabase) as Database)
+
+    // `MigrationRunner` is constructed empty; auto-discovery from
+    // `config.database.migrationsPath` happens inside `resolveMigrationRunner`
+    // (called by the migrate:* commands) — keeps non-migrate boots cheap.
+    app.singleton(MigrationRunner, (c) => new MigrationRunner(c.resolve(PostgresDatabase)))
 
     // Opt-in BYPASSRLS pool — bound ONLY when `config.database.admin` is set,
     // so `app.has(AdminDatabase)` honestly reflects whether the admin role

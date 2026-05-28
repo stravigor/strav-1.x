@@ -61,6 +61,44 @@ export class MigrationRunner {
     return this
   }
 
+  /**
+   * Auto-discover migrations by glob pattern. For each matched file the
+   * runner does a dynamic `import(...)` and walks every exported value:
+   *
+   * ```ts
+   * await runner.discover('database/migrations/*.ts')
+   * ```
+   *
+   * A value qualifies as a migration when it's an object with a non-empty
+   * `name: string` and function-typed `up` + `down`. Files that export
+   * nothing migration-shaped are silently skipped — discover() is a
+   * low-friction "register everything that looks like a migration" pass.
+   *
+   * Re-discovering the SAME instance is a no-op; a different instance
+   * with the same name will fall through to `register()`'s "already
+   * registered" error so duplicates are loud.
+   */
+  async discover(pattern: string | string[], options: { cwd?: string } = {}): Promise<this> {
+    const patterns = Array.isArray(pattern) ? pattern : [pattern]
+    const cwd = options.cwd ?? process.cwd()
+    const files = new Set<string>()
+    for (const p of patterns) {
+      const glob = new Bun.Glob(p)
+      for await (const file of glob.scan({ cwd, absolute: true })) {
+        files.add(file)
+      }
+    }
+    for (const file of files) {
+      const mod = (await import(file)) as Record<string, unknown>
+      for (const value of Object.values(mod)) {
+        if (!isMigration(value)) continue
+        if (this.migrations.some((m) => m === value)) continue
+        this.register(value)
+      }
+    }
+    return this
+  }
+
   /** Read-only inventory of every migration the runner knows about, sorted. */
   list(): readonly Migration[] {
     return [...this.migrations].sort(byName)
@@ -173,4 +211,16 @@ export class MigrationRunner {
 
 function byName(a: Migration, b: Migration): number {
   return a.name < b.name ? -1 : a.name > b.name ? 1 : 0
+}
+
+/** Type-guard: a value looks like a `Migration`. Used by `discover()`. */
+function isMigration(value: unknown): value is Migration {
+  if (typeof value !== 'object' || value === null) return false
+  const v = value as Record<string, unknown>
+  return (
+    typeof v.name === 'string' &&
+    v.name.length > 0 &&
+    typeof v.up === 'function' &&
+    typeof v.down === 'function'
+  )
 }
