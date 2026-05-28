@@ -2,7 +2,7 @@
 
 Authentication primitives for Strav 1.0 — `Hasher` (argon2id), guards, the per-request `ctx.auth` façade, and `auth` / `guest` middleware.
 
-> **Status: 1.0.0-alpha — M2 in progress (foundation + Session + Token + lifecycle helpers).**
+> **Status: 1.0.0-alpha.2 — M2 shipped (foundation + Session + Token + lifecycle helpers). Published as `@strav/auth@1.0.0-alpha.2`.**
 > Shipping: **Hasher** (Bun.password / argon2id), **Authenticatable** contract, **Guard** + **AuthManager** + **AuthContext** (`ctx.auth`), **MemoryGuard** (dev/test), **SessionGuard** (production cookie-based, DB-backed) + lifecycle helpers (`regenerate` for session-fixation prevention, `touch` for sliding-window expiry, `killAllForUser` for bulk revoke) + **Session** with `payload jsonb` for flash / CSRF / locale + **SessionRepository.patchPayload**, **TokenGuard** (bearer-token, DB-backed; `<id>|<secret>` plaintext with SHA-256 hash storage + constant-time verification), **AccessToken** Model / Schema / Repository, **auth / guest middleware**, **AuthProvider** (auto-wires the lot + `'session'` / `'token'` driver entries).
 > Deferred (each its own slice): **magic links**, **email verification**, **TOTP**, **auto-flush payload middleware**, **session cleanup command** (`sessions:gc`), **token abilities / scopes** (lands with auth policies), **token `last_used_at` updates** (needs write batching). **JWT** driver opt-in: post-1.0.
 
