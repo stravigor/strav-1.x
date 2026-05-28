@@ -116,3 +116,28 @@ export class PostgresDatabase implements Database {
     return this.sql
   }
 }
+
+/**
+ * `AdminDatabase` — a second `PostgresDatabase` pool wired for the
+ * BYPASSRLS Postgres role. Same surface as `PostgresDatabase`; a
+ * distinct class so the container can bind both pools side-by-side and
+ * consumers (e.g. `TenantManager.withoutTenant` / migrations) can
+ * `@inject()` the privileged connection explicitly.
+ *
+ * Opt-in: `DatabaseProvider` binds this only when `config.database.
+ * admin` is set. Apps without a separate admin role omit the config
+ * slice; the container's `has(AdminDatabase)` is false and the
+ * privileged code paths fall back to the default pool (the manual
+ * single-role setup described in `docs/database/guides/multi_tenancy.md`).
+ *
+ * The expected setup is a Postgres role created with `BYPASSRLS`, e.g.
+ *
+ * ```sql
+ * CREATE ROLE strav_admin BYPASSRLS LOGIN PASSWORD '…';
+ * GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO strav_admin;
+ * ```
+ *
+ * Queries running through the admin pool see across every tenant —
+ * never wire it into a request-handler path by mistake.
+ */
+export class AdminDatabase extends PostgresDatabase {}

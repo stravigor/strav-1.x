@@ -308,3 +308,73 @@ describe('TenantManager.withLock', () => {
     await expect(tm.withLock('', async () => undefined)).rejects.toThrow(/non-empty string/)
   })
 })
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Two-role connection config — withoutTenant / withLock route through adminDb
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('TenantManager — adminDb routing', () => {
+  test('withoutTenant uses adminDb when supplied', async () => {
+    const appDb = new FakeDb()
+    const adminDb = new FakeDb()
+    const tm = new TenantManager(appDb, undefined, adminDb)
+    await tm.withoutTenant(async (tx) => {
+      await tx.execute('SELECT 1')
+    })
+    // Transaction opened on adminDb, not appDb.
+    expect(adminDb.transactionsOpened).toBe(1)
+    expect(appDb.transactionsOpened).toBe(0)
+    expect(adminDb.executed.find((c) => c.sql === 'SELECT 1')).toBeTruthy()
+  })
+
+  test('withTenant still uses the primary (app) pool', async () => {
+    const appDb = new FakeDb()
+    const adminDb = new FakeDb()
+    const tm = new TenantManager(appDb, undefined, adminDb)
+    await tm.withTenant('t-1', async (tx) => {
+      await tx.execute('SELECT 2')
+    })
+    expect(appDb.transactionsOpened).toBe(1)
+    expect(adminDb.transactionsOpened).toBe(0)
+    // set_config + the user SQL both land on appDb.
+    expect(appDb.executed.find((c) => c.sql.includes('set_config'))).toBeTruthy()
+  })
+
+  test('withLock uses adminDb when supplied (non-tenanted privileged path)', async () => {
+    const appDb = new FakeDb()
+    const adminDb = new FakeDb()
+    const tm = new TenantManager(appDb, undefined, adminDb)
+    await tm.withLock('housekeeping', async (tx) => {
+      await tx.execute('SELECT 3')
+    })
+    expect(adminDb.transactionsOpened).toBe(1)
+    expect(appDb.transactionsOpened).toBe(0)
+    // The advisory-lock SELECT lands on adminDb too.
+    expect(
+      adminDb.executed.find((c) =>
+        c.sql.startsWith('SELECT pg_advisory_xact_lock(hashtext($1)::bigint)'),
+      ),
+    ).toBeTruthy()
+  })
+
+  test('withTenantLock still uses the primary (app) pool', async () => {
+    const appDb = new FakeDb()
+    const adminDb = new FakeDb()
+    const tm = new TenantManager(appDb, undefined, adminDb)
+    await tm.withTenantLock('t-1', 'k', async (tx) => {
+      await tx.execute('SELECT 4')
+    })
+    expect(appDb.transactionsOpened).toBe(1)
+    expect(adminDb.transactionsOpened).toBe(0)
+  })
+
+  test('withoutTenant falls back to the primary pool when no adminDb is supplied', async () => {
+    const appDb = new FakeDb()
+    const tm = new TenantManager(appDb)
+    await tm.withoutTenant(async (tx) => {
+      await tx.execute('SELECT 5')
+    })
+    expect(appDb.transactionsOpened).toBe(1)
+    expect(appDb.executed.find((c) => c.sql === 'SELECT 5')).toBeTruthy()
+  })
+})

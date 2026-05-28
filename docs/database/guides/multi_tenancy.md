@@ -175,7 +175,7 @@ Callers can override the trigger by passing a non-zero `id` explicitly — usefu
 
 ## Two Postgres roles
 
-Until the framework ships dual-role config, do it manually:
+The app pool runs as a `NOBYPASSRLS` role so RLS enforces tenant scoping on every read/write. Migrations + cross-tenant admin paths need a `BYPASSRLS` role to actually see across tenants. Create both up front:
 
 ```sql
 -- One-time, as a superuser
@@ -190,25 +190,48 @@ CREATE ROLE strav_admin BYPASSRLS LOGIN PASSWORD 'admin-password';
 GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO strav_admin;
 ```
 
-App config:
+`DatabaseProvider` accepts both URLs in a single `config.database` slice — declare the admin pool under `admin` and the provider binds an `AdminDatabase` pool alongside `PostgresDatabase`:
 
 ```ts
 // config/database.ts
+import { env } from '@strav/kernel'
+
 export default {
   // App role — used by request handlers, RLS applies.
-  url: env.required('DATABASE_URL'),  // postgres://strav_app:…@host/myapp
+  url: env.required('DATABASE_URL'),              // postgres://strav_app:…@host/myapp
   max: 20,
   lazyConnect: true,
-}
 
-// config/database_admin.ts (separate provider)
-export default {
-  url: env.required('DATABASE_ADMIN_URL'),  // postgres://strav_admin:…@host/myapp
-  max: 4,
+  // Admin role — BYPASSRLS, used by withoutTenant / withLock / migrations.
+  admin: {
+    url: env.required('DATABASE_ADMIN_URL'),      // postgres://strav_admin:…@host/myapp
+    max: 4,
+  },
 }
 ```
 
-Two `DatabaseProvider`s, two `PostgresDatabase` instances, two `TenantManager`s. The MigrationRunner uses the admin one.
+Wire `TenantManager` with both pools — pass `AdminDatabase` as the third arg so `withoutTenant` and `withLock` route through the bypass pool:
+
+```ts
+import { AdminDatabase, PostgresDatabase, TenantManager } from '@strav/database'
+import { EventBus } from '@strav/kernel'
+
+new TenantManager(
+  app.resolve(PostgresDatabase),
+  app.resolve(EventBus),
+  app.resolve(AdminDatabase),   // optional — adminDb routes withoutTenant + withLock
+)
+```
+
+When `config.database.admin` is omitted, `AdminDatabase` simply isn't bound (`app.has(AdminDatabase)` returns `false`). `TenantManager` without an admin pool falls back to using the primary pool for `withoutTenant` / `withLock` — fine for tests + single-role dev setups, but in production the privileged paths won't actually see across tenants unless the primary role has BYPASSRLS (which defeats the point of RLS).
+
+For the MigrationRunner, pass `AdminDatabase` (when wired) so DDL statements like `ENABLE ROW LEVEL SECURITY` + `ALTER TABLE … ADD COLUMN ... NOT NULL` run unimpeded by RLS:
+
+```ts
+const runner = new MigrationRunner(
+  app.has(AdminDatabase) ? app.resolve(AdminDatabase) : app.resolve(PostgresDatabase),
+)
+```
 
 ## Production helpers
 
@@ -261,7 +284,5 @@ Outside `withTenant`, `current_tenant_id()` returns `NULL` (the `true` second ar
 
 Each is its own follow-up slice:
 
-- **Framework-managed dual-role config.** Apps wire two `DatabaseProvider`s manually today.
 - **`generateMigration` tenancy awareness.** The diff doesn't yet add `tenant_id` + RLS to an existing table that's missing them. Apps that retrofit tenancy onto an existing table write the migration explicitly (use `emitRlsForTenanted` + a hand-written `ALTER TABLE … ADD COLUMN`).
-- **Tenant-id rotation / impersonation.** Useful for admin tooling ("view as tenant X"). Trivial to layer on top of `withTenant`; not part of V1.
 - **Tenant-id rotation / impersonation.** Useful for admin tooling ("view as tenant X"). Trivial to layer on top of `withTenant`; not part of V1.

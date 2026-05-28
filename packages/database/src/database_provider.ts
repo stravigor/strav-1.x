@@ -15,7 +15,12 @@
  */
 
 import { type Application, ConfigError, ConfigRepository, ServiceProvider } from '@strav/kernel'
-import { type Database, PostgresDatabase, type PostgresDatabaseOptions } from './database.ts'
+import {
+  AdminDatabase,
+  type Database,
+  PostgresDatabase,
+  type PostgresDatabaseOptions,
+} from './database.ts'
 
 export interface DatabaseConfigShape extends PostgresDatabaseOptions {
   /**
@@ -25,10 +30,26 @@ export interface DatabaseConfigShape extends PostgresDatabaseOptions {
   lazyConnect?: boolean
   /** Seconds to wait for in-flight queries before forcing close. Default 5. */
   shutdownTimeoutSeconds?: number
+  /**
+   * Optional second connection wired for the BYPASSRLS Postgres role.
+   * When present, `DatabaseProvider` binds an {@link AdminDatabase}
+   * pool that `TenantManager.withoutTenant` / `withLock` route through
+   * — so cross-tenant admin queries actually see across tenants without
+   * apps having to construct a second `DatabaseProvider` by hand.
+   *
+   * Omit for single-role setups; the privileged paths fall back to the
+   * default pool (which works fine when its role has BYPASSRLS, but
+   * that's discouraged in production — the principle is least privilege
+   * for the app pool).
+   */
+  admin?: PostgresDatabaseOptions
 }
 
 /** String-key alias under which `Database` is also bound. */
 export const DATABASE_KEY = 'database'
+
+/** String-key alias under which `AdminDatabase` is also bound, when configured. */
+export const ADMIN_DATABASE_KEY = 'database.admin'
 
 export class DatabaseProvider extends ServiceProvider {
   override readonly name = 'database'
@@ -51,6 +72,33 @@ export class DatabaseProvider extends ServiceProvider {
     // String-key alias so apps can `c.resolve<Database>('database')` without
     // pulling in the concrete class.
     app.singleton(DATABASE_KEY, (c) => c.resolve(PostgresDatabase) as Database)
+
+    // Opt-in BYPASSRLS pool — bound ONLY when `config.database.admin` is set,
+    // so `app.has(AdminDatabase)` honestly reflects whether the admin role
+    // is wired. Apps that want both pools at once declare the admin slice;
+    // apps with a single-role setup omit it and the admin code paths fall
+    // back to the default pool (or skip, depending on the caller).
+    const dbConfig = app.resolve(ConfigRepository).get('database') as
+      | DatabaseConfigShape
+      | undefined
+    if (dbConfig?.admin?.url) {
+      app.singleton(AdminDatabase, () => {
+        const adminCfg = dbConfig.admin
+        if (!adminCfg?.url) {
+          // Defensive — outer check above already gates this branch. Kept
+          // so a future refactor that moves the resolution lazy doesn't
+          // silently drop the validation.
+          throw new ConfigError(
+            'AdminDatabase: `config.database.admin.url` disappeared between register() and resolve().',
+          )
+        }
+        const options: PostgresDatabaseOptions = { url: adminCfg.url }
+        if (adminCfg.idleTimeout !== undefined) options.idleTimeout = adminCfg.idleTimeout
+        if (adminCfg.max !== undefined) options.max = adminCfg.max
+        return new AdminDatabase(options)
+      })
+      app.singleton(ADMIN_DATABASE_KEY, (c) => c.resolve(AdminDatabase) as Database)
+    }
   }
 
   override async boot(app: Application): Promise<void> {
@@ -70,6 +118,13 @@ export class DatabaseProvider extends ServiceProvider {
       await app.resolve(PostgresDatabase).close({ timeout })
     } catch {
       // Best-effort shutdown — never throw past the kernel boundary.
+    }
+    if (app.has(AdminDatabase)) {
+      try {
+        await app.resolve(AdminDatabase).close({ timeout })
+      } catch {
+        // Same best-effort policy as the primary pool.
+      }
     }
   }
 }

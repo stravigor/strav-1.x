@@ -20,12 +20,14 @@
 //   - Encryption key rotation, blind-index helpers, per-tenant keys
 
 export {
+  AdminDatabase,
   type Database,
   type DatabaseExecutor,
   PostgresDatabase,
   type PostgresDatabaseOptions,
 } from './database.ts'
 export {
+  ADMIN_DATABASE_KEY,
   DATABASE_KEY,
   type DatabaseConfigShape,
   DatabaseProvider,

@@ -38,11 +38,13 @@
  * worker at a time per tenant/key, or fleet-wide). Locks auto-release
  * at COMMIT/ROLLBACK — pool-safe.
  *
- * Deferred to follow-up tenancy slices:
- *   - **Connection-pool role switching.** Today the TenantManager
- *     wraps whatever `Database` it's constructed with; if that's the
- *     app-role pool, queries inside withoutTenant get rejected by RLS.
- *     The followup pairs a bypass-role pool with the manager.
+ * `TenantManager` accepts an optional `adminDb` second pool — when
+ * present, `withoutTenant` and `withLock` route through it (the
+ * BYPASSRLS Postgres role) so cross-tenant admin queries actually see
+ * across tenants. When absent, both fall back to the primary pool —
+ * which works when its role has BYPASSRLS, but the recommended setup
+ * is least privilege on the app pool + the admin pool for privileged
+ * paths. See {@link AdminDatabase} + `docs/database/guides/multi_tenancy.md`.
  */
 
 import { AsyncLocalStorage } from 'node:async_hooks'
@@ -58,10 +60,22 @@ interface TenantScope {
 const tenantStorage = new AsyncLocalStorage<TenantScope | null>()
 
 export class TenantManager {
-  private readonly uow: UnitOfWork
+  private readonly appUow: UnitOfWork
+  private readonly adminUow: UnitOfWork
 
-  constructor(db: Database, events?: EventBus) {
-    this.uow = new UnitOfWork(db, events)
+  /**
+   * @param db Primary (app) pool — used by `withTenant` and `withTenantLock`.
+   *   Should be the `NOBYPASSRLS` Postgres role in production so RLS
+   *   policies are enforced on every read/write.
+   * @param events Optional event bus for Repository lifecycle queue-until-commit.
+   * @param adminDb Optional second pool — used by `withoutTenant` and
+   *   `withLock`. Should be the `BYPASSRLS` role so cross-tenant queries
+   *   see across tenants. Omitting it falls back to using `db` for
+   *   privileged paths too — fine for tests / single-role setups.
+   */
+  constructor(db: Database, events?: EventBus, adminDb?: Database) {
+    this.appUow = new UnitOfWork(db, events)
+    this.adminUow = adminDb ? new UnitOfWork(adminDb, events) : this.appUow
   }
 
   /**
@@ -84,7 +98,7 @@ export class TenantManager {
       )
     }
     return tenantStorage.run({ tenantId }, () =>
-      this.uow.run(async (tx) => {
+      this.appUow.run(async (tx) => {
         await tx.execute(`SELECT set_config('app.tenant_id', $1, true)`, [tenantId])
         return fn(tx)
       }),
@@ -93,11 +107,12 @@ export class TenantManager {
 
   /**
    * Run `fn` in a transaction WITHOUT a tenant binding. Intended for
-   * admin / migration paths; requires the underlying connection to be
-   * a `BYPASSRLS` role to actually see across tenants.
+   * admin / migration paths. Routes through the `adminDb` pool when one
+   * was supplied to the constructor (the BYPASSRLS role); otherwise
+   * falls back to the primary pool.
    */
   async withoutTenant<T>(fn: (tx: DatabaseExecutor) => Promise<T>): Promise<T> {
-    return tenantStorage.run(null, () => this.uow.run(fn))
+    return tenantStorage.run(null, () => this.adminUow.run(fn))
   }
 
   /**

@@ -1,6 +1,6 @@
 # @strav/database — API Reference
 
-> **Status:** Reflects what's implemented as of M2 — Database wrapper, DatabaseProvider, Schema DSL (including `t.softDeletes()` / `t.hasMany()` / `t.belongsTo()` / `t.encrypted()`), SchemaRegistry, MigrationRunner, Model with `@hidden` / `@cast` / `@ulid` / `@encrypt` decorators, Repository<T> (lifecycle events + `{ tx? }` opt-in / ALS auto-routing + soft-delete + restore/forceDelete), QueryBuilder (`.with(...)` eager loading + soft-delete scopes + `.paginate({ page, perPage })`), SQL emitter, DDL emitters (including indexes + renames), schema-diff generator (additive + destructive with `allowDrop` + `renames`), multi-tenancy (DDL + TenantManager.withTenant / withoutTenant / withTenantLock / withLock built on UoW), `UnitOfWork.run(fn)` with queue-until-commit lifecycle events, boot-time `validateTenantRegistry` + `emitTenantIdFunction`, Cipher + EncryptionProvider. Explicit `.join()` / two-role connection config / migration builder DSL / `generateMigration` type-change detection all land in follow-up cuts.
+> **Status:** Reflects what's implemented as of M2 — Database wrapper, DatabaseProvider, Schema DSL (including `t.softDeletes()` / `t.hasMany()` / `t.belongsTo()` / `t.encrypted()`), SchemaRegistry, MigrationRunner, Model with `@hidden` / `@cast` / `@ulid` / `@encrypt` decorators, Repository<T> (lifecycle events + `{ tx? }` opt-in / ALS auto-routing + soft-delete + restore/forceDelete), QueryBuilder (`.with(...)` eager loading + soft-delete scopes + `.paginate({ page, perPage })`), SQL emitter, DDL emitters (including indexes + renames), schema-diff generator (additive + destructive with `allowDrop` + `renames`), multi-tenancy (DDL + TenantManager.withTenant / withoutTenant / withTenantLock / withLock built on UoW), `UnitOfWork.run(fn)` with queue-until-commit lifecycle events, boot-time `validateTenantRegistry` + `emitTenantIdFunction`, Cipher + EncryptionProvider. Explicit `.join()` / migration builder DSL / `generateMigration` type-change detection all land in follow-up cuts.
 
 ## `Database` / `PostgresDatabase`
 
@@ -40,6 +40,7 @@ The callback receives a `DatabaseExecutor` scoped to the transaction. Returning 
 
 - `PostgresDatabase` (singleton, factory reads `config.database`)
 - `'database'` string-key alias (same singleton)
+- `AdminDatabase` (singleton, opt-in) — bound ONLY when `config.database.admin.url` is set; `'database.admin'` string-key alias as well
 
 ### `boot()`
 
@@ -47,7 +48,7 @@ By default a no-op (`lazyConnect: true`). Pass `lazyConnect: false` in config to
 
 ### `shutdown()`
 
-Calls `db.close({ timeout: config.database.shutdownTimeoutSeconds ?? 5 })`. Wrapped in try/catch — never throws past the kernel boundary.
+Calls `db.close({ timeout: config.database.shutdownTimeoutSeconds ?? 5 })` on the primary pool, then on `AdminDatabase` if bound. Both wrapped in try/catch — never throws past the kernel boundary.
 
 ### Config slice
 
@@ -58,10 +59,15 @@ interface DatabaseConfigShape {
   max?: number                         // pool size; Bun.SQL default
   lazyConnect?: boolean                // default true
   shutdownTimeoutSeconds?: number      // default 5
+  admin?: {                            // optional BYPASSRLS pool
+    url: string
+    idleTimeout?: number
+    max?: number
+  }
 }
 ```
 
-Missing `url` throws `ConfigError` at the first `app.resolve(PostgresDatabase)` call (which is `boot()` itself when `lazyConnect: false`; first request when lazy).
+Missing `url` throws `ConfigError` at the first `app.resolve(PostgresDatabase)` call (which is `boot()` itself when `lazyConnect: false`; first request when lazy). Omitting the `admin` slice means `AdminDatabase` simply isn't bound — `app.has(AdminDatabase)` honestly reports `false`, and `TenantManager.withoutTenant` / `withLock` fall back to using the primary pool. See `guides/multi_tenancy.md#two-postgres-roles` for the two-role setup.
 
 ## `defineSchema` + `Archetype`
 
@@ -868,7 +874,6 @@ Apps include it in their initial tenancy migration. After that, raw-SQL paths ca
 
 Each is its own follow-up tenancy slice:
 
-- **Two-role connection config.** Apps need a `NOBYPASSRLS` Postgres role for runtime + a `BYPASSRLS` role for migrations / admin. Today: wire two `DatabaseProvider`s with different config slices. Framework-managed dual roles land later.
 - **Boot-time tenant-registry validation.** The provider doesn't yet check that the tenant registry table exists in the live DB with the expected PK type. Misconfiguration surfaces as a Postgres error at first query.
 - **Schema-diff awareness.** `generateMigration` doesn't detect "this existing table is missing its tenant_id column / RLS policy." Apps adding tenancy to an existing table write the migration explicitly.
 ## Unit of work
