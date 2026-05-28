@@ -165,12 +165,15 @@ class Session extends Model {
   id: string
   user_id: string
   expires_at: Date
+  payload: Record<string, unknown> | null    // jsonb key/value bag
   created_at: Date
   updated_at: Date
 
   isValid(now?: Date): boolean   // `expires_at > now`
 }
 ```
+
+`payload` holds request-scoped state (flash messages, CSRF tokens, locale, "remember me" markers). Apps patch it via `SessionRepository.patchPayload(...)` rather than mutating + calling `update()` directly — the helper handles the shallow merge and fires the standard `session.updating` / `session.updated` events.
 
 ### `sessionSchema`
 
@@ -182,11 +185,12 @@ The `@strav/database` Schema for the `session` table. Register it on your app's 
 class SessionRepository extends Repository<Session> {
   findValid(id: string, now?: Date): Promise<Session | null>
   deleteExpired(now?: Date): Promise<number>
+  patchPayload(session: Session, partial: Record<string, unknown>): Promise<Session>
   // …plus all Repository methods: find / findOrFail / findMany / create / update / delete / query / etc.
 }
 ```
 
-`@inject()`-marked; the container resolves `PostgresDatabase` automatically. Apps that need to "kill all sessions for a user" use `.query().where('user_id', userId).get()` then delete each — a `killAllForUser` helper lands when the use case shows up.
+`@inject()`-marked; the container resolves `PostgresDatabase` + `EventBus` automatically. `patchPayload` shallow-merges `partial` into `session.payload ?? {}` and routes through `this.update(...)` so `updated_at` bumps + `session.updating` / `session.updated` events fire normally. Apps that need to "kill all sessions for a user" use `.query().where('user_id', userId).get()` then delete each — a `killAllForUser` helper lands when the use case shows up.
 
 ## `TokenGuard`
 

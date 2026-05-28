@@ -304,6 +304,74 @@ describe('SessionRepository.deleteExpired', () => {
   })
 })
 
+describe('SessionRepository.patchPayload', () => {
+  test('shallow-merges into an existing payload + UPDATEs', async () => {
+    const db = new SpyDb()
+    // Make the UPDATE … RETURNING * return a row so this.update doesn't throw.
+    db.scriptedRow = {
+      id: 'sess-1',
+      user_id: 'u',
+      expires_at: new Date(Date.now() + 60_000),
+      payload: { csrf_token: 'abc', locale: 'en' },
+      created_at: new Date(),
+      updated_at: new Date(),
+    }
+    const repo = new SessionRepository(db as unknown as PostgresDatabase, new EventBus())
+    const existing = makeSession('sess-1', 'u', new Date(Date.now() + 60_000))
+    existing.payload = { csrf_token: 'abc' }
+    const next = await repo.patchPayload(existing, { locale: 'en' })
+    const update = nonNull(db.queries.find((q) => q.sql.startsWith('UPDATE')))
+    expect(update.sql).toContain('UPDATE "session"')
+    expect(update.sql).toContain('"payload" = $1')
+    expect(update.params[0]).toEqual({ csrf_token: 'abc', locale: 'en' })
+    expect(next.payload).toEqual({ csrf_token: 'abc', locale: 'en' })
+  })
+
+  test('starts from {} when the existing payload is null', async () => {
+    const db = new SpyDb()
+    db.scriptedRow = {
+      id: 'sess-2',
+      user_id: 'u',
+      expires_at: new Date(Date.now() + 60_000),
+      payload: { greeted: true },
+      created_at: new Date(),
+      updated_at: new Date(),
+    }
+    const repo = new SessionRepository(db as unknown as PostgresDatabase, new EventBus())
+    const fresh = makeSession('sess-2', 'u', new Date(Date.now() + 60_000))
+    // .payload is null by default — Model class field defaults to undefined
+    // but the spread `...(null ?? {})` handles it.
+    fresh.payload = null
+    await repo.patchPayload(fresh, { greeted: true })
+    const update = nonNull(db.queries.find((q) => q.sql.startsWith('UPDATE')))
+    expect(update.params[0]).toEqual({ greeted: true })
+  })
+
+  test('fires the normal session.updating / session.updated events', async () => {
+    const db = new SpyDb()
+    db.scriptedRow = {
+      id: 'sess-3',
+      user_id: 'u',
+      expires_at: new Date(Date.now() + 60_000),
+      payload: { x: 1 },
+      created_at: new Date(),
+      updated_at: new Date(),
+    }
+    const events = new EventBus()
+    const fired: string[] = []
+    events.on('session.updating', () => {
+      fired.push('updating')
+    })
+    events.on('session.updated', () => {
+      fired.push('updated')
+    })
+    const repo = new SessionRepository(db as unknown as PostgresDatabase, events)
+    const s = makeSession('sess-3', 'u', new Date(Date.now() + 60_000))
+    await repo.patchPayload(s, { x: 1 })
+    expect(fired).toEqual(['updating', 'updated'])
+  })
+})
+
 // ─────────────────────────────────────────────────────────────────────────────
 // AuthProvider — session-driver wiring
 // ─────────────────────────────────────────────────────────────────────────────

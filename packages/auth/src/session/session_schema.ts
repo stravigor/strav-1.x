@@ -13,13 +13,15 @@
  *   - `expires_at` `timestamptz` — past values mean "expired, ignore."
  *                  The guard reads it on authenticate; a separate cleanup
  *                  command sweeps stale rows.
+ *   - `payload`    `jsonb` nullable. Key/value bag for flash messages,
+ *                  CSRF tokens, locale, "remember me" markers. Apps
+ *                  patch it via `SessionRepository.patchPayload(...)`.
  *   - `timestamps` `created_at` + `updated_at` — useful for debugging /
  *                  audit. Not load-bearing.
  *
  * Not in V1 (each lands as its own slice):
  *   - `last_seen_at` — needed for sliding-window expiry
  *   - `ip_address` / `user_agent` — fingerprint / audit fields
- *   - `payload` jsonb — used by flash messages, CSRF, etc.
  *
  * Apps register this schema with their `SchemaRegistry` and ship a
  * migration (the README walks through using `emitCreateTable(sessionSchema)`).
@@ -31,5 +33,6 @@ export const sessionSchema = defineSchema('session', Archetype.Entity, (t) => {
   t.id()
   t.string('user_id').max(64).notNull()
   t.timestamp('expires_at').notNull()
+  t.json('payload').nullable()
   t.timestamps()
 })

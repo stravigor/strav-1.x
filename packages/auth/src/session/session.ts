@@ -16,6 +16,14 @@ export class Session extends Model {
   id!: string
   user_id!: string
   expires_at!: Date
+  /**
+   * Key/value bag for flash messages, CSRF tokens, locale, etc. `null`
+   * when nothing has been put. Apps patch via
+   * `SessionRepository.patchPayload(session, partial)` rather than
+   * mutating + `update()` directly — the helper handles the merge +
+   * persists in one round-trip.
+   */
+  payload!: Record<string, unknown> | null
   created_at!: Date
   updated_at!: Date
 

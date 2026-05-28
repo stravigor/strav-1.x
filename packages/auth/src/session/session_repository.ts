@@ -39,4 +39,19 @@ export class SessionRepository extends Repository<Session> {
     const sql = `DELETE FROM ${quoteIdent(sessionSchema.name)} WHERE ${quoteIdent('expires_at')} <= $1`
     return this.db.execute(sql, [now])
   }
+
+  /**
+   * Shallow-merge `partial` into the session's payload and persist. Routes
+   * through `this.update()` so the standard auto-`updated_at` bump +
+   * lifecycle events (`session.updating` / `session.updated`) still fire.
+   *
+   * The merge is shallow on purpose — nested-key semantics ("foo.bar.baz =
+   * 1") get hairy fast and apps that need them can spread the existing
+   * payload themselves. The 90% case is `patchPayload(s, { csrf_token:
+   * '…' })` or `patchPayload(s, { 'flash.success': 'Saved' })`.
+   */
+  async patchPayload(session: Session, partial: Record<string, unknown>): Promise<Session> {
+    const next = { ...(session.payload ?? {}), ...partial }
+    return this.update(session, { payload: next } as Partial<Session>)
+  }
 }

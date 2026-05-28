@@ -117,9 +117,58 @@ Each lands as its own slice on top of this foundation:
 
 - **Sliding-window expiry.** `expires_at` is set at login and never bumped. Apps that want active users to stay signed in past `ttl` minutes-since-login (typical web auth) will get a `touch()` enrichment that runs after authenticate.
 - **Session-fixation prevention.** Standard practice is to rotate the session id on login (after credential verification). A `regenerate()` helper lands separately — call it from your login route once it ships.
-- **Session payload.** Flash messages, CSRF tokens, locale, "remember me" markers all want a `jsonb` payload column. Schema gets `t.json('payload')`; SessionGuard gets `get(key)` / `put(key, value)` accessors.
+- **Auto-flush middleware** that calls `patchPayload` automatically when handlers mutate the session payload. Today, payload writes are explicit (apps call `sessions.patchPayload(s, { … })`).
 - **`sessions:gc` console command.** `SessionRepository.deleteExpired(now)` is already implemented; the CLI command that calls it on a cron lands with `@strav/cli`.
 - **`SessionGuard.killAllForUser(id)`.** Useful for "log me out everywhere." Trivial to implement, lands when the use case shows up.
+
+## Payload column — flash messages, CSRF tokens, locale
+
+The session schema includes a nullable `payload jsonb` column for request-scoped state. Apps patch it through `SessionRepository.patchPayload(session, partial)`:
+
+```ts
+// Set a flash message before redirecting.
+await sessions.patchPayload(session, { 'flash.success': 'Saved!' })
+
+// Read it on the next request.
+const flash = (session.payload as Record<string, unknown> | null)?.['flash.success']
+
+// Clear after rendering.
+await sessions.patchPayload(session, { 'flash.success': null })
+```
+
+`patchPayload`:
+
+1. Shallow-merges `partial` into `session.payload ?? {}` (null payload treated as empty).
+2. Routes through `Repository.update(...)` — `updated_at` auto-bumps, `session.updating` + `session.updated` events fire normally, the post-write row hydrates back via `RETURNING *`.
+3. Returns the updated `Session`.
+
+The merge is intentionally **shallow** — `patchPayload(s, { foo: { bar: 1 } })` replaces any existing `foo` wholesale. Apps that need deep semantics spread the existing payload themselves:
+
+```ts
+await sessions.patchPayload(session, {
+  preferences: { ...(session.payload?.['preferences'] as object ?? {}), theme: 'dark' },
+})
+```
+
+### Migrating an existing `session` table
+
+Fresh apps using `emitCreateTable(sessionSchema)` get the `payload` column automatically. If your app shipped the session table before this slice, add the column with a follow-up migration:
+
+```ts
+// database/migrations/20260530000000_add_session_payload.ts
+import { emitAddColumn, emitDropColumn, type Migration } from '@strav/database'
+import { sessionSchema } from '@strav/auth'
+
+export const migration: Migration = {
+  name: '20260530000000_add_session_payload',
+  async up(db) {
+    await db.execute(emitAddColumn(sessionSchema, 'payload').sql)
+  },
+  async down(db) {
+    await db.execute(emitDropColumn(sessionSchema.name, 'payload').sql)
+  },
+}
+```
 
 ## Migrating from `MemoryGuard`
 
