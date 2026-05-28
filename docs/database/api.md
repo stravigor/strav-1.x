@@ -1,6 +1,6 @@
 # @strav/database — API Reference
 
-> **Status:** Reflects what's implemented as of M2 (foundation + ORM + DDL + diff + tenancy + Repository hooks + unit-of-work) — Database wrapper, DatabaseProvider, Schema DSL, SchemaRegistry, MigrationRunner, Model, Repository<T> (with lifecycle events + `{ tx? }` opt-in / ALS auto-routing), QueryBuilder, SQL emitter, DDL emitters, schema-diff generator, multi-tenancy (DDL + TenantManager built on UoW), `UnitOfWork.run(fn)` with queue-until-commit lifecycle events. Decorators, soft-delete integration, relationships + eager loading, pagination, joins/CTEs, migration builder DSL, destructive diff, `tenantedSerial` per-tenant sequencing, two-role connection config all land in follow-up cuts.
+> **Status:** Reflects what's implemented as of M2 (foundation + ORM + DDL + diff + tenancy + Repository hooks + unit-of-work) — Database wrapper, DatabaseProvider, Schema DSL, SchemaRegistry, MigrationRunner, Model, Repository<T> (with lifecycle events + `{ tx? }` opt-in / ALS auto-routing), QueryBuilder, SQL emitter, DDL emitters, schema-diff generator, multi-tenancy (DDL + TenantManager built on UoW), `UnitOfWork.run(fn)` with queue-until-commit lifecycle events. Decorators, soft-delete integration, relationships + eager loading, pagination, joins/CTEs, migration builder DSL, destructive diff, `tenantedBigSerial` per-tenant sequencing, two-role connection config all land in follow-up cuts.
 
 ## `Database` / `PostgresDatabase`
 
@@ -109,7 +109,7 @@ Immutable. `fields` preserves declaration order so generated SQL is auditable.
 | `'id'` | (ULID by default) |
 | `'uuid'` | — |
 | `'bigSerial'` | (auto-increment bigint) |
-| `'tenantedSerial'` | (per-tenant sequence) |
+| `'tenantedBigSerial'` | (per-tenant auto-increment bigint — column emits as plain `bigint` today; per-tenant sequencing deferred) |
 | `'string'` | `max: number` (default 255) |
 | `'text'` | — |
 | `'integer'` | — |
@@ -131,8 +131,10 @@ Identity:
 t.id()                                   // ULID, name 'id'
 t.uuid()                                 // UUID variant
 t.bigSerial()                            // auto-increment bigint
-t.tenantedSerial()                       // per-tenant sequence
+t.tenantedBigSerial()                    // per-tenant auto-increment bigint — DEFERRED (emits plain bigint today)
 ```
+
+`t.serial()` (32-bit int) is intentionally not provided — bigint-by-default avoids the painful overflow migration that 32-bit serial PKs eventually force. `t.tenantedBigSerial()` is reserved for the per-tenant sequencing slice; today it emits a plain `bigint NOT NULL PRIMARY KEY`. Prefer `t.id()` (ULID) for tenanted schemas until the sequence + trigger plumbing lands.
 
 Scalars:
 
@@ -298,7 +300,53 @@ class Order extends Model {
 
 Either side is optional. `castFor(ModelClass, fieldName)` and `castsFor(ModelClass)` are the runtime accessors; `applyCastsToDb(ModelClass, attrs)` runs the `toDb` pass on a plain object (used internally by Repository). Same inheritance rules as `@hidden`.
 
-`@encrypt` / `@ulid` land in follow-up slices on the same metadata pattern.
+### `@ulid` — auto-generate + validate ULID columns
+
+Mark a Model property as a ULID-shaped string. Extends the auto-PK behavior of `t.id()` to any string column.
+
+```ts
+import { ulid, Model } from '@strav/database'
+
+class Job extends Model {
+  static schema = jobSchema
+  id!: string
+  @ulid correlation_id!: string
+}
+
+await jobRepo.create({})                 // correlation_id auto-generated
+await jobRepo.create({ correlation_id: 'bad' })   // throws ValidationError
+```
+
+Semantics: on `create`, absent / `undefined` / `null` fields are auto-filled with a fresh ULID; supplied values are validated. On `update`, supplied values are validated, `null` is forwarded so callers can clear nullable columns, and missing fields are left alone (no auto-generation). Validation failures throw `ValidationError` carrying a field-level `errors` map keyed by the offending column name.
+
+Write-side only — hydration is passthrough (the column is `char(26)` at the DB layer). Runs **before** `@cast` on writes, so casts see the auto-generated string rather than `undefined`. `ulidFieldsOf(ModelClass)` and `applyUlidsToAttrs(ModelClass, attrs, mode)` are the runtime helpers. Same inheritance rules as `@hidden`.
+
+### `@encrypt` — encryption-at-rest
+
+Mark a Model property as encrypted in the DB. Stored as `bytea` (declare with `t.encrypted('field')`); the Model field stays a plain string. Repository runs `Cipher.encrypt` after `@cast.toDb` on writes and `Cipher.decrypt` before `@cast.fromDb` on reads.
+
+```ts
+import { encrypt, Model } from '@strav/database'
+
+class User extends Model {
+  static schema = userSchema
+  id!: string
+  @encrypt ssn!: string    // bytea in Postgres, string in memory
+}
+```
+
+Default cipher is `AesGcm256Cipher` (AES-256-GCM, 12-byte random IV per encryption, 128-bit auth tag; storage layout `iv || tag || ciphertext`). Wire via the kernel's `EncryptionProvider`:
+
+```ts
+new ConfigProvider({ encryption: { key: env.required('ENCRYPTION_KEY') } }),
+new EncryptionProvider(),
+```
+
+Keys accept 64-char hex / base64-decoding-to-32-bytes / `Uint8Array`. Bad keys / missing config throw `ConfigError` at boot. A Repository whose Model has `@encrypt` fields without an `EncryptionProvider` throws on the first `create` / `update` / `find` call. Models without `@encrypt` work fine without an `EncryptionProvider`.
+
+`encryptedFieldsOf(ModelClass)`, `applyEncryptToAttrs(ModelClass, attrs, cipher)`, and `applyDecryptToRow(ModelClass, row, cipher)` are the runtime helpers. Same inheritance rules as `@hidden`.
+
+Deferred: key rotation (single key today), blind-index helpers for searching encrypted columns, per-tenant keys.
 
 ## `Repository<TModel>`
 
@@ -544,7 +592,7 @@ function isPrimaryKeyKind(field: SchemaField): boolean
 | `id` | `char(26)` | ULID — exactly 26 Crockford base32 chars. Inline `PRIMARY KEY`. |
 | `uuid` | `uuid` | Inline `PRIMARY KEY`. |
 | `bigSerial` | `bigserial` | Inline `PRIMARY KEY`. Postgres auto-creates the sequence. |
-| `tenantedSerial` | `bigint` | Inline `PRIMARY KEY`. Per-tenant sequencing (trigger + sequence + RLS) lands with the tenancy slice. |
+| `tenantedBigSerial` | `bigint` | Inline `PRIMARY KEY`. Per-tenant sequencing (trigger + sequence + composite `(tenant_id, id)` PK) lands with a follow-up tenancy slice — today the column is just `bigint NOT NULL PRIMARY KEY`. |
 | `string` | `varchar(N)` | `N` = `.max` (default 255). |
 | `text` | `text` | |
 | `integer` | `integer` | |
@@ -736,15 +784,23 @@ class TenantManager {
 
   withTenant<T>(tenantId: string, fn: (tx: DatabaseExecutor) => Promise<T>): Promise<T>
   withoutTenant<T>(fn: (tx: DatabaseExecutor) => Promise<T>): Promise<T>
+  withTenantLock<T>(
+    tenantId: string,
+    lockKey: string,
+    fn: (tx: DatabaseExecutor) => Promise<T>,
+  ): Promise<T>
+  withLock<T>(lockKey: string, fn: (tx: DatabaseExecutor) => Promise<T>): Promise<T>
   currentTenantId(): string | null
 }
 ```
 
 - **`withTenant(id, fn)`** — opens a transaction, runs `SELECT set_config('app.tenant_id', $1, true)`, then `fn(tx)`. Transaction-local binding auto-clears on COMMIT / ROLLBACK.
 - **`withoutTenant(fn)`** — opens a transaction without binding the tenant. Intended for admin / migration paths; requires the underlying connection to be a `BYPASSRLS` Postgres role to actually see across tenants.
+- **`withTenantLock(id, lockKey, fn)`** — `withTenant(id, ...)` plus `SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))`. Holds a transaction-level advisory lock keyed by the `(tenantId, lockKey)` pair — different tenants holding the same key don't contend. Auto-releases at COMMIT / ROLLBACK. Inside an existing `withTenant(id, …)` scope, the lock is acquired on the existing transaction (no nested tx).
+- **`withLock(lockKey, fn)`** — non-tenanted variant: `withoutTenant(...)` plus `SELECT pg_advisory_xact_lock(hashtext($1)::bigint)`. For fleet-wide singletons (cron jobs, leadership fences, one-time migrations). Needs the BYPASSRLS connection if touching RLS-protected tables.
 - **`currentTenantId()`** — the active tenant inside any `withTenant` scope, `null` outside. Propagates through nested async via AsyncLocalStorage.
-- **Nesting** — `withTenant('A', () => withTenant('A', ...))` is fine (same tenant). `withTenant('A', () => withTenant('B', ...))` throws; tenant switches must be explicit (exit the outer scope first).
-- **Exception safety** — if `fn` throws, the transaction rolls back, the ALS scope unwinds, `currentTenantId()` returns to its prior value.
+- **Nesting** — `withTenant('A', () => withTenant('A', ...))` is fine (same tenant). `withTenant('A', () => withTenant('B', ...))` throws; tenant switches must be explicit (exit the outer scope first). Same rule applies to `withTenantLock` — same tenant reuses the outer tx + adds the lock; different tenant throws.
+- **Exception safety** — if `fn` throws, the transaction rolls back, the ALS scope unwinds, `currentTenantId()` returns to its prior value, and any advisory locks held by the transaction release.
 
 ### Helpers (low-level)
 
@@ -779,7 +835,7 @@ Apps include it in their initial tenancy migration. After that, raw-SQL paths ca
 
 Each is its own follow-up tenancy slice:
 
-- **Composite `(tenant_id, id)` PK for `t.tenantedSerial()`.** Today's tenanted schemas should use `t.id()` (ULID) — globally unique by construction, so the tenant FK is just a scoping column.
+- **Composite `(tenant_id, id)` PK for `t.tenantedBigSerial()`.** Today's tenanted schemas should use `t.id()` (ULID) — globally unique by construction, so the tenant FK is just a scoping column. `t.tenantedBigSerial()` emits a plain `bigint NOT NULL PRIMARY KEY` today; the per-tenant sequence + trigger + composite PK plumbing lands with this slice.
 - **Two-role connection config.** Apps need a `NOBYPASSRLS` Postgres role for runtime + a `BYPASSRLS` role for migrations / admin. Today: wire two `DatabaseProvider`s with different config slices. Framework-managed dual roles land later.
 - **Boot-time tenant-registry validation.** The provider doesn't yet check that the tenant registry table exists in the live DB with the expected PK type. Misconfiguration surfaces as a Postgres error at first query.
 - **Schema-diff awareness.** `generateMigration` doesn't detect "this existing table is missing its tenant_id column / RLS policy." Apps adding tenancy to an existing table write the migration explicitly.

@@ -14,7 +14,7 @@
  * shape; integration tests against real Postgres are CI's responsibility.
  */
 
-import { NotFoundError } from '@strav/kernel'
+import { type Cipher, NotFoundError } from '@strav/kernel'
 import type { DatabaseExecutor } from '../database.ts'
 import type { Schema } from '../schema/types.ts'
 import type { SchemaRegistry } from '../schema_registry.ts'
@@ -92,6 +92,7 @@ export class QueryBuilder<TModel extends object = Record<string, unknown>> {
       | ModelClass<TModel & { constructor: ModelClass<TModel> }>
       | undefined,
     private readonly registry?: SchemaRegistry,
+    private readonly cipher?: Cipher,
   ) {}
 
   // ─── Modifiers (each returns a fresh builder; chainable) ───────────────────
@@ -348,7 +349,7 @@ export class QueryBuilder<TModel extends object = Record<string, unknown>> {
   private hydrate(row: Record<string, unknown>): TModel {
     if (!this.modelCtor) return row as TModel
     const instance = new this.modelCtor() as TModel
-    return hydrateRow(this.schema, row, instance as object) as TModel
+    return hydrateRow(this.schema, row, instance as object, this.cipher) as TModel
   }
 
   /**
@@ -433,7 +434,13 @@ export class QueryBuilder<TModel extends object = Record<string, unknown>> {
   }
 
   private clone(): QueryBuilder<TModel> {
-    const next = new QueryBuilder<TModel>(this.schema, this.db, this.modelCtor, this.registry)
+    const next = new QueryBuilder<TModel>(
+      this.schema,
+      this.db,
+      this.modelCtor,
+      this.registry,
+      this.cipher,
+    )
     next.wheres.push(...this.wheres)
     next.orders.push(...this.orders)
     next.selectColumns = this.selectColumns

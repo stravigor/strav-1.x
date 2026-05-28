@@ -37,8 +37,8 @@ describe('sqlTypeFor', () => {
     expect(sqlTypeFor(s.fields[0] as SchemaField)).toBe('bigserial')
   })
 
-  test('tenantedSerial → bigint (per-tenant sequencing deferred)', () => {
-    const s = defineSchema('x', Archetype.Entity, (t) => t.tenantedSerial())
+  test('tenantedBigSerial → bigint (per-tenant sequencing deferred)', () => {
+    const s = defineSchema('x', Archetype.Entity, (t) => t.tenantedBigSerial())
     expect(sqlTypeFor(s.fields[0] as SchemaField)).toBe('bigint')
   })
 
@@ -151,13 +151,13 @@ describe('findPrimaryKey', () => {
     expect(findPrimaryKey(s).name).toBe('code')
   })
 
-  test('finds uuid / bigSerial / tenantedSerial too', () => {
+  test('finds uuid / bigSerial / tenantedBigSerial too', () => {
     const a = defineSchema('a', Archetype.Entity, (t) => t.uuid())
     const b = defineSchema('b', Archetype.Entity, (t) => t.bigSerial())
-    const c = defineSchema('c', Archetype.Entity, (t) => t.tenantedSerial())
+    const c = defineSchema('c', Archetype.Entity, (t) => t.tenantedBigSerial())
     expect(findPrimaryKey(a).kind).toBe('uuid')
     expect(findPrimaryKey(b).kind).toBe('bigSerial')
-    expect(findPrimaryKey(c).kind).toBe('tenantedSerial')
+    expect(findPrimaryKey(c).kind).toBe('tenantedBigSerial')
   })
 
   test('throws when no identity field is present', () => {
@@ -167,12 +167,12 @@ describe('findPrimaryKey', () => {
 })
 
 describe('isPrimaryKeyKind', () => {
-  test('true for id/uuid/bigSerial/tenantedSerial', () => {
+  test('true for id/uuid/bigSerial/tenantedBigSerial', () => {
     const s = defineSchema('x', Archetype.Entity, (t) => {
       t.id()
       t.uuid('alt_id')
       t.bigSerial('big')
-      t.tenantedSerial('tenanted')
+      t.tenantedBigSerial('tenanted')
     })
     expect(s.fields.every(isPrimaryKeyKind)).toBe(true)
   })

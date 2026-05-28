@@ -14,8 +14,9 @@
  * follow-up slices that layer on the same metadata pattern.
  */
 
+import type { Cipher } from '@strav/kernel'
 import type { Schema } from '../schema/types.ts'
-import { castsFor, hiddenFieldsOf } from './decorators.ts'
+import { applyDecryptToRow, castsFor, hiddenFieldsOf } from './decorators.ts'
 
 export interface ModelClass<T extends object = Model> {
   /** Required — the schema this Model maps to. Set by the subclass. */
@@ -58,25 +59,35 @@ export class Model {
  * Repository uses this internally; exposed for advanced cases (writing a
  * custom query result type that bypasses the Repository).
  *
- * When `target` carries `@cast`-decorated fields (looked up via its
- * constructor), `fromDb` is applied to each populated field after the
- * copy. Hydrating a plain object skips this step (no class → no
- * decorators).
+ * Decoration order:
+ *   1. `@encrypt` fields are decrypted via `cipher` (when supplied) — so
+ *      subsequent steps see the plaintext string, not the bytea blob.
+ *   2. Schema-declared columns are copied onto the target.
+ *   3. `@cast` `fromDb` transforms run on each populated field — they
+ *      see the decrypted-then-copied string and can wrap it in a value
+ *      object if they want.
+ *
+ * Pure-POJO hydration (no class on the target) skips the decorator
+ * steps — the Schema is still the contract. The `cipher` parameter is
+ * optional: only Models with `@encrypt` fields need it, and the
+ * Repository passes it through when constructed with one.
  */
 export function hydrateRow<T extends object>(
   schema: Schema,
   row: Record<string, unknown>,
   target: T,
+  cipher?: Cipher,
 ): T {
   const obj = target as Record<string, unknown>
+  const ctor = (target as { constructor?: object }).constructor
+  // Decrypt @encrypt fields up-front so the column-copy + cast.fromDb
+  // steps see the decrypted plaintext.
+  const source = ctor && cipher ? applyDecryptToRow(ctor, row, cipher) : row
   for (const field of schema.fields) {
-    if (Object.hasOwn(row, field.name)) {
-      obj[field.name] = row[field.name]
+    if (Object.hasOwn(source, field.name)) {
+      obj[field.name] = source[field.name]
     }
   }
-  // Apply @cast `fromDb` transforms when the target has a class (and that
-  // class has cast metadata). Pure-POJO hydration skips this branch.
-  const ctor = (target as { constructor?: object }).constructor
   if (ctor) {
     const casts = castsFor(ctor)
     if (casts.size > 0) {

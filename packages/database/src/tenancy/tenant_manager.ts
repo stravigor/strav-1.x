@@ -32,15 +32,17 @@
  * Nested `withTenant` calls with the SAME tenant pass through; nested
  * calls with a DIFFERENT tenant throw — that's almost always a bug.
  *
+ * `withTenantLock(id, key, fn)` / `withLock(key, fn)` add a
+ * **transaction-level Postgres advisory lock** on top of the existing
+ * scope helpers. Use them to serialize concurrent work blocks (one
+ * worker at a time per tenant/key, or fleet-wide). Locks auto-release
+ * at COMMIT/ROLLBACK — pool-safe.
+ *
  * Deferred to follow-up tenancy slices:
  *   - **Connection-pool role switching.** Today the TenantManager
  *     wraps whatever `Database` it's constructed with; if that's the
  *     app-role pool, queries inside withoutTenant get rejected by RLS.
  *     The followup pairs a bypass-role pool with the manager.
- *   - **Tenant boot-time validation.** The provider doesn't yet check
- *     that the tenant registry table exists in the live DB with the
- *     expected PK type. Misconfiguration surfaces as a Postgres error
- *     at first query for now.
  */
 
 import { AsyncLocalStorage } from 'node:async_hooks'
@@ -96,6 +98,78 @@ export class TenantManager {
    */
   async withoutTenant<T>(fn: (tx: DatabaseExecutor) => Promise<T>): Promise<T> {
     return tenantStorage.run(null, () => this.uow.run(fn))
+  }
+
+  /**
+   * Run `fn` inside a tenant-scoped transaction that also holds a
+   * **transaction-level advisory lock** keyed by `(tenantId, lockKey)`.
+   * The lock auto-releases at COMMIT / ROLLBACK — no `pg_advisory_unlock`
+   * to remember, and pool-safe (no stranded session locks if a worker
+   * crashes).
+   *
+   * Use this to serialize concurrent work blocks under the same tenant
+   * without a heavyweight row lock:
+   *
+   * ```ts
+   * await tenants.withTenantLock(tenantId, 'invoice-batch', async (tx) => {
+   *   const pending = await invoiceRepo.query().where('status', 'pending').all()
+   *   for (const invoice of pending) await processInvoice(invoice)
+   * })
+   * ```
+   *
+   * The lock partitions cleanly per-tenant (different tenants holding the
+   * same `lockKey` don't contend) via Postgres's two-argument
+   * `pg_advisory_xact_lock(int, int)`, with `hashtext()` on each. Inside
+   * `fn`, Repository calls auto-route through the transaction just like
+   * in `withTenant`.
+   *
+   * If called inside an existing `withTenant(tenantId, ...)`, this acquires
+   * the lock on the existing transaction (no nested transaction opened).
+   * Nesting with a DIFFERENT tenant throws — same loud-fail rule as
+   * `withTenant`.
+   */
+  async withTenantLock<T>(
+    tenantId: string,
+    lockKey: string,
+    fn: (tx: DatabaseExecutor) => Promise<T>,
+  ): Promise<T> {
+    if (!lockKey) {
+      throw new Error('TenantManager.withTenantLock: lockKey must be a non-empty string.')
+    }
+    return this.withTenant(tenantId, async (tx) => {
+      await tx.execute('SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))', [
+        tenantId,
+        lockKey,
+      ])
+      return fn(tx)
+    })
+  }
+
+  /**
+   * Run `fn` in a transaction that holds a **transaction-level advisory
+   * lock** keyed by `lockKey` (no tenant binding). For global / admin
+   * serialization — singleton cron jobs, one-time migrations, leadership
+   * fences. Uses Postgres's one-argument `pg_advisory_xact_lock(bigint)`
+   * with `hashtext()` casting the key to 64-bit.
+   *
+   * ```ts
+   * await tenants.withLock('housekeeping:expire-tokens', async (tx) => {
+   *   await tx.execute(...)   // exactly one worker at a time, fleet-wide
+   * })
+   * ```
+   *
+   * Like `withoutTenant`, this leaves `app.tenant_id` unset — RLS-
+   * protected tables will reject queries unless the connection is a
+   * `BYPASSRLS` role.
+   */
+  async withLock<T>(lockKey: string, fn: (tx: DatabaseExecutor) => Promise<T>): Promise<T> {
+    if (!lockKey) {
+      throw new Error('TenantManager.withLock: lockKey must be a non-empty string.')
+    }
+    return this.withoutTenant(async (tx) => {
+      await tx.execute('SELECT pg_advisory_xact_lock(hashtext($1)::bigint)', [lockKey])
+      return fn(tx)
+    })
   }
 
   /** Current tenant ID inside any `withTenant` scope, else `null`. */

@@ -17,7 +17,7 @@
  * table that can never be queried.
  *
  * Deferred to follow-up slices:
- *   - **Composite (tenant_id, id) PK for `tenantedSerial`.** Today's
+ *   - **Composite (tenant_id, id) PK for `tenantedBigSerial`.** Today's
  *     tenanted schemas should use `t.id()` (ULID) — globally unique
  *     by construction, so the tenant_id column is just a scoping FK,
  *     not part of the PK.

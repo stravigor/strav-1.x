@@ -19,7 +19,7 @@ export {
   type SchemaRelation,
   type SchemaTenancy,
   type StringField,
-  type TenantedSerialField,
+  type TenantedBigSerialField,
   type TextField,
   type TimestampField,
   type UuidField,

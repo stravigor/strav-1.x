@@ -30,12 +30,18 @@
  *   - Pagination helpers (`.paginate` / `.cursorPaginate`)
  */
 
+import type { Cipher } from '@strav/kernel'
 import { type EventBus, NotFoundError } from '@strav/kernel'
 import type { Database, DatabaseExecutor, PostgresDatabase } from '../database.ts'
 import type { Schema } from '../schema/types.ts'
 import type { SchemaRegistry } from '../schema_registry.ts'
 import { transactionalStorage } from '../unit_of_work/context.ts'
-import { applyCastsToDb } from './decorators.ts'
+import {
+  applyCastsToDb,
+  applyEncryptToAttrs,
+  applyUlidsToAttrs,
+  encryptedFieldsOf,
+} from './decorators.ts'
 import { hydrateRow, type ModelClass } from './model.ts'
 import { QueryBuilder } from './query_builder.ts'
 import {
@@ -121,14 +127,19 @@ export abstract class Repository<TModel extends object> {
    * stay as-is (and so apps under test can construct a Repository without
    * wiring a bus). `registry` is optional too — apps that use eager
    * loading via `query().with(...)` need it; everything else works without.
-   * Both are auto-resolved by the container when the subclass's
-   * constructor declares them (the @inject() flow reads paramtypes via
-   * reflect-metadata).
+   * `cipher` is auto-resolved when `EncryptionProvider` is registered;
+   * apps without encryption see the base `Cipher` class, which throws
+   * on first use — so Models with `@encrypt` fields fail loudly at the
+   * first encrypt/decrypt call, while Models without `@encrypt` never
+   * trip it. All four are auto-resolved by the container when the
+   * subclass's constructor declares them (the @inject() flow reads
+   * paramtypes via reflect-metadata).
    */
   constructor(
     protected readonly db: PostgresDatabase,
     protected readonly events?: EventBus,
     protected readonly registry?: SchemaRegistry,
+    protected readonly cipher?: Cipher,
   ) {
     const Ctor = this.constructor as unknown as {
       schema?: Schema
@@ -188,7 +199,13 @@ export abstract class Repository<TModel extends object> {
       resource: this.schema.name,
       attrs,
     })
-    const dbAttrs = applyCastsToDb(this.modelCtor as object, attrs as Record<string, unknown>)
+    const withUlids = applyUlidsToAttrs(
+      this.modelCtor as object,
+      attrs as Record<string, unknown>,
+      'create',
+    )
+    const casted = applyCastsToDb(this.modelCtor as object, withUlids)
+    const dbAttrs = this.applyEncrypt(casted)
     const { sql, params } = emitInsert(this.schema, dbAttrs)
     const row = await this.executor(opts).queryOne<Record<string, unknown>>(sql, params)
     if (!row) {
@@ -216,7 +233,13 @@ export abstract class Repository<TModel extends object> {
       model,
       changes,
     })
-    const dbChanges = applyCastsToDb(this.modelCtor as object, changes as Record<string, unknown>)
+    const withUlids = applyUlidsToAttrs(
+      this.modelCtor as object,
+      changes as Record<string, unknown>,
+      'update',
+    )
+    const casted = applyCastsToDb(this.modelCtor as object, withUlids)
+    const dbChanges = this.applyEncrypt(casted)
     const { sql, params } = emitUpdateById(this.schema, id, dbChanges)
     const row = await this.executor(opts).queryOne<Record<string, unknown>>(sql, params)
     if (!row) {
@@ -377,7 +400,13 @@ export abstract class Repository<TModel extends object> {
 
   /** Fluent query builder scoped to this repository's schema. */
   query(opts?: RepositoryScope): QueryBuilder<TModel> {
-    return new QueryBuilder<TModel>(this.schema, this.executor(opts), this.modelCtor, this.registry)
+    return new QueryBuilder<TModel>(
+      this.schema,
+      this.executor(opts),
+      this.modelCtor,
+      this.registry,
+      this.cipher,
+    )
   }
 
   // ─── Aggregates ────────────────────────────────────────────────────────────
@@ -411,9 +440,28 @@ export abstract class Repository<TModel extends object> {
 
   protected hydrate(row: Record<string, unknown>): TModel {
     const instance = new this.modelCtor() as TModel
-    // hydrateRow applies @cast `fromDb` transforms when the target's
-    // constructor carries cast metadata — Repository doesn't repeat the
-    // pass here.
-    return hydrateRow(this.schema, row, instance as object) as TModel
+    // hydrateRow applies @encrypt decryption (via cipher) + @cast.fromDb
+    // when the target's constructor carries the matching metadata.
+    return hydrateRow(this.schema, row, instance as object, this.cipher) as TModel
+  }
+
+  /**
+   * Run `@encrypt` on storage-shape attrs. Pulled out so create + update
+   * share the lazy-cipher-check + clearer error path. Throws if the Model
+   * has `@encrypt` fields but the Repository was constructed without a
+   * Cipher (which means the unbound base `Cipher` is in play; its own
+   * encrypt method also throws — this just adds a Repository-level
+   * message naming the model).
+   */
+  private applyEncrypt(attrs: Record<string, unknown>): Record<string, unknown> {
+    const fields = encryptedFieldsOf(this.modelCtor as object)
+    if (fields.size === 0) return attrs
+    if (!this.cipher) {
+      throw new Error(
+        `Repository("${this.schema.name}"): Model has @encrypt fields but no Cipher is wired. ` +
+          'Register EncryptionProvider with `config.encryption.key` set.',
+      )
+    }
+    return applyEncryptToAttrs(this.modelCtor as object, attrs, this.cipher)
   }
 }

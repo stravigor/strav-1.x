@@ -105,6 +105,32 @@ await tenants.withoutTenant(async (tx) => {
 
 If the underlying Database is wired with a `NOBYPASSRLS` role, this query returns nothing (the empty `app.tenant_id` filters everything out). Apps that need cross-tenant queries wire a second `DatabaseProvider` against the bypass role and construct a separate `TenantManager` over it.
 
+## Advisory locks — `withTenantLock` / `withLock`
+
+Postgres **transaction-level advisory locks** let you serialize concurrent work without a heavyweight row lock. The lock auto-releases at COMMIT/ROLLBACK — pool-safe by construction (no stranded session locks if a worker crashes), and the key is just an integer derived from `hashtext(...)` on the names you pass in.
+
+```ts
+// One worker at a time PROCESSES INVOICES for this tenant. Other tenants
+// holding the same key don't contend — the (tenant_id, lockKey) pair is
+// partitioned by Postgres's two-arg pg_advisory_xact_lock(int, int).
+await tenants.withTenantLock(tenantId, 'invoice-batch', async (tx) => {
+  const pending = await invoiceRepo.query().where('status', 'pending').all()
+  for (const invoice of pending) await processInvoice(invoice)
+})
+
+// Fleet-wide singleton — only one worker across the whole deployment
+// runs this block at once. No tenant binding, so RLS-protected tables
+// need the BYPASSRLS connection. Useful for cron singletons / one-time
+// migrations / leadership fences.
+await tenants.withLock('housekeeping:expire-tokens', async (tx) => {
+  await tx.execute('DELETE FROM "token" WHERE expires_at < now()')
+})
+```
+
+`withTenantLock` is `withTenant` + the lock — same nested-tenant rules (matching tenant → reuse outer tx, different tenant → throws). Inside the callback, Repository calls auto-route through the transaction.
+
+If you call `withTenantLock` inside an existing `withTenant`, the lock is acquired on the existing transaction — no nested transaction opened. Multiple locks in the same scope compose (Postgres allows many advisory locks per transaction); they all release together at COMMIT/ROLLBACK.
+
 ## Two Postgres roles
 
 Until the framework ships dual-role config, do it manually:
@@ -193,7 +219,7 @@ Outside `withTenant`, `current_tenant_id()` returns `NULL` (the `true` second ar
 
 Each is its own follow-up slice:
 
-- **Composite `(tenant_id, id)` PK for `t.tenantedSerial()`.** Today's tenanted schemas use `t.id()` (ULID), which is globally unique by construction. Per-tenant auto-incrementing sequences (the `tenantedSerial` case) need the per-tenant sequence + trigger plumbing.
+- **Composite `(tenant_id, id)` PK for `t.tenantedBigSerial()`.** Today's tenanted schemas use `t.id()` (ULID), which is globally unique by construction. Per-tenant auto-incrementing sequences (the `tenantedBigSerial` case) need the per-tenant sequence + trigger plumbing — `t.tenantedBigSerial()` emits a plain `bigint NOT NULL PRIMARY KEY` today and is reserved for the follow-up slice.
 - **Framework-managed dual-role config.** Apps wire two `DatabaseProvider`s manually today.
 - **`generateMigration` tenancy awareness.** The diff doesn't yet add `tenant_id` + RLS to an existing table that's missing them. Apps that retrofit tenancy onto an existing table write the migration explicitly (use `emitRlsForTenanted` + a hand-written `ALTER TABLE … ADD COLUMN`).
 - **Tenant-id rotation / impersonation.** Useful for admin tooling ("view as tenant X"). Trivial to layer on top of `withTenant`; not part of V1.

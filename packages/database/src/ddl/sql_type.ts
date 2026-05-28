@@ -21,7 +21,7 @@
  *                          + CHECK is editable in place.
  *   - `encrypted`        → `bytea`. Ciphertext + nonce + tag are bytes;
  *                          `text` would force a base64 round-trip.
- *   - `tenantedSerial`   → `bigint`. The actual per-tenant sequencing
+ *   - `tenantedBigSerial`   → `bigint`. The actual per-tenant sequencing
  *                          (trigger + sequence + RLS interaction) lands
  *                          with the tenancy slice — column type today is
  *                          just `bigint NOT NULL PRIMARY KEY`.
@@ -50,7 +50,7 @@ export function sqlTypeFor(field: SchemaField, registry?: SchemaRegistry): strin
       return 'uuid'
     case 'bigSerial':
       return 'bigserial'
-    case 'tenantedSerial':
+    case 'tenantedBigSerial':
       return 'bigint'
     case 'string':
       return `varchar(${(field as StringField).max})`
@@ -81,7 +81,7 @@ export function sqlTypeFor(field: SchemaField, registry?: SchemaRegistry): strin
 
 /**
  * The primary-key field of a schema — the first id/uuid/bigSerial/
- * tenantedSerial. Every schema MUST declare one; the framework treats
+ * tenantedBigSerial. Every schema MUST declare one; the framework treats
  * schemas without a PK as a programmer error (no Repository CRUD is
  * possible against an unidentified row).
  */
@@ -91,14 +91,14 @@ export function findPrimaryKey(schema: Schema): SchemaField {
       f.kind === 'id' ||
       f.kind === 'uuid' ||
       f.kind === 'bigSerial' ||
-      f.kind === 'tenantedSerial'
+      f.kind === 'tenantedBigSerial'
     ) {
       return f
     }
   }
   throw new Error(
     `findPrimaryKey("${schema.name}"): no identity field found. ` +
-      'Schemas must declare exactly one of t.id() / t.uuid() / t.bigSerial() / t.tenantedSerial().',
+      'Schemas must declare exactly one of t.id() / t.uuid() / t.bigSerial() / t.tenantedBigSerial().',
   )
 }
 
@@ -108,7 +108,7 @@ export function isPrimaryKeyKind(field: SchemaField): boolean {
     field.kind === 'id' ||
     field.kind === 'uuid' ||
     field.kind === 'bigSerial' ||
-    field.kind === 'tenantedSerial'
+    field.kind === 'tenantedBigSerial'
   )
 }
 

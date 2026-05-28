@@ -92,9 +92,23 @@ export class SchemaBuilder {
   bigSerial(name: string = 'id'): FieldBuilder {
     return this.push({ name, kind: 'bigSerial', ...this.baseFlags() })
   }
-  /** Per-tenant sequence — id type comes from the tenant registry schema. */
-  tenantedSerial(name: string = 'id'): FieldBuilder {
-    return this.push({ name, kind: 'tenantedSerial', ...this.baseFlags() })
+  /**
+   * Per-tenant auto-increment bigint.
+   *
+   * **Deferred — emits plain `bigint NOT NULL PRIMARY KEY` today.** The
+   * trigger + per-tenant sequence + composite `(tenant_id, id)` PK that
+   * make this meaningful land in a follow-up tenancy slice. Until then,
+   * prefer `t.id()` (ULID) for tenanted schemas — globally unique by
+   * construction, no per-tenant plumbing required.
+   *
+   * Named `tenantedBigSerial` (not `tenantedSerial`) to mirror
+   * `bigSerial` and make the underlying width explicit. Strav doesn't
+   * ship a 32-bit `serial` — bigint-by-default avoids the painful
+   * mid-life overflow migration that 32-bit serial PKs eventually
+   * force.
+   */
+  tenantedBigSerial(name: string = 'id'): FieldBuilder {
+    return this.push({ name, kind: 'tenantedBigSerial', ...this.baseFlags() })
   }
 
   // ─── Scalar columns ────────────────────────────────────────────────────────

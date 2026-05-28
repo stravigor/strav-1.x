@@ -28,7 +28,7 @@ export type FieldKind =
   | 'id'
   | 'uuid'
   | 'bigSerial'
-  | 'tenantedSerial'
+  | 'tenantedBigSerial'
   | 'string'
   | 'text'
   | 'integer'
@@ -61,8 +61,8 @@ export interface UuidField extends FieldBase {
 export interface BigSerialField extends FieldBase {
   kind: 'bigSerial'
 }
-export interface TenantedSerialField extends FieldBase {
-  kind: 'tenantedSerial'
+export interface TenantedBigSerialField extends FieldBase {
+  kind: 'tenantedBigSerial'
 }
 export interface StringField extends FieldBase {
   kind: 'string'
@@ -110,7 +110,7 @@ export type SchemaField =
   | IdField
   | UuidField
   | BigSerialField
-  | TenantedSerialField
+  | TenantedBigSerialField
   | StringField
   | TextField
   | IntegerField

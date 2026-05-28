@@ -100,5 +100,6 @@ import { Container } from '@strav/kernel'
 - [`guides/helpers.md`](./guides/helpers.md) — `Clock` (test-friendly "now"), ULID generation, crypto primitives (random tokens, hashing, constant-time compare).
 - [`guides/console.md`](./guides/console.md) — Command anatomy, `ConsoleKernel.run`, argv parsing, output writers, DI in commands, long-running command patterns, test recipes.
 - [`guides/logger.md`](./guides/logger.md) — channels (`stack` / `stderr` / `single` / `daily`), levels, structured fields, child loggers, redaction (with deep `**` globs), lifecycle.
+- [`guides/encryption.md`](./guides/encryption.md) — `Cipher` + `AesGcm256Cipher` + `EncryptionProvider`. Key formats, storage layout, tamper detection, edge cases, what's deferred (rotation, per-tenant keys, async ciphers).
 
 More guides land as the kernel grows.

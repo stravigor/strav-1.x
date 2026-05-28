@@ -45,13 +45,17 @@ Use the right archetype — later milestones specialize on it (e.g., `Event` arc
 ### Identity
 
 ```ts
-t.id()                  // ULID, name 'id' (recommended)
+t.id()                  // ULID — char(26), name 'id' (recommended)
 t.uuid()                // UUID variant
 t.bigSerial()           // auto-increment bigint
-t.tenantedSerial()      // per-tenant sequence (id type comes from the tenant registry)
+t.tenantedBigSerial()   // per-tenant auto-increment bigint — DEFERRED (see below)
 ```
 
 ULID is the default. Lexicographically sortable, 26-char, secret-scanner-friendly. UUID is the alternative for external interop.
+
+**No `t.serial()` (32-bit int).** Intentionally omitted — bigint-by-default avoids the painful overflow migration that 32-bit `serial` PKs eventually force (Postgres `serial` tops out at ~2.1 billion). `bigSerial` is the only auto-increment kind Strav ships; choose ULID if you don't need a numeric PK.
+
+**`t.tenantedBigSerial()` is partially implemented today** — the column emits as plain `bigint NOT NULL PRIMARY KEY`. The per-tenant sequence + trigger + composite `(tenant_id, id)` PK that make it actually per-tenant land in a follow-up tenancy slice. Until then, **prefer `t.id()` (ULID) for tenanted schemas** — globally unique by construction, no per-tenant plumbing needed. The builder method exists so apps can adopt the name now and migrate to real per-tenant sequencing later without renaming columns.
 
 ### Scalars
 

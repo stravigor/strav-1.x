@@ -2,14 +2,23 @@
 
 export {
   applyCastsToDb,
+  applyDecryptToRow,
+  applyEncryptToAttrs,
+  applyUlidsToAttrs,
   CAST_FIELDS,
   cast,
   castFor,
   castsFor,
+  ENCRYPT_FIELDS,
+  encrypt,
+  encryptedFieldsOf,
   type FieldCaster,
   HIDDEN_FIELDS,
   hidden,
   hiddenFieldsOf,
+  ULID_FIELDS,
+  ulid,
+  ulidFieldsOf,
 } from './decorators.ts'
 export { hydrateRow, isModelClass, Model, type ModelClass } from './model.ts'
 export {
