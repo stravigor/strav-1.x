@@ -116,20 +116,40 @@ The directive set is **frozen** for 1.0 — new directives need an RFC. See [`ap
 
 `{{ expr }}` is escaped interpolation. `{!! expr !!}` is raw — use only for trusted HTML. `{{-- comment --}}` is a comment (consumed, not rendered).
 
-## Islands — Vue 3 hydration
+## Islands — Vue 3 hydration with shared state
+
+ONE Vue app per page, MANY islands via `<Teleport>`. Every island shares the same app context, so a Pinia store registered in `setup.ts` is reactive across all islands on the page.
 
 ```strav
-{{-- resources/views/pages/dashboard.strav --}}
-@island('LeadKanban', { initial: leads })
+{{-- resources/views/pages/editor.strav --}}
+@island('Palette')
+@island('Canvas', { blocks })
+```
+
+```ts
+// resources/ts/islands/setup.ts — runs ONCE on the shared app
+import type { App } from 'vue'
+import { createPinia } from 'pinia'
+export default (app: App) => { app.use(createPinia()) }
+```
+
+```ts
+// resources/ts/islands/stores/editor.ts
+import { defineStore } from 'pinia'
+export const useEditorStore = defineStore('editor', {
+  state: () => ({ selectedBlockId: null as string | null }),
+  actions: { select(id: string) { this.selectedBlockId = id } },
+})
 ```
 
 ```vue
-<!-- resources/ts/islands/LeadKanban.vue -->
-<script setup lang="ts">
-defineProps<{ initial: Lead[] }>()
+<!-- resources/ts/islands/Palette.vue -->
+<script setup>
+import { useEditorStore } from './stores/editor'
+const editor = useEditorStore()
 </script>
 <template>
-  <div class="kanban">...</div>
+  <button :disabled="!editor.selectedBlockId">Edit selected</button>
 </template>
 ```
 
@@ -144,15 +164,22 @@ await buildIslands({
 })
 ```
 
-Each `.vue` file becomes a self-mounting `<Name>.js` bundle. The `@island('LeadKanban', { initial })` directive emits a hydration marker + a `<script type="module" src="/assets/islands/LeadKanban.js" defer>` tag — the browser fetches the bundle, finds the marker, mounts the Vue app onto it.
+Outputs ONE `public/assets/islands/islands.js` containing every island + every `setup.*` hook. Apps include it in their layout:
 
-Optional peer deps (install if you use islands):
+```strav
+{{-- resources/views/layouts/app.strav --}}
+<head>
+  <script type="module" src="@asset('islands/islands.js')" defer></script>
+</head>
+```
+
+Optional peer deps:
 
 ```bash
 bun add vue @vue/compiler-sfc
 ```
 
-Apps that bring their own bundler skip `buildIslands` and produce `<Name>.js` matching the [self-mounting contract](./api.md#buildislandsopts).
+Apps that prefer their own bundler match the [single-bundle contract](./api.md#buildislandsopts) themselves.
 
 ## What's NOT here yet
 

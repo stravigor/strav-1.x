@@ -7,7 +7,10 @@ import { buildIslands, ViewEngine } from '../src/index.ts'
 // ─── ViewEngine.island helper ──────────────────────────────────────────────
 
 describe('ViewEngine — @island helper', () => {
-  test('renders a hydration marker + script tag with default islandsUrl', async () => {
+  test('renders a hydration marker WITHOUT a script tag', async () => {
+    // Apps add ONE `<script type="module" src="…/islands.js" defer>`
+    // to their layout; the directive only emits the marker so a page
+    // with multiple islands doesn't get N redundant script tags.
     const engine = new ViewEngine({
       config: { directory: '/views' },
       read: async () => "@island('LeadKanban', { initial: leads })",
@@ -15,16 +18,7 @@ describe('ViewEngine — @island helper', () => {
     const html = await engine.render('page', { leads: [{ id: 1 }] })
     expect(html).toContain('<div data-island="LeadKanban" data-props="')
     expect(html).toContain('&quot;initial&quot;:[{&quot;id&quot;:1}]')
-    expect(html).toContain('<script type="module" src="/assets/islands/LeadKanban.js" defer>')
-  })
-
-  test('honors a custom islandsUrl (CDN / non-default static path)', async () => {
-    const engine = new ViewEngine({
-      config: { directory: '/views', islandsUrl: 'https://cdn.example.com/islands/' },
-      read: async () => "@island('Foo')",
-    })
-    const html = await engine.render('page')
-    expect(html).toContain('src="https://cdn.example.com/islands/Foo.js"')
+    expect(html).not.toContain('<script')
   })
 
   test('escapes HTML-significant chars in island name + props', async () => {
@@ -32,12 +26,11 @@ describe('ViewEngine — @island helper', () => {
       config: { directory: '/views' },
       read: async () => "@island('Foo', { msg: payload })",
     })
-    // The injected payload contains chars that MUST be entity-encoded
-    // inside `data-props="..."`. JSON-stringify gives us `"</script>"`
-    // — without escaping, that would break the surrounding `<script>` tag.
+    // JSON containing `</script>` MUST be entity-encoded so it can't
+    // close the surrounding `<script>` tag in an enclosing layout.
     const html = await engine.render('page', { payload: 'a & b <script>' })
     expect(html).toContain('&quot;msg&quot;:&quot;a &amp; b &lt;script&gt;&quot;')
-    expect(html).not.toContain('</script>x')
+    expect(html).not.toContain('</script>')
   })
 
   test('@island with no props passes through an empty object', async () => {
@@ -48,15 +41,24 @@ describe('ViewEngine — @island helper', () => {
     const html = await engine.render('page')
     expect(html).toContain('data-props="{}"')
   })
+
+  test('multiple @island directives in one page produce multiple markers', async () => {
+    const engine = new ViewEngine({
+      config: { directory: '/views' },
+      read: async () => "@island('A')@island('B', { id: 1 })",
+    })
+    const html = await engine.render('page')
+    expect(html).toContain('data-island="A"')
+    expect(html).toContain('data-island="B"')
+    // Only ONE bundle script for the whole page — the engine emits
+    // zero. (Apps include it in their layout.)
+    expect(html).not.toContain('<script')
+  })
 })
 
-// ─── buildIslands smoke test against a real .vue ───────────────────────────
-//
-// Bun + @vue/compiler-sfc are workspace devDeps, so this runs in `bun test`
-// out of the box. If the deps go missing in some environment, the build will
-// throw a clear error — we'd see the failure in CI.
+// ─── buildIslands smoke test against real .vue files ───────────────────────
 
-describe('buildIslands — smoke', () => {
+describe('buildIslands — single-bundle Teleport model', () => {
   let tmpRoot: string
   let inputDir: string
   let outputDir: string
@@ -73,83 +75,122 @@ describe('buildIslands — smoke', () => {
   })
 
   test('empty input dir produces empty result', async () => {
-    const result = await buildIslands({ inputDir, outputDir, external: ['vue'] })
+    const result = await buildIslands({ inputDir, outputDir })
     expect(result.islands).toEqual([])
-    expect(result.outputs).toEqual([])
+    expect(result.setups).toEqual([])
+    expect(result.output).toBe('')
   })
 
-  test('compiles a simple `<script setup>` SFC into a self-mounting bundle', async () => {
+  test('bundles multiple .vue islands into a single islands.js', async () => {
     await writeFile(
-      join(inputDir, 'Hello.vue'),
+      join(inputDir, 'Palette.vue'),
       `<script setup lang="ts">
-defineProps<{ name: string }>()
+defineProps<{ items: string[] }>()
 </script>
-<template>
-  <h1>Hi {{ name }}</h1>
-</template>
+<template><div class="palette"><button v-for="i in items" :key="i">{{ i }}</button></div></template>
 `,
       'utf8',
     )
+    await writeFile(
+      join(inputDir, 'Canvas.vue'),
+      `<template><div class="canvas">canvas</div></template>`,
+      'utf8',
+    )
 
-    const result = await buildIslands({ inputDir, outputDir, minify: false, external: ['vue'] })
-    expect(result.islands).toEqual(['Hello'])
-    expect(result.outputs).toHaveLength(1)
+    const result = await buildIslands({
+      inputDir,
+      outputDir,
+      external: ['vue'],
+      minify: false,
+    })
 
-    const bundle = await Bun.file(result.outputs[0] as string).text()
-    // The self-mounting contract.
+    expect(result.islands).toEqual(['Canvas', 'Palette'])
+    expect(result.output).toBe(join(outputDir, 'islands.js'))
+
+    const bundle = await Bun.file(result.output).text()
+    // The bundle contains the shared-app + Teleport mount code.
+    expect(bundle).toContain('Teleport')
     expect(bundle).toContain('createApp')
-    expect(bundle).toContain('querySelectorAll')
-    expect(bundle).toContain('[data-island="Hello"]')
-    expect(bundle).toContain('data-props')
-    // The component template ended up in the bundle (the static literal
-    // survives because we disabled minification for this test).
-    expect(bundle).toContain('Hi')
+    expect(bundle).toContain('[data-island]')
+    // Both components are referenced in the lookup table.
+    expect(bundle).toContain('Palette')
+    expect(bundle).toContain('Canvas')
   })
 
-  test('compiles an Options-API SFC (no script setup)', async () => {
+  test('discovers setup.ts at the root and runs it on the shared app', async () => {
     await writeFile(
-      join(inputDir, 'Counter.vue'),
-      `<script>
-export default {
-  data() { return { n: 0 } },
+      join(inputDir, 'setup.ts'),
+      `import type { App } from 'vue'
+export default (app: App) => {
+  app.config.globalProperties.$strav = 'hello'
 }
-</script>
-<template>
-  <button @click="n++">{{ n }}</button>
-</template>
 `,
       'utf8',
     )
+    await writeFile(join(inputDir, 'Widget.vue'), `<template><div>w</div></template>`, 'utf8')
 
-    const result = await buildIslands({ inputDir, outputDir, minify: false, external: ['vue'] })
-    expect(result.islands).toEqual(['Counter'])
-    const bundle = await Bun.file(result.outputs[0] as string).text()
-    expect(bundle).toContain('[data-island="Counter"]')
-    expect(bundle).toContain('createApp')
+    const result = await buildIslands({
+      inputDir,
+      outputDir,
+      external: ['vue'],
+      minify: false,
+    })
+
+    expect(result.setups).toEqual([join(inputDir, 'setup.ts')])
+    const bundle = await Bun.file(result.output).text()
+    // The setup default is invoked on the shared app — verify by
+    // looking for the marker code that runs each setup.
+    expect(bundle).toContain('$strav')
+    expect(bundle).toContain('setup(app)')
+  })
+
+  test('multiple setup files apply in alphabetical order', async () => {
+    await writeFile(
+      join(inputDir, 'setup.ts'),
+      `export default (app) => { app.first = true }`,
+      'utf8',
+    )
+    await writeFile(
+      join(inputDir, 'setup.router.ts'),
+      `export default (app) => { app.second = true }`,
+      'utf8',
+    )
+    await writeFile(join(inputDir, 'A.vue'), `<template><div /></template>`, 'utf8')
+
+    const result = await buildIslands({
+      inputDir,
+      outputDir,
+      external: ['vue'],
+      minify: false,
+    })
+
+    expect(result.setups).toHaveLength(2)
+    // Alphabetical: 'setup.router.ts' comes BEFORE 'setup.ts' in
+    // standard byte-order. The order matters for plugins that depend
+    // on each other; alphabetical is a stable, predictable rule.
+    expect(result.setups[0]).toMatch(/setup\.router\.ts$/)
+    expect(result.setups[1]).toMatch(/setup\.ts$/)
   })
 
   test('nested .vue files get dotted island names', async () => {
     await mkdir(join(inputDir, 'charts'), { recursive: true })
     await writeFile(
       join(inputDir, 'charts', 'Bar.vue'),
-      '<template><div>bar</div></template>',
+      `<template><div>bar</div></template>`,
       'utf8',
     )
     const result = await buildIslands({ inputDir, outputDir, external: ['vue'] })
     expect(result.islands).toEqual(['charts.Bar'])
   })
 
-  test('duplicate island names throw', async () => {
-    // Two files at different levels of nesting could collide if the
-    // dotted-name flattening produced the same key. We don't construct
-    // a real collision (the dotting prevents it for distinct paths);
-    // this just exercises the guard path — a defensive double-walk.
-    // In practice it's hard to trigger via real input.
-    await writeFile(join(inputDir, 'A.vue'), '<template></template>', 'utf8')
-    // No duplicate path is achievable here; the assertion below
-    // proves the happy path still works. Real collision protection is
-    // exercised in-code; trust the type system + sort to surface it.
-    const result = await buildIslands({ inputDir, outputDir, external: ['vue'] })
-    expect(result.islands).toEqual(['A'])
+  test('honors a custom filename', async () => {
+    await writeFile(join(inputDir, 'A.vue'), `<template><div /></template>`, 'utf8')
+    const result = await buildIslands({
+      inputDir,
+      outputDir,
+      external: ['vue'],
+      filename: 'app-islands.v2.js',
+    })
+    expect(result.output).toBe(join(outputDir, 'app-islands.v2.js'))
   })
 })

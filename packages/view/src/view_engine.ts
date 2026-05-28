@@ -65,13 +65,6 @@ export interface ViewConfig {
   cache?: boolean
   /** Optional global locals added to every render's data. */
   globals?: Record<string, unknown>
-  /**
-   * Base URL the `@island(...)` directive uses for the per-island
-   * `<script type="module">` tag. Defaults to `/assets/islands`. Apps
-   * change this when they ship islands behind a CDN or under a
-   * non-default static path.
-   */
-  islandsUrl?: string
 }
 
 export interface ViewEngineOptions {
@@ -84,7 +77,6 @@ export class ViewEngine {
   private readonly directory: string
   private readonly cacheEnabled: boolean
   private readonly globals: Record<string, unknown>
-  private readonly islandsUrl: string
   private readonly read: (path: string) => Promise<string>
   private readonly cache = new Map<string, CompilationResult>()
 
@@ -93,7 +85,6 @@ export class ViewEngine {
     this.directory = isAbsolute(dir) ? dir : resolve(process.cwd(), dir)
     this.cacheEnabled = opts.config.cache ?? true
     this.globals = opts.config.globals ?? {}
-    this.islandsUrl = stripTrailingSlash(opts.config.islandsUrl ?? '/assets/islands')
     this.read = opts.read ?? ((path) => readFile(path, 'utf8'))
   }
 
@@ -266,29 +257,23 @@ export class ViewEngine {
         )
       },
       async island(islandName, props) {
-        // Emit a hydration marker + a per-island ES-module script tag.
-        // The bundler-emitted `<name>.js` self-mounts on every
-        // `[data-island="<name>"]` it finds, reading `data-props` for
-        // the constructor props.
+        // Emit ONLY the hydration marker. The page's layout is
+        // responsible for loading the single bundle via a
+        // `<script type="module" src="…/islands.js" defer>` tag —
+        // typically alongside other site assets, e.g.
+        // `<script type="module" src="@asset('islands/islands.js')" defer></script>`.
         //
-        // Why `defer` on the script: ensures the module fetches in
-        // parallel but executes after parsing is done — the
-        // `[data-island]` element is in the DOM by the time the
-        // module runs.
+        // ONE Vue app inside that bundle renders all islands on the
+        // page via `<Teleport>` — every `[data-island]` element is
+        // mounted into the same root context, so `setup.ts` hooks
+        // (Pinia, router, etc.) apply once and all islands share
+        // state through the bundled stores.
         const safeName = escapeHtmlAttr(String(islandName))
         const propsJson = escapeHtmlAttr(JSON.stringify(props ?? {}))
-        const src = `${self.islandsUrl}/${encodeURIComponent(String(islandName))}.js`
-        return (
-          `<div data-island="${safeName}" data-props="${propsJson}"></div>` +
-          `<script type="module" src="${escapeHtmlAttr(src)}" defer></script>`
-        )
+        return `<div data-island="${safeName}" data-props="${propsJson}"></div>`
       },
     }
   }
-}
-
-function stripTrailingSlash(s: string): string {
-  return s.endsWith('/') ? s.slice(0, -1) : s
 }
 
 /**

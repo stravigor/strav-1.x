@@ -98,7 +98,6 @@ interface ViewConfig {
   directory?: string                                // default 'resources/views'
   cache?: boolean                                   // default true
   globals?: Record<string, unknown>                 // merged into every render's data
-  islandsUrl?: string                               // default '/assets/islands' — base URL @island uses for <script src>
 }
 
 interface ViewEngineOptions {
@@ -296,20 +295,28 @@ Emit a Vue island — a small interactive UI mounted into an otherwise server-re
 @island('LeadKanban', { initial: leadsForKanban })
 ```
 
-Compiles to:
+Compiles to a marker only:
 
 ```html
 <div data-island="LeadKanban" data-props="{...escaped JSON...}"></div>
-<script type="module" src="/assets/islands/LeadKanban.js" defer></script>
 ```
 
-The per-island `<script type="module">` bundle is produced by `buildIslands` (or by an app's own bundler — see "Bundler contract" below). When loaded, the bundle finds every `[data-island="LeadKanban"]` in the DOM, parses `data-props`, and mounts a Vue 3 app onto the element.
+The page loads ONE shared bundle (`/assets/islands/islands.js`) via a `<script type="module" src="…" defer>` tag in the layout. That bundle contains every island your app defines plus its `setup.ts` hooks. It scans the DOM for every `[data-island]` element it finds, looks up each name in the bundled component registry, and mounts a `<Teleport>` per element into a single shared Vue app.
+
+**One app, many islands.** All islands on a page run inside the SAME `createApp(Root)` — that's the load-bearing property. `app.use(createPinia())` in `setup.ts` makes one Pinia instance available to every island; a store mutation in `palette.vue` is reactive in `canvas.vue` without further wiring.
 
 **Props serialisation.** Props are JSON-stringified then HTML-attr-escaped. Anything that survives `JSON.stringify` round-trips cleanly (`Date` becomes a string, `undefined` is dropped, etc.). For non-serialisable state, fetch it client-side from inside the Vue component.
 
-**Custom `islandsUrl`.** Set `config.view.islandsUrl` to override the script `src` base — e.g. `'https://cdn.example.com/islands'` for CDN-hosted bundles.
+**Loading the bundle.** Apps include the script ONCE in their layout — typically inside `<head>` or just before `</body>`:
 
-**Loading semantics.** The `defer` attribute on the module script makes it execute after HTML parsing finishes; combined with `type="module"`, browsers fetch + parse in parallel and run in order. The bundle's self-mounting code calls `document.querySelectorAll` so each `<script>` mounts its own islands — page reloads work naturally.
+```strav
+{{-- resources/views/layouts/app.strav --}}
+<head>
+  <script type="module" src="@asset('islands/islands.js')" defer></script>
+</head>
+```
+
+The engine does NOT auto-emit this — every layout is different, so the framework leaves placement to the app.
 
 ## `buildIslands(opts)`
 
@@ -322,44 +329,136 @@ interface BuildIslandsOptions {
   minify?: boolean                       // default true
   sourcemap?: boolean                    // default false (inline when true)
   external?: string[]                    // e.g. ['vue'] to load Vue from CDN
+  filename?: string                      // default 'islands.js'
 }
 
 interface BuildIslandsResult {
-  outputs: string[]                      // absolute paths of <Name>.js files
-  islands: string[]                      // island names that were bundled
+  output: string                         // absolute path of the bundle file
+  islands: string[]                      // island names bundled in
+  setups: string[]                       // absolute paths of setup.* files applied
 }
 ```
 
-Discovers every `*.vue` file under `inputDir` (recursively), generates a self-mounting entry per island, and bundles each with `Bun.build` + the bundled `vueSfcPlugin()`. Output: one `<Name>.js` per island in `outputDir`.
+Discovers every `*.vue` file under `inputDir` (recursively) + every `setup*.{ts,js,mts,mjs}` at the root, generates a virtual entry that imports them all, and bundles to a single `islands.js` via `Bun.build` + `vueSfcPlugin()`.
 
-**Island naming.** `resources/ts/islands/LeadKanban.vue` → island name `LeadKanban`. Nested files use a dotted form: `resources/ts/islands/charts/Bar.vue` → `charts.Bar`. The `@island('charts.Bar', { ... })` directive then references the nested bundle. Duplicates throw `TemplateError`.
+**Island naming.** `resources/ts/islands/LeadKanban.vue` → island name `LeadKanban`. Nested files use a dotted form: `resources/ts/islands/charts/Bar.vue` → `charts.Bar`. The `@island('charts.Bar', { ... })` directive then references the nested island. Duplicates throw `TemplateError`.
 
-**Optional peer deps.** `vue` + `@vue/compiler-sfc` are declared as `peerDependenciesMeta.optional` on `@strav/view`. Apps that don't use islands never install them; apps that do, install both alongside `@strav/view`.
+**Setup discovery.** Any file at `<inputDir>/setup.{ts,js,mts,mjs}` or `<inputDir>/setup.<anything>.{ts,js,mts,mjs}` is treated as a setup file. Setup files export a default function that runs on the shared app:
 
-**`external`.** Pass `external: ['vue']` to keep Vue out of every per-island bundle — useful when serving Vue from a CDN. The default inlines Vue into each bundle (every island bundle ships its own copy ~50KB compressed; trade-off vs. one Vue request per page).
+```ts
+// resources/ts/islands/setup.ts
+import type { App } from 'vue'
+import { createPinia } from 'pinia'
 
-**Self-mounting contract** — what each `<Name>.js` does at runtime:
+export default (app: App) => {
+  app.use(createPinia())
+}
+```
+
+Multiple setup files apply in alphabetical order — useful when a router setup depends on a Pinia store being available first (`setup.pinia.ts` runs before `setup.router.ts`).
+
+**Optional peer deps.** `vue` + `@vue/compiler-sfc` are declared as `peerDependenciesMeta.optional` on `@strav/view`. Apps that don't use islands never install them; apps that do, install both.
+
+**`external`.** Pass `external: ['vue']` to keep Vue out of the bundle (load from a CDN instead). Default: Vue inlined into `islands.js` so a single download serves the whole page.
+
+**Self-mounting contract** — what `islands.js` does at runtime:
 
 ```js
-import { createApp } from 'vue'
-import Component from './<Name>.vue'
+import { createApp, defineComponent, h, Teleport } from 'vue'
+import __setup_0 from '<setup.ts>'
+import __c0 from '<island0.vue>'
+import __c1 from '<island1.vue>'
 
-function hydrate() {
-  for (const el of document.querySelectorAll('[data-island="<Name>"]')) {
-    const raw = el.getAttribute('data-props')
-    const props = raw === null ? {} : (() => { try { return JSON.parse(raw) } catch { return {} } })()
-    createApp(Component, props).mount(el)
+const __setups = [__setup_0]
+const __components = { 'Name0': __c0, 'Name1': __c1 }
+
+function mount() {
+  const targets = []
+  for (const el of document.querySelectorAll('[data-island]')) {
+    const Component = __components[el.getAttribute('data-island')]
+    if (!Component) continue
+    const props = JSON.parse(el.getAttribute('data-props') || '{}')
+    targets.push({ Component, props, el })
   }
-}
+  if (targets.length === 0) return
 
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', hydrate, { once: true })
-} else {
-  hydrate()
+  const Root = defineComponent({
+    render() {
+      return targets.map((t) => h(Teleport, { to: t.el }, [h(t.Component, t.props)]))
+    },
+  })
+  const app = createApp(Root)
+  for (const setup of __setups) setup(app)
+  // Mount onto a hidden root — the Teleports do the real placement.
+  const root = document.createElement('div')
+  root.style.display = 'contents'
+  document.body.appendChild(root)
+  app.mount(root)
 }
 ```
 
-Apps that prefer a different bundler (vite, esbuild, custom Bun plugin) skip `buildIslands` and bring their own — as long as each `<outputDir>/<Name>.js` matches this contract.
+Apps that prefer a different bundler (vite, esbuild, custom plugin) match this contract themselves.
+
+## Shared state across islands
+
+Because every island lives in the same Vue app context, plugins applied in `setup.ts` propagate everywhere:
+
+```ts
+// resources/ts/islands/setup.ts
+import type { App } from 'vue'
+import { createPinia } from 'pinia'
+
+export default (app: App) => {
+  app.use(createPinia())
+}
+```
+
+```ts
+// resources/ts/islands/stores/editor.ts
+import { defineStore } from 'pinia'
+
+export const useEditorStore = defineStore('editor', {
+  state: () => ({ selectedBlockId: null as string | null, isDirty: false }),
+  actions: {
+    select(id: string) { this.selectedBlockId = id },
+    markDirty() { this.isDirty = true },
+  },
+})
+```
+
+```vue
+<!-- resources/ts/islands/Palette.vue -->
+<script setup lang="ts">
+import { useEditorStore } from './stores/editor'
+const editor = useEditorStore()
+</script>
+<template>
+  <button :disabled="!editor.selectedBlockId" @click="editor.markDirty()">
+    Edit selected
+  </button>
+</template>
+```
+
+```vue
+<!-- resources/ts/islands/Canvas.vue -->
+<script setup lang="ts">
+import { useEditorStore } from './stores/editor'
+const editor = useEditorStore()
+</script>
+<template>
+  <div :class="{ dirty: editor.isDirty }">
+    <button v-for="b in blocks" :key="b.id" @click="editor.select(b.id)">{{ b.title }}</button>
+  </div>
+</template>
+```
+
+```strav
+{{-- pages/editor.strav --}}
+@island('Palette')
+@island('Canvas', { blocks })
+```
+
+Selecting a block in `Canvas.vue` updates `editor.selectedBlockId`; the `Palette.vue` button reactively enables. One Pinia store, one Vue app context, shared across `@island` directives on the same page.
 
 ## `vueSfcPlugin()`
 
@@ -367,7 +466,7 @@ Apps that prefer a different bundler (vite, esbuild, custom Bun plugin) skip `bu
 function vueSfcPlugin(): BunPlugin
 ```
 
-The Bun plugin used by `buildIslands`. Compiles `.vue` files via `@vue/compiler-sfc`. Exposed for apps that want to call `Bun.build` themselves with the plugin (e.g. to bundle a non-island Vue tree).
+The Bun plugin used by `buildIslands`. Compiles `.vue` files via `@vue/compiler-sfc`. Exposed for apps that want to call `Bun.build` themselves with the plugin (e.g. to bundle a non-island Vue tree, or to ship multiple separate island bundles for very large apps).
 
 Supports:
 - `<script setup>` (inline-template path).

@@ -58,14 +58,21 @@ Render:
 const html = await view.render('pages.dashboard', { user, items })
 ```
 
-## Islands
+## Islands — shared Vue app context
 
 ```bash
 bun add vue @vue/compiler-sfc    # optional peer deps
 ```
 
 ```strav
-@island('LeadKanban', { initial: leads })
+@island('Palette')
+@island('Canvas', { blocks })
+```
+
+```ts
+// resources/ts/islands/setup.ts — runs once on the shared app
+import { createPinia } from 'pinia'
+export default (app) => { app.use(createPinia()) }
 ```
 
 ```ts
@@ -77,7 +84,13 @@ await buildIslands({
 })
 ```
 
-Each `.vue` file becomes a self-mounting `<Name>.js`. See `docs/view/api.md` for the bundler contract.
+Outputs ONE `islands.js` containing every island + setup hook. Apps include the script in their layout:
+
+```strav
+<script type="module" src="@asset('islands/islands.js')" defer></script>
+```
+
+All islands run inside the same `createApp(Root)` — Pinia stores shared, plugins applied once. See `docs/view/api.md` for the bundler contract + shared-state walkthrough.
 
 ## What's NOT here yet
 
