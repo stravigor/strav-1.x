@@ -27,6 +27,7 @@ M1 + M2 shipped to npm as `1.0.0-alpha.2`. M3 (Queue + Signal + View) is in prog
 | `@strav/database` | M2 shipped (`1.0.0-alpha.2`); see `docs/database/` |
 | `@strav/queue` | M3 — functionally complete in workspace; `Job` + `JobRegistry` + `Queue` + `SyncQueue` + `DatabaseQueue` + `Worker` + `Scheduler` + `failedJobsSchema` all landed. Only `queue:retry` / `queue:flush` console commands remain (wait on `@strav/cli` in M4). See `docs/queue/` |
 | `@strav/signal` | M3 — mail layer + HTTP transport trio shipped (`Message` + `Transport` + `Array` / `Log` / `Resend` / `SendGrid` / `Mailgun` transports + `MailTransportError` + `MailManager` + `MailProvider` + `Mailable`). All pure-fetch, no `nodemailer`. Inbound parsers, notifications, broadcast, SSE still to come. See `docs/signal/` |
+| `@strav/view` | M3 — engine core shipped (tokenizer + compiler + `ViewEngine` + `ViewProvider` + frozen directive set minus `@island`). `@island` + Vue bundler + client runtime + pages auto-router still to come. See `docs/view/` |
 | Others | Pending — land with their respective milestones (see `spec/implementation-plan.md`) |
 
 ## How to read
