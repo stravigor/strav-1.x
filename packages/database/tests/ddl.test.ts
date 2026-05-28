@@ -5,9 +5,13 @@ import {
   defaultSql,
   defineSchema,
   emitAddColumn,
+  emitCreateIndex,
   emitCreateTable,
   emitDropColumn,
+  emitDropIndex,
   emitDropTable,
+  emitRenameColumn,
+  emitRenameTable,
   findPrimaryKey,
   isPrimaryKeyKind,
   type SchemaField,
@@ -429,6 +433,86 @@ describe('emitDropColumn', () => {
   test('IF EXISTS variant', () => {
     expect(emitDropColumn('user', 'old_col', { ifExists: true }).sql).toBe(
       'ALTER TABLE "user" DROP COLUMN IF EXISTS "old_col"',
+    )
+  })
+})
+
+// ─── Rename emitters ─────────────────────────────────────────────────────────
+
+describe('emitRenameTable', () => {
+  test('emits ALTER TABLE … RENAME TO …', () => {
+    expect(emitRenameTable('users', 'account').sql).toBe('ALTER TABLE "users" RENAME TO "account"')
+  })
+})
+
+describe('emitRenameColumn', () => {
+  test('emits ALTER TABLE … RENAME COLUMN … TO …', () => {
+    expect(emitRenameColumn('user', 'email_address', 'email').sql).toBe(
+      'ALTER TABLE "user" RENAME COLUMN "email_address" TO "email"',
+    )
+  })
+})
+
+// ─── Index emitters ──────────────────────────────────────────────────────────
+
+describe('emitCreateIndex', () => {
+  test('single column with default name', () => {
+    expect(emitCreateIndex('user', ['email']).sql).toBe(
+      'CREATE INDEX "user_email_idx" ON "user" ("email")',
+    )
+  })
+
+  test('multi-column compound index, default name', () => {
+    expect(emitCreateIndex('user', ['tenant_id', 'email']).sql).toBe(
+      'CREATE INDEX "user_tenant_id_email_idx" ON "user" ("tenant_id", "email")',
+    )
+  })
+
+  test('explicit name', () => {
+    expect(emitCreateIndex('user', ['email'], { name: 'idx_user_email_lowered' }).sql).toBe(
+      'CREATE INDEX "idx_user_email_lowered" ON "user" ("email")',
+    )
+  })
+
+  test('UNIQUE variant', () => {
+    expect(emitCreateIndex('user', ['email'], { unique: true }).sql).toBe(
+      'CREATE UNIQUE INDEX "user_email_idx" ON "user" ("email")',
+    )
+  })
+
+  test('partial unique index — soft-delete pattern', () => {
+    expect(
+      emitCreateIndex('user', ['email'], {
+        unique: true,
+        where: '"deleted_at" IS NULL',
+      }).sql,
+    ).toBe('CREATE UNIQUE INDEX "user_email_idx" ON "user" ("email") WHERE "deleted_at" IS NULL')
+  })
+
+  test('USING gin clause', () => {
+    expect(emitCreateIndex('user', ['payload'], { using: 'gin' }).sql).toBe(
+      'CREATE INDEX "user_payload_idx" ON "user" USING gin ("payload")',
+    )
+  })
+
+  test('IF NOT EXISTS', () => {
+    expect(emitCreateIndex('user', ['email'], { ifExists: true }).sql).toBe(
+      'CREATE INDEX IF NOT EXISTS "user_email_idx" ON "user" ("email")',
+    )
+  })
+
+  test('throws on empty column list', () => {
+    expect(() => emitCreateIndex('user', [])).toThrow(/at least one column/)
+  })
+})
+
+describe('emitDropIndex', () => {
+  test('basic drop', () => {
+    expect(emitDropIndex('user_email_idx').sql).toBe('DROP INDEX "user_email_idx"')
+  })
+  test('IF EXISTS variant', () => {
+    expect(emitDropIndex('user_email_idx', { ifExists: true }).sql).toBe(
+      'DROP INDEX IF EXISTS "user_email_idx"',
     )
   })
 })

@@ -441,6 +441,22 @@ function emitCreateTable(schema: Schema, opts?: EmitOptions): EmittedDdl
 function emitDropTable(name: string, opts?: { ifExists?: boolean }): EmittedDdl
 function emitAddColumn(schema: Schema, fieldName: string, opts?: EmitOptions): EmittedDdl
 function emitDropColumn(table: string, column: string, opts?: { ifExists?: boolean }): EmittedDdl
+function emitRenameTable(from: string, to: string): EmittedDdl
+function emitRenameColumn(table: string, from: string, to: string): EmittedDdl
+
+interface CreateIndexOptions {
+  name?: string             // default `<table>_<col1>[_<col2>]…_idx`
+  unique?: boolean
+  where?: string            // partial-index predicate, e.g. `"deleted_at" IS NULL`
+  using?: string            // `btree` (default) / `gin` / `gist` / `hash` / `brin`
+  ifExists?: boolean        // adds IF NOT EXISTS
+}
+function emitCreateIndex(
+  table: string,
+  columns: readonly string[],
+  opts?: CreateIndexOptions,
+): EmittedDdl
+function emitDropIndex(name: string, opts?: { ifExists?: boolean }): EmittedDdl
 
 // Building blocks — exposed for the eventual migration generator + bespoke shapes:
 function sqlTypeFor(field: SchemaField, registry?: SchemaRegistry): string
@@ -497,10 +513,9 @@ The target PK column name is read from the target schema (`User.fields[0].name`)
 
 Each lands in a follow-up cut:
 
-- **`RENAME TABLE` / `RENAME COLUMN` / `CHANGE COLUMN`** — renames need migration-time identity tracking; type changes need backfill semantics.
-- **`ADD INDEX` / `DROP INDEX`** — indexes aren't part of the Schema; explicit index ops belong to the migration builder DSL.
+- **`ALTER COLUMN` type changes** — type changes need backfill semantics; `emitRenameColumn` handles the simpler rename case.
 - **Standalone `ADD FOREIGN KEY` / `DROP FOREIGN KEY`** — references inline into `CREATE TABLE` / `ADD COLUMN` already.
-- **Tenancy plumbing** — RLS policies, tenant-FK column injection on `tenanted: true` schemas, the composite `(tenant_id, id)` PK. The current emitter ignores `tenancy.tenanted`; the tenancy slice wraps the DDL with those policies.
+- **Migration builder DSL fluent surface** — `m.createTable(name, fn).addIndex(...)` chains. Today's emitters (`emitCreateTable`, `emitCreateIndex`, …) are called directly from migration files.
 - **Destructive diff** — see "Migration generator" below; V1 detects only additive changes (new tables, new columns). Dropped tables/columns and type changes need explicit `--allow-drop` semantics + backfill design.
 
 ## Migration generator

@@ -134,6 +134,66 @@ export function emitDropColumn(
   }
 }
 
+/** `ALTER TABLE … RENAME TO …`. */
+export function emitRenameTable(from: string, to: string): EmittedDdl {
+  return { sql: `ALTER TABLE ${quoteIdent(from)} RENAME TO ${quoteIdent(to)}` }
+}
+
+/** `ALTER TABLE … RENAME COLUMN … TO …`. */
+export function emitRenameColumn(table: string, from: string, to: string): EmittedDdl {
+  return {
+    sql: `ALTER TABLE ${quoteIdent(table)} RENAME COLUMN ${quoteIdent(from)} TO ${quoteIdent(to)}`,
+  }
+}
+
+export interface CreateIndexOptions {
+  /** Index name. Default `<table>_<col1>[_<col2>]…_idx`. */
+  name?: string
+  /** Unique index. Default false. */
+  unique?: boolean
+  /** Partial-index predicate, e.g. `"deleted_at" IS NULL`. */
+  where?: string
+  /** Access method (`btree` / `gin` / `gist` / `hash` / `brin`). Default `btree`. */
+  using?: string
+  /** Adds `IF NOT EXISTS`. Default false. */
+  ifExists?: boolean
+}
+
+/**
+ * `CREATE [UNIQUE] INDEX [name] ON "table" USING method (col1, col2) [WHERE …]`.
+ *
+ * Default name is `<table>_<col1>[_<col2>]…_idx`. Partial unique indexes
+ * (the right idiom for soft-delete + unique-on-active-rows) just need
+ * `unique: true, where: '"deleted_at" IS NULL'`.
+ */
+export function emitCreateIndex(
+  table: string,
+  columns: readonly string[],
+  opts: CreateIndexOptions = {},
+): EmittedDdl {
+  if (columns.length === 0) {
+    throw new Error(`emitCreateIndex("${table}"): at least one column is required.`)
+  }
+  const name = opts.name ?? `${table}_${columns.join('_')}_idx`
+  const unique = opts.unique ? 'UNIQUE ' : ''
+  const ifNot = opts.ifExists ? 'IF NOT EXISTS ' : ''
+  const using = opts.using ? ` USING ${opts.using}` : ''
+  const cols = columns.map(quoteIdent).join(', ')
+  const where = opts.where ? ` WHERE ${opts.where}` : ''
+  return {
+    sql: `CREATE ${unique}INDEX ${ifNot}${quoteIdent(name)} ON ${quoteIdent(table)}${using} (${cols})${where}`,
+  }
+}
+
+/** `DROP INDEX [IF EXISTS] name`. */
+export function emitDropIndex(name: string, opts: { ifExists?: boolean } = {}): EmittedDdl {
+  return {
+    sql: opts.ifExists
+      ? `DROP INDEX IF EXISTS ${quoteIdent(name)}`
+      : `DROP INDEX ${quoteIdent(name)}`,
+  }
+}
+
 /**
  * Single column's definition — used by both CREATE TABLE and ADD COLUMN
  * so they emit byte-identical column specs. Exposed publicly for apps

@@ -125,6 +125,7 @@ The console commands (`bun strav db:migrate` / `db:rollback` / `db:status`) land
 | `QueryBuilder<TModel>` | Fluent SELECT — `where` / `orderBy` / `limit` / `offset` / `select` / `withTrashed` / `onlyTrashed` / `get` / `first` / `count` / `pluck` |
 | `emitInsert` / `emitUpdateById` / `emitDeleteById` / `emitFindById` / `emitFindMany` | SQL emitter helpers used by Repository — direct use for raw SQL emission with the same conventions |
 | `emitCreateTable` / `emitDropTable` / `emitAddColumn` / `emitDropColumn` | DDL emitters — schema → Postgres SQL, used by migrations |
+| `emitCreateIndex` / `emitDropIndex` / `emitRenameTable` / `emitRenameColumn` | DDL emitters for index ops + renames; complement the schema-driven helpers |
 | `sqlTypeFor` / `columnDefinition` / `defaultSql` / `findPrimaryKey` / `isPrimaryKeyKind` | DDL building blocks; exposed for migration generators and bespoke shapes |
 | `quoteIdent` / `selectColumnList` | Building blocks the emitter uses; exposed for raw-SQL escape hatches |
 | `inspectDatabase` | Read live `information_schema` into a `DbSnapshot` |

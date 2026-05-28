@@ -45,7 +45,40 @@ async up(db) {
 }
 ```
 
-Indexes, partial indexes, and explicit constraints aren't part of the Schema today — write them as raw SQL inside the migration, or wait for the migration builder DSL slice (`m.addIndex(...)` etc.).
+Indexes aren't part of the Schema, but the DDL emitters cover them too — use `emitCreateIndex` / `emitDropIndex` alongside the schema-driven calls:
+
+```ts
+import {
+  emitCreateIndex,
+  emitCreateTable,
+  emitDropIndex,
+  emitDropTable,
+  type Migration,
+} from '@strav/database'
+
+export const migration: Migration = {
+  name: '20260601000000_create_users_with_indexes',
+  async up(db) {
+    await db.execute(emitCreateTable(userSchema).sql)
+    await db.execute(emitCreateIndex('user', ['email']).sql)
+    // Partial unique index — the right idiom for soft-delete + unique:
+    await db.execute(
+      emitCreateIndex('user', ['email'], {
+        unique: true,
+        where: '"deleted_at" IS NULL',
+        name: 'user_email_active_idx',
+      }).sql,
+    )
+  },
+  async down(db) {
+    await db.execute(emitDropIndex('user_email_active_idx', { ifExists: true }).sql)
+    await db.execute(emitDropIndex('user_email_idx', { ifExists: true }).sql)
+    await db.execute(emitDropTable(userSchema.name).sql)
+  },
+}
+```
+
+Renames have their own emitters — `emitRenameTable(from, to)` and `emitRenameColumn(table, from, to)` — for shape-preserving migrations. ALTER COLUMN type changes need backfill design and are still hand-written.
 
 Two methods:
 
