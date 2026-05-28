@@ -17,17 +17,17 @@ docs/
 
 ## Status
 
-M1 + M2 shipped to npm as `1.0.0-alpha.2`. M3 (Queue + Signal + View) is in progress. Documentation lands package-by-package as packages ship:
+M1 + M2 + M3 shipped to npm as `1.0.0-alpha.3` (2026-05-28). M4 (`@strav/cli`) is next. Documentation lands package-by-package as packages ship:
 
 | Package | Doc status |
 |---|---|
-| `@strav/kernel` | M1 + M2 shipped (`1.0.0-alpha.2`); see `docs/kernel/` |
-| `@strav/http` | M2 shipped (`1.0.0-alpha.2`); see `docs/http/` |
-| `@strav/auth` | M2 shipped (`1.0.0-alpha.2`); see `docs/auth/` |
-| `@strav/database` | M2 shipped (`1.0.0-alpha.2`); see `docs/database/` |
-| `@strav/queue` | M3 — functionally complete in workspace; `Job` + `JobRegistry` + `Queue` + `SyncQueue` + `DatabaseQueue` + `Worker` + `Scheduler` + `failedJobsSchema` all landed. Only `queue:retry` / `queue:flush` console commands remain (wait on `@strav/cli` in M4). See `docs/queue/` |
-| `@strav/signal` | M3 — mail layer + HTTP transport trio shipped (`Message` + `Transport` + `Array` / `Log` / `Resend` / `SendGrid` / `Mailgun` transports + `MailTransportError` + `MailManager` + `MailProvider` + `Mailable`). All pure-fetch, no `nodemailer`. Inbound parsers, notifications, broadcast, SSE still to come. See `docs/signal/` |
-| `@strav/view` | M3 — engine + islands shipped (full frozen directive set including `@island`, plus programmatic `buildIslands` Vue SFC bundler with shared-state via setup.ts + single Vue app + `<Teleport>`). Pages auto-router + `view:cache` / `view:build` console commands still to come. See `docs/view/` |
+| `@strav/kernel` | M1 + M2 shipped (`1.0.0-alpha.3`); see `docs/kernel/` |
+| `@strav/http` | M2 shipped (`1.0.0-alpha.3`); see `docs/http/` |
+| `@strav/auth` | M2 shipped (`1.0.0-alpha.3`); see `docs/auth/` |
+| `@strav/database` | M2 shipped (`1.0.0-alpha.3`) + `generateMigration` alter-column drift detection landed in alpha.3; see `docs/database/` |
+| `@strav/queue` | M3 shipped (`1.0.0-alpha.3`); `Job` + `JobRegistry` + `Queue` + `SyncQueue` + `DatabaseQueue` + `Worker` + `Scheduler` + `failedJobsSchema` all landed. Only `queue:retry` / `queue:flush` console commands remain (wait on `@strav/cli` in M4). See `docs/queue/` |
+| `@strav/signal` | M3 shipped (`1.0.0-alpha.3`); mail layer + HTTP transport trio (`Message` + `Transport` + `Array` / `Log` / `Resend` / `SendGrid` / `Mailgun` transports + `MailTransportError` + `MailManager` + `MailProvider` + `Mailable`). All pure-fetch, no `nodemailer`. Inbound parsers, notifications, broadcast, SSE still to come. See `docs/signal/` |
+| `@strav/view` | M3 shipped (`1.0.0-alpha.3`); engine + islands (full frozen directive set including `@island`, plus programmatic `buildIslands` Vue SFC bundler with shared-state via setup.ts + single Vue app + `<Teleport>`). Pages auto-router + `view:cache` / `view:build` console commands still to come. See `docs/view/` |
 | Others | Pending — land with their respective milestones (see `spec/implementation-plan.md`) |
 
 ## How to read
