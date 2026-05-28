@@ -4,6 +4,7 @@ import {
   ArrayTransport,
   LogTransport,
   type MailConfig,
+  MailgunTransport,
   MailManager,
   type Message,
   ResendTransport,
@@ -297,6 +298,49 @@ describe('MailManager — resend / sendgrid build path', () => {
       unusedLogManager(),
     )
     expect(m.via('sendgrid')).toBeInstanceOf(SendGridTransport)
+  })
+
+  test('builds a MailgunTransport from config', () => {
+    const m = new MailManager(
+      {
+        default: 'mailgun',
+        transports: {
+          mailgun: { driver: 'mailgun', apiKey: 'key-test', domain: 'mg.acme.com' },
+        },
+      },
+      unusedLogManager(),
+    )
+    expect(m.via('mailgun')).toBeInstanceOf(MailgunTransport)
+  })
+
+  test('mailgun rejects empty `domain` at config validation', () => {
+    expect(
+      () =>
+        new MailManager(
+          {
+            default: 'mailgun',
+            transports: {
+              mailgun: { driver: 'mailgun', apiKey: 'k', domain: '' },
+            },
+          },
+          unusedLogManager(),
+        ),
+    ).toThrow(/requires a non-empty `domain`/)
+  })
+
+  test('mailgun rejects empty `apiKey` at config validation', () => {
+    expect(
+      () =>
+        new MailManager(
+          {
+            default: 'mailgun',
+            transports: {
+              mailgun: { driver: 'mailgun', apiKey: '', domain: 'mg.acme.com' },
+            },
+          },
+          unusedLogManager(),
+        ),
+    ).toThrow(/requires a non-empty `apiKey`/)
   })
 
   test('empty apiKey is rejected at config validation', () => {

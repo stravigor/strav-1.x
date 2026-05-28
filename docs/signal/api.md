@@ -1,6 +1,6 @@
 # @strav/signal — API Reference
 
-> **Status:** Mail core + `Mailable` queue-dispatch + production HTTP transports (Resend, SendGrid) shipped. SMTP transport + notifications + broadcast + SSE follow in later slices.
+> **Status:** Mail core + `Mailable` queue-dispatch + production HTTP transports (Resend, SendGrid, Mailgun) shipped. All transports are pure-fetch (no SDK deps, no nodemailer). Notifications + broadcast + SSE + inbound parsers follow in later slices.
 
 ## `Message`
 
@@ -193,6 +193,46 @@ Sends mail via SendGrid v3. POSTs JSON to `{endpoint}/v3/mail/send`.
 
 **Failure.** Same shape as `ResendTransport` — `MailTransportError` with `context.provider = 'sendgrid'` and the same `status` / `retryable` / `providerError` fields. SendGrid returns `202 Accepted` on success (empty body); anything else is a failure.
 
+## `MailgunTransport`
+
+```ts
+class MailgunTransport implements Transport {
+  constructor(opts: MailgunTransportOptions)
+  send(message: Message): Promise<void>
+}
+
+interface MailgunTransportOptions {
+  apiKey: string                                 // Mailgun API key
+  domain: string                                 // your Mailgun-verified sending domain
+  endpoint?: string                              // default 'https://api.mailgun.net'
+  fetch?: typeof fetch                           // override for tests
+}
+```
+
+Sends mail via Mailgun's HTTP API. POSTs `multipart/form-data` to `{endpoint}/v3/{domain}/messages`.
+
+**Auth.** HTTP Basic with fixed username `"api"` — the transport constructs `Authorization: Basic base64('api:{apiKey}')` internally. Config only collects the key.
+
+**Body shape (FormData, not JSON).** Mailgun is the odd one out:
+
+| Field | Wire form field |
+|---|---|
+| `from` | `from` (RFC 5322 `"Name <email>"`) |
+| `to` / `cc` / `bcc` | comma-separated string |
+| `subject` | `subject` |
+| `html` / `text` | `html` / `text` |
+| `replyTo` | `h:Reply-To` (header form field) |
+| `headers['X-…']` | `h:X-…` per entry |
+| `attachments` | `Blob` parts on the `attachment` field |
+
+The `h:` prefix is Mailgun's convention for "add this as a real outbound header" — covers both `Reply-To` and any custom `headers` the caller set.
+
+**Attachments — no base64 here.** Resend / SendGrid require base64-encoded strings in JSON; Mailgun takes raw bytes via `multipart/form-data`. The transport wraps `string` / `Uint8Array` content in `Blob` parts directly. `encoding: 'base64'` string inputs ARE decoded first — the wire payload is always the actual file bytes.
+
+**Region routing.** Default endpoint is `https://api.mailgun.net` (US). For EU-region Mailgun accounts override `endpoint` to `https://api.eu.mailgun.net` in config.
+
+**Failure.** Same shape as Resend / SendGrid — `MailTransportError` with `context.provider = 'mailgun'`, plus the same `status` / `retryable` / `providerError` fields.
+
 ## `MailTransportError`
 
 ```ts
@@ -229,9 +269,10 @@ type MailTransportConfig =
   | { driver: 'log'; channel?: string; level?: 'debug' | 'info'; includeBody?: boolean }
   | { driver: 'resend'; apiKey: string; endpoint?: string }
   | { driver: 'sendgrid'; apiKey: string; endpoint?: string }
+  | { driver: 'mailgun'; apiKey: string; domain: string; endpoint?: string }
 ```
 
-The `apiKey` field is validated at construction — an empty string throws `ConfigError` at provider boot, never at first send. Pull keys from env vars in `config/mail.ts`; never hard-code them.
+The `apiKey` (and Mailgun's `domain`) field is validated at construction — an empty string throws `ConfigError` at provider boot, never at first send. Pull keys from env vars in `config/mail.ts`; never hard-code them.
 
 The shape `config/mail.ts` exports. Validated eagerly by `MailManager` at construction — bad config throws `ConfigError` at provider boot, never at first send.
 
@@ -426,11 +467,16 @@ export default {
     log: { driver: 'log', channel: 'mail' },
     resend: { driver: 'resend', apiKey: process.env.RESEND_API_KEY ?? '' },
     sendgrid: { driver: 'sendgrid', apiKey: process.env.SENDGRID_API_KEY ?? '' },
+    mailgun: {
+      driver: 'mailgun',
+      apiKey: process.env.MAILGUN_API_KEY ?? '',
+      domain: process.env.MAILGUN_DOMAIN ?? '',
+    },
   },
 } satisfies MailConfig
 ```
 
-The empty-string `apiKey` fallback fails fast: if production starts without `RESEND_API_KEY`, the `MailManager` constructor throws `ConfigError` at provider boot — better than discovering the missing env var on the first send.
+The empty-string `apiKey` / `domain` fallbacks fail fast: if production starts without the env vars wired in, the `MailManager` constructor throws `ConfigError` at provider boot — better than discovering the missing env var on the first send.
 
 ```ts
 // config/logger.ts
@@ -448,9 +494,12 @@ export default {
 
 ## What this doesn't ship yet
 
-The mail layer covers synchronous + queued + production HTTP delivery (Resend + SendGrid). Still to land in subsequent signal slices:
+The mail layer covers synchronous + queued + production HTTP delivery across three transports (Resend, SendGrid, Mailgun). All pure-fetch, no SDK deps, no `nodemailer`.
 
-- **`SmtpTransport`** — for self-hosted / on-prem / legacy SMTP relays. Will pull in `nodemailer` as a runtime dep — the only mail transport that doesn't fit cleanly into a pure-fetch model.
+**No SMTP transport.** SMTP requires either a heavyweight Node-stdlib dep (`nodemailer`) or hand-rolled wire-protocol code over `Bun.connect`. Strav 1.x deliberately stays pure-fetch — apps that need SMTP send through a transactional provider (Resend / SendGrid / Mailgun) that fronts the SMTP relay for them, or write their own `Transport` implementation.
+
+Still to land in subsequent signal slices:
+
 - **Inbound parsers** — Postmark + Mailgun webhook bodies → normalised `InboundMessage`.
 - **Notifications** — `BaseNotification` + `Notifiable` mixin + `notifications` table + channel drivers (mail, database, webhook, broadcast).
 - **Broadcast** — pub/sub primitive + channel auth.

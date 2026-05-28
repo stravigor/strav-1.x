@@ -35,6 +35,7 @@ import type { MailRecipient, Message } from './message.ts'
 import type { Transport } from './transport.ts'
 import { ArrayTransport } from './transports/array_transport.ts'
 import { LogTransport } from './transports/log_transport.ts'
+import { MailgunTransport } from './transports/mailgun_transport.ts'
 import { ResendTransport } from './transports/resend_transport.ts'
 import { SendGridTransport } from './transports/sendgrid_transport.ts'
 
@@ -73,6 +74,19 @@ interface SendGridTransportConfig {
   endpoint?: string
 }
 
+interface MailgunTransportConfig {
+  driver: 'mailgun'
+  /** Mailgun API key. */
+  apiKey: string
+  /** Your Mailgun-verified sending domain (e.g. `mg.acme.com`). */
+  domain: string
+  /**
+   * Override the base URL — defaults to `https://api.mailgun.net`.
+   * Set to `https://api.eu.mailgun.net` for EU-region accounts.
+   */
+  endpoint?: string
+}
+
 /**
  * Discriminated union — every shipping driver gets an entry. Adding a
  * new driver here + a new `case` in `buildTransport` is the contract;
@@ -83,6 +97,7 @@ export type MailTransportConfig =
   | LogTransportConfig
   | ResendTransportConfig
   | SendGridTransportConfig
+  | MailgunTransportConfig
 
 export interface MailConfig {
   /**
@@ -223,6 +238,12 @@ export class MailManager {
         return new ResendTransport({ apiKey: cfg.apiKey, endpoint: cfg.endpoint })
       case 'sendgrid':
         return new SendGridTransport({ apiKey: cfg.apiKey, endpoint: cfg.endpoint })
+      case 'mailgun':
+        return new MailgunTransport({
+          apiKey: cfg.apiKey,
+          domain: cfg.domain,
+          endpoint: cfg.endpoint,
+        })
     }
   }
 
@@ -232,16 +253,24 @@ export class MailManager {
         `Mail: default transport "${config.default}" is not defined in transports.`,
       )
     }
-    const knownDrivers = new Set(['array', 'log', 'resend', 'sendgrid'])
+    const knownDrivers = new Set(['array', 'log', 'resend', 'sendgrid', 'mailgun'])
     for (const [name, cfg] of Object.entries(config.transports)) {
       if (!knownDrivers.has(cfg.driver)) {
         throw new ConfigError(
           `Mail: transport "${name}" has unknown driver "${(cfg as { driver: string }).driver}".`,
         )
       }
-      if ((cfg.driver === 'resend' || cfg.driver === 'sendgrid') && !cfg.apiKey) {
+      if (
+        (cfg.driver === 'resend' || cfg.driver === 'sendgrid' || cfg.driver === 'mailgun') &&
+        !cfg.apiKey
+      ) {
         throw new ConfigError(
           `Mail: transport "${name}" (${cfg.driver}) requires a non-empty \`apiKey\`.`,
+        )
+      }
+      if (cfg.driver === 'mailgun' && !cfg.domain) {
+        throw new ConfigError(
+          `Mail: transport "${name}" (mailgun) requires a non-empty \`domain\`.`,
         )
       }
     }
