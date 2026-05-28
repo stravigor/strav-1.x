@@ -11,3 +11,4 @@ export {
   emitDropTable,
 } from './emit.ts'
 export { findPrimaryKey, isPrimaryKeyKind, sqlTypeFor } from './sql_type.ts'
+export { emitRlsForTenanted, tenantIdColumnName, tenantRegistrySchema } from './tenancy.ts'

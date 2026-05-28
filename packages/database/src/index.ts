@@ -28,9 +28,12 @@ export {
   emitCreateTable,
   emitDropColumn,
   emitDropTable,
+  emitRlsForTenanted,
   findPrimaryKey,
   isPrimaryKeyKind,
   sqlTypeFor,
+  tenantIdColumnName,
+  tenantRegistrySchema,
 } from './ddl/index.ts'
 export {
   type ColumnInfo,
@@ -95,3 +98,4 @@ export {
   type UuidField,
 } from './schema/index.ts'
 export { SchemaRegistry } from './schema_registry.ts'
+export { TenantManager } from './tenancy/index.ts'

@@ -493,3 +493,88 @@ Each lands as its own slice:
 ### `down()` is best-effort
 
 Generated migration's `down()` reverses the ops: `DROP COLUMN IF EXISTS` for added columns; `DROP TABLE IF EXISTS` for created tables, in reverse op order. This is a safe-for-rollback inverse, not a "restore data" path — apps with rollback-critical migrations should write them by hand.
+
+## Multi-tenancy
+
+Schemas marked `tenanted: true` opt into Postgres row-level-security tenant isolation. Two pieces:
+
+1. **DDL emission** — `emitCreateTable` for a tenanted schema injects a `<tenant_registry>_id` FK column right after the PK and appends `ENABLE ROW LEVEL SECURITY` + a `CREATE POLICY` statement.
+2. **Runtime scoping** — `TenantManager.withTenant(id, fn)` opens a transaction, sets `app.tenant_id` via `set_config(..., true)`, runs `fn(tx)`. RLS policies see the bound tenant and scope all reads + writes accordingly.
+
+### Setup
+
+Mark one schema as the tenant registry; mark each tenanted schema:
+
+```ts
+const tenantSchema = defineSchema('tenant', Archetype.Entity, (t) => {
+  t.id()
+  t.string('name')
+  t.timestamps()
+}, { tenantRegistry: true })
+
+const postSchema = defineSchema('post', Archetype.Entity, (t) => {
+  t.id()
+  t.string('title')
+  t.timestamps()
+}, { tenanted: true })
+```
+
+`tenantRegistry` and `tenanted` are mutually exclusive (the registry table itself isn't tenant-scoped). Apps register both with `SchemaRegistry` before emitting migrations.
+
+### What CREATE TABLE emits for a tenanted schema
+
+```sql
+CREATE TABLE "post" (
+  "id" char(26) PRIMARY KEY,
+  "tenant_id" char(26) NOT NULL REFERENCES "tenant" ("id") ON DELETE CASCADE,
+  "title" varchar(255) NOT NULL,
+  "created_at" timestamptz NOT NULL DEFAULT now(),
+  "updated_at" timestamptz NOT NULL DEFAULT now()
+);
+ALTER TABLE "post" ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "post_tenant_isolation" ON "post"
+  USING ("tenant_id" = current_setting('app.tenant_id')::char(26))
+  WITH CHECK ("tenant_id" = current_setting('app.tenant_id')::char(26))
+```
+
+The cast target matches the tenant registry's PK type — `uuid`, `bigint`, or `char(26)`. `bigserial` PKs normalize to `bigint` for the cast (bigserial is a pseudo-type).
+
+The tenant FK column is placed right after the PK so reading the schema in psql tells you "what's this row's tenant?" at a glance.
+
+### `TenantManager`
+
+```ts
+class TenantManager {
+  constructor(db: Database)
+
+  withTenant<T>(tenantId: string, fn: (tx: DatabaseExecutor) => Promise<T>): Promise<T>
+  withoutTenant<T>(fn: (tx: DatabaseExecutor) => Promise<T>): Promise<T>
+  currentTenantId(): string | null
+}
+```
+
+- **`withTenant(id, fn)`** — opens a transaction, runs `SELECT set_config('app.tenant_id', $1, true)`, then `fn(tx)`. Transaction-local binding auto-clears on COMMIT / ROLLBACK.
+- **`withoutTenant(fn)`** — opens a transaction without binding the tenant. Intended for admin / migration paths; requires the underlying connection to be a `BYPASSRLS` Postgres role to actually see across tenants.
+- **`currentTenantId()`** — the active tenant inside any `withTenant` scope, `null` outside. Propagates through nested async via AsyncLocalStorage.
+- **Nesting** — `withTenant('A', () => withTenant('A', ...))` is fine (same tenant). `withTenant('A', () => withTenant('B', ...))` throws; tenant switches must be explicit (exit the outer scope first).
+- **Exception safety** — if `fn` throws, the transaction rolls back, the ALS scope unwinds, `currentTenantId()` returns to its prior value.
+
+### Helpers (low-level)
+
+```ts
+function tenantRegistrySchema(registry: SchemaRegistry | undefined): Schema  // throws if missing
+function tenantIdColumnName(tenantReg: Schema): string                        // e.g. 'tenant_id'
+function emitRlsForTenanted(schema: Schema, registry: SchemaRegistry): string // multi-statement
+```
+
+Use these directly when writing a custom migration that needs the RLS plumbing without going through `emitCreateTable` (e.g., bringing an existing table into tenancy).
+
+### What's NOT here
+
+Each is its own follow-up tenancy slice:
+
+- **Composite `(tenant_id, id)` PK for `t.tenantedSerial()`.** Today's tenanted schemas should use `t.id()` (ULID) — globally unique by construction, so the tenant FK is just a scoping column.
+- **Two-role connection config.** Apps need a `NOBYPASSRLS` Postgres role for runtime + a `BYPASSRLS` role for migrations / admin. Today: wire two `DatabaseProvider`s with different config slices. Framework-managed dual roles land later.
+- **Boot-time tenant-registry validation.** The provider doesn't yet check that the tenant registry table exists in the live DB with the expected PK type. Misconfiguration surfaces as a Postgres error at first query.
+- **Schema-diff awareness.** `generateMigration` doesn't detect "this existing table is missing its tenant_id column / RLS policy." Apps adding tenancy to an existing table write the migration explicitly.
+- **Repository<TModel> auto-routing inside `withTenant`.** Today, `repo.find(id)` outside `tx` doesn't see the tenant binding. Pass `tx` explicitly via the deferred `tx?` parameter (`repo.find(id, { tx })`) — or call `tx.query(...)` directly. Auto-routing lands with the unit-of-work slice.

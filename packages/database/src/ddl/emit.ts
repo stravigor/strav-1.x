@@ -26,6 +26,7 @@ import { quoteIdent } from '../orm/sql_emitter.ts'
 import type { EnumField, ReferenceField, Schema, SchemaField } from '../schema/types.ts'
 import type { SchemaRegistry } from '../schema_registry.ts'
 import { findPrimaryKey, isPrimaryKeyKind, resolveReferenceTarget, sqlTypeFor } from './sql_type.ts'
+import { emitRlsForTenanted, tenantIdColumnField, tenantRegistrySchema } from './tenancy.ts'
 
 export interface EmittedDdl {
   sql: string
@@ -42,15 +43,55 @@ export interface EmitOptions {
  * `CREATE TABLE` for a Schema. Emits one column line per field, in
  * declaration order, with PRIMARY KEY / NOT NULL / UNIQUE / DEFAULT /
  * REFERENCES / CHECK inlined per column.
+ *
+ * For `tenanted: true` schemas the emitter additionally:
+ *   1. Injects a `<tenant_registry>_id` FK column right after the PK
+ *      (NOT NULL, ON DELETE CASCADE, type matching the tenant registry's
+ *      PK).
+ *   2. Appends `ENABLE ROW LEVEL SECURITY` + a tenant-isolation `CREATE
+ *      POLICY` statement, joined to the CREATE TABLE with `;\n`.
+ * `Database.execute()` handles multi-statement SQL; the runner doesn't
+ * need to split.
  */
 export function emitCreateTable(schema: Schema, opts: EmitOptions = {}): EmittedDdl {
-  const cols = schema.fields.map((f) => columnDefinition(f, opts.registry))
+  const fields = injectTenantColumn(schema, opts.registry)
+  const cols = fields.map((f) => columnDefinition(f, opts.registry))
   const head = opts.ifExists
     ? `CREATE TABLE IF NOT EXISTS ${quoteIdent(schema.name)}`
     : `CREATE TABLE ${quoteIdent(schema.name)}`
-  return {
-    sql: `${head} (\n  ${cols.join(',\n  ')}\n)`,
+  const createTable = `${head} (\n  ${cols.join(',\n  ')}\n)`
+
+  if (!schema.tenancy.tenanted) {
+    return { sql: createTable }
   }
+
+  const rls = emitRlsForTenanted(schema, opts.registry)
+  return { sql: `${createTable};\n${rls}` }
+}
+
+/**
+ * For tenanted schemas, return the field list with the synthetic
+ * `<registry>_id` FK column inserted right after the PK. For everything
+ * else, the original field list — non-tenanted output stays byte-
+ * identical to pre-tenancy emission.
+ */
+function injectTenantColumn(
+  schema: Schema,
+  registry: SchemaRegistry | undefined,
+): readonly SchemaField[] {
+  if (!schema.tenancy.tenanted) return schema.fields
+  const tenantReg = tenantRegistrySchema(registry)
+  const tenantCol = tenantIdColumnField(tenantReg)
+  // PK first, then the tenant column, then everything else (in declaration
+  // order). The PK is always the first PK-kind field in `fields` (the
+  // schema builder enforces one identity per schema).
+  const pkIndex = schema.fields.findIndex(isPrimaryKeyKind)
+  if (pkIndex < 0) {
+    throw new Error(
+      `emitCreateTable("${schema.name}"): tenanted schema is missing an identity field (t.id() / t.uuid() / etc.).`,
+    )
+  }
+  return [...schema.fields.slice(0, pkIndex + 1), tenantCol, ...schema.fields.slice(pkIndex + 1)]
 }
 
 /** `DROP TABLE`. */
