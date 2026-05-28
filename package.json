@@ -14,7 +14,9 @@
     "format": "biome format --write .",
     "format:check": "biome format .",
     "test": "bun test",
-    "test:e2e": "bun test tests/e2e"
+    "test:e2e": "bun test tests/e2e",
+    "test:integration": "bun test tests/integration",
+    "db:setup": "bun scripts/db-setup.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.0.0",

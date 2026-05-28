@@ -64,11 +64,15 @@ Naming + file-org rules (still authoritative because they don't change):
 ```bash
 bun install              # install workspace deps
 bun typecheck            # 0 errors required
-bun test                 # all suites must pass
+bun test                 # all suites must pass (integration self-skips without Postgres)
 bun test:e2e             # end-to-end smoke tests
+bun test:integration     # Postgres-required suites (needs DB_* env vars or docker-compose up)
+bun db:setup             # reset the test Postgres (drops + recreates `public` schema)
 bun lint                 # Biome check
 bun format               # Biome format --write
 ```
+
+Local Postgres: `docker-compose up -d && cp .env.test.example .env.test && source .env.test`. See `docs/development.md` for the full setup.
 
 ## Versioning
 

@@ -1,0 +1,32 @@
+# Local Postgres for integration / e2e tests. Mirrors the CI `services.postgres`
+# config in `.github/workflows/ci.yml`. Bring up with:
+#
+#   docker-compose up -d
+#
+# then copy `.env.test.example` to `.env.test` and `source` it before running:
+#
+#   source .env.test && bun test
+#
+# The integration suite self-skips when these env vars aren't set, so this is
+# only needed when you want to run the integration / e2e tests locally.
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: strav_postgres
+    environment:
+      POSTGRES_USER: strav
+      POSTGRES_PASSWORD: strav
+      POSTGRES_DB: strav_test
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "strav"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - strav_postgres_data:/var/lib/postgresql/data
+
+volumes:
+  strav_postgres_data:
