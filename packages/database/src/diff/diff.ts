@@ -2,33 +2,36 @@
  * Diff engine — compares registered Schemas against the live DB snapshot
  * and produces an ordered list of forward operations.
  *
- * V1 detects only *additive* changes:
- *   - Table is in the registry, not in the DB           → CreateTable op
- *   - Column is on a schema, not on the existing table  → AddColumn op
+ * V1 (additive) detects new tables + new columns. V2 (this file) adds
+ * destructive ops behind explicit opt-ins:
+ *   - `allowDrop: true` enables DropTable + DropColumn emission for
+ *     entities in the DB but not in the registry.
+ *   - `renames: { tables, columns }` converts what would otherwise look
+ *     like a drop+add into a rename op. Apps declare which renames
+ *     happened — diff alone can't tell.
  *
- * V1 ignores (each is its own follow-up slice):
- *   - Tables present in the DB but not in the registry — destructive;
- *     blindly dropping would lose data
- *   - Columns present in the DB but not on the schema — same reason
- *   - Type / nullability / default differences on existing columns —
- *     ALTER COLUMN semantics need backfill design
+ * Type / nullability / default changes on EXISTING columns still aren't
+ * detected — `ALTER COLUMN TYPE` needs `USING` clauses or backfill
+ * strategies that warrant their own design surface.
  *
  * Operation ordering:
- *   1. All `create-table` ops first, in topological order of references
- *      (a table that references another comes AFTER its target).
- *   2. All `add-column` ops, in schema declaration order, AFTER all
- *      create-table ops (so a new column with a REFERENCES clause has
- *      its target table already in place).
+ *   1. `rename-table` ops first — must precede any reference resolution.
+ *   2. `rename-column` ops — table identity is set; column identity
+ *      becomes correct before any further work.
+ *   3. `create-table` ops, topologically sorted by FK refs.
+ *   4. `add-column` ops, after create-table.
+ *   5. `drop-column` ops, after additions (no ordering dep between drops).
+ *   6. `drop-table` ops LAST, in reverse-topological order — drop the
+ *      dependents before their targets so FK constraints don't block.
  *
  * Cycle detection: if two registered schemas reference each other AND
  * both are missing in the DB, no single CREATE TABLE order satisfies
- * both. V1 throws with a clear error; apps break the cycle by making
- * one FK nullable (and adding it via a later migration) or by using
- * DEFERRABLE constraints by hand. Resolving cycles automatically lands
- * with the multi-step migration generator.
+ * both. V1 throws; apps break the cycle by making one reference
+ * nullable, or land both tables in separate migrations.
  */
 
-import { emitAddColumn, emitCreateTable } from '../ddl/index.ts'
+import { emitAddColumn, emitCreateTable, emitDropTable } from '../ddl/index.ts'
+import { quoteIdent } from '../orm/sql_emitter.ts'
 import type { Schema } from '../schema/types.ts'
 import type { SchemaRegistry } from '../schema_registry.ts'
 import type { DbSnapshot } from './inspect.ts'
@@ -46,11 +49,68 @@ export type DiffOperation =
       columnName: string
       sql: string
     }
+  | {
+      kind: 'drop-table'
+      tableName: string
+      sql: string
+    }
+  | {
+      kind: 'drop-column'
+      tableName: string
+      columnName: string
+      sql: string
+    }
+  | {
+      kind: 'rename-table'
+      from: string
+      to: string
+      sql: string
+    }
+  | {
+      kind: 'rename-column'
+      tableName: string
+      from: string
+      to: string
+      sql: string
+    }
 
 export interface DiffResult {
   operations: DiffOperation[]
-  /** Tables already in the DB the registry doesn't know about. Informational only — V1 doesn't touch them. */
+  /**
+   * Tables in the DB the registry doesn't know about — including those NOT
+   * dropped because `allowDrop` was off. Always reported, even when drops
+   * are emitted, so apps can audit what the diff considered destructive.
+   */
   unknownTables: string[]
+}
+
+/**
+ * Rename mappings to apply BEFORE drop detection. Apps declare these
+ * explicitly because diff alone can't tell "rename" from "drop+add".
+ *
+ * - `tables`: { oldTableName: newTableName }
+ * - `columns`: { schemaName: { oldColumnName: newColumnName } }
+ *   (Keyed by the SCHEMA name, i.e., the NEW table name — after any
+ *   table rename has been applied.)
+ */
+export interface DiffRenames {
+  tables?: Readonly<Record<string, string>>
+  columns?: Readonly<Record<string, Readonly<Record<string, string>>>>
+}
+
+export interface DiffOptions {
+  /**
+   * Emit `drop-table` / `drop-column` ops for entities in the DB but not
+   * in the registry. Default `false` — drops are dangerous and opt-in.
+   * When off, unknowns are still reported in `result.unknownTables` for
+   * visibility.
+   */
+  allowDrop?: boolean
+  /**
+   * Explicit rename mappings, applied before drop detection. See
+   * `DiffRenames`.
+   */
+  renames?: DiffRenames
 }
 
 /**
@@ -59,15 +119,44 @@ export interface DiffResult {
  * emitted by the DDL helpers, so the migration runner just executes
  * them in order.
  */
-export function diffSchemas(registry: SchemaRegistry, snapshot: DbSnapshot): DiffResult {
+export function diffSchemas(
+  registry: SchemaRegistry,
+  snapshot: DbSnapshot,
+  options: DiffOptions = {},
+): DiffResult {
   const operations: DiffOperation[] = []
   const registered = registry.all()
+  const renames = normalizeRenames(options.renames)
+
+  // ─── Pass 0: rename ops + apply to the snapshot for downstream passes ──────
+  for (const [from, to] of renames.tables) {
+    operations.push({
+      kind: 'rename-table',
+      from,
+      to,
+      sql: `ALTER TABLE ${quoteIdent(from)} RENAME TO ${quoteIdent(to)}`,
+    })
+  }
+  const renamedSnapshot = applyTableRenames(snapshot, renames.tables)
+
+  for (const [tableName, columnRenames] of renames.columns) {
+    for (const [from, to] of columnRenames) {
+      operations.push({
+        kind: 'rename-column',
+        tableName,
+        from,
+        to,
+        sql: `ALTER TABLE ${quoteIdent(tableName)} RENAME COLUMN ${quoteIdent(from)} TO ${quoteIdent(to)}`,
+      })
+    }
+  }
+  const finalSnapshot = applyColumnRenames(renamedSnapshot, renames.columns)
 
   // ─── Pass 1: which schemas need creating, which need column additions ───────
   const toCreate: Schema[] = []
   const columnAdditions: Array<{ schema: Schema; column: string }> = []
   for (const schema of registered) {
-    const live = snapshot.tables.get(schema.name)
+    const live = finalSnapshot.tables.get(schema.name)
     if (!live) {
       toCreate.push(schema)
       continue
@@ -101,11 +190,54 @@ export function diffSchemas(registry: SchemaRegistry, snapshot: DbSnapshot): Dif
     })
   }
 
-  // ─── Informational: tables the registry doesn't know about ────────────────
+  // ─── Pass 4 + 5: drops (gated by allowDrop) + unknownTables reporting ──────
   const knownNames = new Set(registered.map((s) => s.name))
   const unknownTables: string[] = []
-  for (const [name] of snapshot.tables) {
-    if (!knownNames.has(name)) unknownTables.push(name)
+
+  // Columns to drop: present in DB on a known table but not on the schema.
+  const columnDrops: Array<{ tableName: string; columnName: string }> = []
+  for (const schema of registered) {
+    const live = finalSnapshot.tables.get(schema.name)
+    if (!live) continue
+    const schemaCols = new Set(schema.fields.map((f) => f.name))
+    for (const col of live.columns) {
+      if (!schemaCols.has(col.name)) {
+        columnDrops.push({ tableName: schema.name, columnName: col.name })
+      }
+    }
+  }
+  if (options.allowDrop) {
+    for (const { tableName, columnName } of columnDrops) {
+      operations.push({
+        kind: 'drop-column',
+        tableName,
+        columnName,
+        sql: `ALTER TABLE ${quoteIdent(tableName)} DROP COLUMN ${quoteIdent(columnName)}`,
+      })
+    }
+  }
+
+  // Tables to drop: in DB but not in registry.
+  const droppableTables: string[] = []
+  for (const [name] of finalSnapshot.tables) {
+    if (!knownNames.has(name)) {
+      unknownTables.push(name)
+      droppableTables.push(name)
+    }
+  }
+  if (options.allowDrop) {
+    // Reverse-sorted by FK dependency would be ideal; we don't have FK
+    // graph info on dropped tables, so emit alphabetically. Apps with
+    // dependent drops should add `ON DELETE CASCADE` to their FKs or
+    // run multiple migrations.
+    droppableTables.sort().reverse()
+    for (const name of droppableTables) {
+      operations.push({
+        kind: 'drop-table',
+        tableName: name,
+        sql: emitDropTable(name).sql,
+      })
+    }
   }
 
   return { operations, unknownTables }
@@ -148,4 +280,49 @@ function topologicalSort(schemas: readonly Schema[], inSet: Set<string>): Schema
 
   for (const schema of schemas) visit(schema, [])
   return sorted
+}
+
+/** Normalize the renames option into Maps for stable iteration. */
+function normalizeRenames(renames: DiffRenames | undefined): {
+  tables: Map<string, string>
+  columns: Map<string, Map<string, string>>
+} {
+  const tables = new Map<string, string>(Object.entries(renames?.tables ?? {}))
+  const columns = new Map<string, Map<string, string>>()
+  for (const [schemaName, colMap] of Object.entries(renames?.columns ?? {})) {
+    columns.set(schemaName, new Map(Object.entries(colMap)))
+  }
+  return { tables, columns }
+}
+
+/** Apply table renames to a snapshot — returns a new snapshot. */
+function applyTableRenames(snapshot: DbSnapshot, renames: ReadonlyMap<string, string>): DbSnapshot {
+  if (renames.size === 0) return snapshot
+  const next = new Map(snapshot.tables)
+  for (const [from, to] of renames) {
+    const table = next.get(from)
+    if (!table) continue
+    next.delete(from)
+    next.set(to, { ...table, name: to })
+  }
+  return { tables: next }
+}
+
+/** Apply column renames to a snapshot — returns a new snapshot. */
+function applyColumnRenames(
+  snapshot: DbSnapshot,
+  renames: ReadonlyMap<string, ReadonlyMap<string, string>>,
+): DbSnapshot {
+  if (renames.size === 0) return snapshot
+  const next = new Map(snapshot.tables)
+  for (const [tableName, colRenames] of renames) {
+    const table = next.get(tableName)
+    if (!table) continue
+    const renamedCols = table.columns.map((c) => {
+      const newName = colRenames.get(c.name)
+      return newName ? { ...c, name: newName } : c
+    })
+    next.set(tableName, { ...table, columns: renamedCols })
+  }
+  return { tables: next }
 }

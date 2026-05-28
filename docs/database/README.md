@@ -131,8 +131,8 @@ The console commands (`bun strav db:migrate` / `db:rollback` / `db:status`) land
 | `sqlTypeFor` / `columnDefinition` / `defaultSql` / `findPrimaryKey` / `isPrimaryKeyKind` | DDL building blocks; exposed for migration generators and bespoke shapes |
 | `quoteIdent` / `selectColumnList` | Building blocks the emitter uses; exposed for raw-SQL escape hatches |
 | `inspectDatabase` | Read live `information_schema` into a `DbSnapshot` |
-| `diffSchemas` | Compare registry vs snapshot → `DiffResult` (additive ops + unknownTables) |
-| `generateMigration` | One-call wrapper — returns a ready-to-register `Migration` or `null` if no changes |
+| `diffSchemas` | Compare registry vs snapshot → `DiffResult` (additive ops + opt-in drops/renames + unknownTables) |
+| `generateMigration` | One-call wrapper — returns a ready-to-register `Migration` or `null` if no changes; supports `allowDrop` + `renames` |
 | `TenantManager` | `withTenant(id, fn)` / `withoutTenant(fn)` — runs callbacks inside RLS-scoped transactions (built on UnitOfWork) |
 | `UnitOfWork` | `run(fn)` — one transaction + ALS-based tx-routing for Repository calls + queue-until-commit for post-events |
 | `tenantRegistrySchema` / `tenantIdColumnName` / `emitRlsForTenanted` | Tenancy DDL helpers — used by `emitCreateTable` for `tenanted: true` schemas, exposed for raw SQL paths |

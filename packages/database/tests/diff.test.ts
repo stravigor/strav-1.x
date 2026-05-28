@@ -148,9 +148,12 @@ describe('diffSchemas — additive cases', () => {
     const registry = new SchemaRegistry().registerAll([user])
     const result = diffSchemas(registry, snapshot())
     expect(result.operations).toHaveLength(1)
-    expect(nonNull(result.operations[0]).kind).toBe('create-table')
-    expect(nonNull(result.operations[0]).schemaName).toBe('user')
-    expect(nonNull(result.operations[0]).sql).toContain('CREATE TABLE "user"')
+    const op = nonNull(result.operations[0])
+    expect(op.kind).toBe('create-table')
+    if (op.kind === 'create-table') {
+      expect(op.schemaName).toBe('user')
+    }
+    expect(op.sql).toContain('CREATE TABLE "user"')
   })
 
   test('no-op when DB matches registry exactly', () => {
@@ -247,7 +250,9 @@ describe('diffSchemas — topological ordering', () => {
     })
     const registry = new SchemaRegistry().registerAll([c, b, a])
     const result = diffSchemas(registry, snapshot())
-    expect(result.operations.map((op) => op.schemaName)).toEqual(['a', 'b', 'c'])
+    expect(
+      result.operations.map((op) => (op.kind === 'create-table' ? op.schemaName : null)),
+    ).toEqual(['a', 'b', 'c'])
   })
 
   test('throws on a circular FK between two missing tables', () => {
@@ -276,8 +281,11 @@ describe('diffSchemas — topological ordering', () => {
       snapshot({ name: 'user', columns: [col('id', 'character', false, 26)] }),
     )
     expect(result.operations).toHaveLength(1)
-    expect(nonNull(result.operations[0]).kind).toBe('create-table')
-    expect(nonNull(result.operations[0]).schemaName).toBe('post')
+    const op = nonNull(result.operations[0])
+    expect(op.kind).toBe('create-table')
+    if (op.kind === 'create-table') {
+      expect(op.schemaName).toBe('post')
+    }
   })
 
   test('add-column ops come after all create-table ops', () => {
@@ -384,5 +392,224 @@ describe('generateMigration', () => {
       await generateMigration({ registry, db, name: 'custom_name', now: fixed }),
     )
     expect(renamed.migration.name).toBe('custom_name')
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// diffSchemas — destructive ops (drops + renames)
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('diffSchemas — drops (gated by allowDrop)', () => {
+  test('unknown table: reported in unknownTables but NOT dropped by default', () => {
+    const registry = new SchemaRegistry()
+    const result = diffSchemas(registry, snapshot({ name: 'legacy', columns: [col('id')] }))
+    expect(result.unknownTables).toEqual(['legacy'])
+    expect(result.operations).toEqual([])
+  })
+
+  test('unknown table: dropped when allowDrop is true', () => {
+    const registry = new SchemaRegistry()
+    const result = diffSchemas(registry, snapshot({ name: 'legacy', columns: [col('id')] }), {
+      allowDrop: true,
+    })
+    expect(result.operations).toHaveLength(1)
+    const op = nonNull(result.operations[0])
+    expect(op.kind).toBe('drop-table')
+    if (op.kind === 'drop-table') {
+      expect(op.tableName).toBe('legacy')
+      expect(op.sql).toBe('DROP TABLE "legacy"')
+    }
+    // unknownTables still populated — informational, not in-place of the op.
+    expect(result.unknownTables).toEqual(['legacy'])
+  })
+
+  test('unknown column on a known table: kept by default, dropped with allowDrop', () => {
+    const user = defineSchema('user', Archetype.Entity, (t) => t.id())
+    const registry = new SchemaRegistry().registerAll([user])
+    const snap = snapshot({
+      name: 'user',
+      columns: [col('id', 'character', false, 26), col('legacy_field')],
+    })
+
+    const defaultResult = diffSchemas(registry, snap)
+    expect(defaultResult.operations).toEqual([])
+
+    const dropResult = diffSchemas(registry, snap, { allowDrop: true })
+    expect(dropResult.operations).toHaveLength(1)
+    const op = nonNull(dropResult.operations[0])
+    expect(op.kind).toBe('drop-column')
+    if (op.kind === 'drop-column') {
+      expect(op.tableName).toBe('user')
+      expect(op.columnName).toBe('legacy_field')
+      expect(op.sql).toBe('ALTER TABLE "user" DROP COLUMN "legacy_field"')
+    }
+  })
+
+  test('multiple table drops emit in reverse alphabetical order', () => {
+    const registry = new SchemaRegistry()
+    const result = diffSchemas(
+      registry,
+      snapshot(
+        { name: 'a_legacy', columns: [col('id')] },
+        { name: 'b_legacy', columns: [col('id')] },
+        { name: 'c_legacy', columns: [col('id')] },
+      ),
+      { allowDrop: true },
+    )
+    expect(
+      result.operations
+        .filter((op) => op.kind === 'drop-table')
+        .map((op) => (op.kind === 'drop-table' ? op.tableName : null)),
+    ).toEqual(['c_legacy', 'b_legacy', 'a_legacy'])
+  })
+})
+
+describe('diffSchemas — renames', () => {
+  test('explicit table rename converts what would look like drop+add into a rename op', () => {
+    const account = defineSchema('account', Archetype.Entity, (t) => t.id())
+    const registry = new SchemaRegistry().registerAll([account])
+    const snap = snapshot({ name: 'user', columns: [col('id', 'character', false, 26)] })
+
+    const result = diffSchemas(registry, snap, {
+      renames: { tables: { user: 'account' } },
+      allowDrop: true, // wouldn't matter — the rename consumes both sides
+    })
+
+    const renameOps = result.operations.filter((op) => op.kind === 'rename-table')
+    expect(renameOps).toHaveLength(1)
+    const op = nonNull(renameOps[0])
+    if (op.kind === 'rename-table') {
+      expect(op.from).toBe('user')
+      expect(op.to).toBe('account')
+      expect(op.sql).toBe('ALTER TABLE "user" RENAME TO "account"')
+    }
+    // No create-table for `account` (already exists post-rename).
+    expect(result.operations.filter((o) => o.kind === 'create-table')).toEqual([])
+    // No drop-table for `user` (consumed by rename).
+    expect(result.operations.filter((o) => o.kind === 'drop-table')).toEqual([])
+  })
+
+  test('explicit column rename converts add+drop into a rename op', () => {
+    const user = defineSchema('user', Archetype.Entity, (t) => {
+      t.id()
+      t.string('handle')
+    })
+    const registry = new SchemaRegistry().registerAll([user])
+    const snap = snapshot({
+      name: 'user',
+      columns: [
+        col('id', 'character', false, 26),
+        col('username', 'character varying', false, 255),
+      ],
+    })
+
+    const result = diffSchemas(registry, snap, {
+      renames: { columns: { user: { username: 'handle' } } },
+      allowDrop: true,
+    })
+
+    const renameOps = result.operations.filter((op) => op.kind === 'rename-column')
+    expect(renameOps).toHaveLength(1)
+    const op = nonNull(renameOps[0])
+    if (op.kind === 'rename-column') {
+      expect(op.tableName).toBe('user')
+      expect(op.from).toBe('username')
+      expect(op.to).toBe('handle')
+      expect(op.sql).toBe('ALTER TABLE "user" RENAME COLUMN "username" TO "handle"')
+    }
+    // No add-column / drop-column for the renamed pair.
+    expect(result.operations.filter((o) => o.kind === 'add-column')).toEqual([])
+    expect(result.operations.filter((o) => o.kind === 'drop-column')).toEqual([])
+  })
+
+  test('renames apply before drop detection so unknownTables stays clean', () => {
+    const account = defineSchema('account', Archetype.Entity, (t) => t.id())
+    const registry = new SchemaRegistry().registerAll([account])
+    const snap = snapshot({ name: 'user', columns: [col('id', 'character', false, 26)] })
+
+    const result = diffSchemas(registry, snap, {
+      renames: { tables: { user: 'account' } },
+    })
+    expect(result.unknownTables).toEqual([])
+  })
+
+  test('column renames must be keyed by the SCHEMA name (post-table-rename)', () => {
+    // `users` table is renamed to `user`, then its `email_address` column is
+    // renamed to `email`. The column-rename key is `user` (the schema name).
+    const user = defineSchema('user', Archetype.Entity, (t) => {
+      t.id()
+      t.string('email')
+    })
+    const registry = new SchemaRegistry().registerAll([user])
+    const snap = snapshot({
+      name: 'users',
+      columns: [
+        col('id', 'character', false, 26),
+        col('email_address', 'character varying', false, 255),
+      ],
+    })
+
+    const result = diffSchemas(registry, snap, {
+      renames: {
+        tables: { users: 'user' },
+        columns: { user: { email_address: 'email' } },
+      },
+    })
+
+    expect(result.operations.map((o) => o.kind)).toEqual(['rename-table', 'rename-column'])
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// generateMigration — destructive options forward + down() inverses
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('generateMigration — destructive options', () => {
+  test('allowDrop flows through to the diff engine', async () => {
+    const registry = new SchemaRegistry()
+    const db = new FakeExecutor()
+    db.scriptedRows = [
+      {
+        table_name: 'legacy',
+        column_name: 'id',
+        data_type: 'character',
+        character_maximum_length: 26,
+        is_nullable: 'NO',
+        column_default: null,
+      },
+    ]
+    const generated = nonNull(await generateMigration({ registry, db, allowDrop: true }))
+    const ops = generated.diff.operations
+    expect(ops.map((o) => o.kind)).toContain('drop-table')
+  })
+
+  test('down() inverses include rename reverses + no-op for drops', async () => {
+    const user = defineSchema('user', Archetype.Entity, (t) => t.id())
+    const registry = new SchemaRegistry().registerAll([user])
+    const db = new FakeExecutor()
+    // Live DB has `users` (note the s). Rename it.
+    db.scriptedRows = [
+      {
+        table_name: 'users',
+        column_name: 'id',
+        data_type: 'character',
+        character_maximum_length: 26,
+        is_nullable: 'NO',
+        column_default: null,
+      },
+    ]
+    const generated = nonNull(
+      await generateMigration({
+        registry,
+        db,
+        renames: { tables: { users: 'user' } },
+      }),
+    )
+    const runDb = new FakeExecutor()
+    await generated.migration.down(runDb)
+    // The down should reverse-rename — `user` → `users`.
+    expect(runDb.executed.some((q) => q.sql.includes('ALTER TABLE "user" RENAME TO "users"'))).toBe(
+      true,
+    )
   })
 })

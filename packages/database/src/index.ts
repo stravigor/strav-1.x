@@ -44,6 +44,8 @@ export {
   type ColumnInfo,
   type DbSnapshot,
   type DiffOperation,
+  type DiffOptions,
+  type DiffRenames,
   type DiffResult,
   diffSchemas,
   type GeneratedMigration,

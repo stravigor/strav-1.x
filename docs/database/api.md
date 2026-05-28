@@ -577,9 +577,23 @@ Produces an additive migration from registered Schemas vs the live DB.
 ```ts
 function inspectDatabase(db: DatabaseExecutor): Promise<DbSnapshot>
 
-function diffSchemas(registry: SchemaRegistry, snapshot: DbSnapshot): DiffResult
+interface DiffOptions {
+  allowDrop?: boolean           // emit drop-table / drop-column ops (default false)
+  renames?: DiffRenames         // convert add+drop pairs into rename ops
+}
 
-function generateMigration(opts: {
+interface DiffRenames {
+  tables?: Record<oldName, newName>
+  columns?: Record<schemaName, Record<oldColumn, newColumn>>   // schemaName = post-rename
+}
+
+function diffSchemas(
+  registry: SchemaRegistry,
+  snapshot: DbSnapshot,
+  options?: DiffOptions,
+): DiffResult
+
+function generateMigration(opts: DiffOptions & {
   registry: SchemaRegistry
   db: DatabaseExecutor
   name?: string                 // default YYYYMMDDHHMMSS_auto_diff (UTC)
@@ -589,10 +603,14 @@ function generateMigration(opts: {
 type DiffOperation =
   | { kind: 'create-table'; schemaName: string; schema: Schema; sql: string }
   | { kind: 'add-column'; schemaName: string; columnName: string; sql: string }
+  | { kind: 'drop-table'; tableName: string; sql: string }
+  | { kind: 'drop-column'; tableName: string; columnName: string; sql: string }
+  | { kind: 'rename-table'; from: string; to: string; sql: string }
+  | { kind: 'rename-column'; tableName: string; from: string; to: string; sql: string }
 
 interface DiffResult {
   operations: DiffOperation[]
-  unknownTables: string[]       // tables in DB the registry doesn't know about
+  unknownTables: string[]       // tables in DB the registry doesn't know about (always reported)
 }
 
 interface GeneratedMigration {
@@ -603,31 +621,46 @@ interface GeneratedMigration {
 
 ### What gets detected
 
+Additive (always on):
 - **New tables** — schema in registry, no matching table in `information_schema` → `emitCreateTable(schema)` op.
 - **New columns** — column on a schema, not in the existing table → `emitAddColumn(schema, column)` op.
 
+Destructive (opt-in via `allowDrop: true`):
+- **Dropped tables** — table in DB, no schema in registry → `drop-table` op.
+- **Dropped columns** — column in DB on a known table, no field on the schema → `drop-column` op.
+
+Renames (opt-in via `renames: { tables, columns }`):
+- **Renamed tables** — caller declares `{ tables: { oldName: newName } }`. The mapping consumes the would-be drop+create pair and emits a `rename-table` op.
+- **Renamed columns** — caller declares `{ columns: { schemaName: { oldColumn: newColumn } } }` (keyed by the SCHEMA name, i.e., post-table-rename). Consumes the would-be add+drop pair.
+
 ### Ordering
 
-1. All `create-table` ops first, **topologically sorted** by FK references. A table referencing another comes after its target. References to tables already in the DB impose no ordering constraint (the target exists).
-2. All `add-column` ops, after all `create-table` ops. So a new column with `REFERENCES` resolves cleanly.
+1. `rename-table` ops first — table identity is set before anything else references it.
+2. `rename-column` ops — column identity becomes correct.
+3. `create-table` ops, topologically sorted by FK references.
+4. `add-column` ops.
+5. `drop-column` ops (only when `allowDrop`).
+6. `drop-table` ops LAST, reverse-alphabetical (only when `allowDrop`).
 
 ### Cycles
 
 A circular FK between two MISSING tables (each references the other) can't be created in one `CREATE TABLE` order. `diffSchemas` throws — apps break the cycle by making one reference nullable + adding it via a follow-up migration, or land the two tables in separate migrations.
 
-### What gets ignored
+### What still gets ignored
 
-Each lands as its own slice:
-
-- **Dropped tables** — surfaced in `result.unknownTables` (informational); never auto-dropped. Apps that need to drop write the migration by hand or wait for the `--allow-drop` slice.
-- **Dropped columns** — same reasoning.
 - **Type / nullability / default changes** on existing columns — needs ALTER COLUMN semantics with backfill design.
-- **Renames** — undetectable from diff alone; needs explicit `rename: { from, to }` mapping support.
 - **Indexes / constraints** — schemas don't declare them today (apart from inline UNIQUE / NOT NULL / CHECK / REFERENCES).
 
 ### `down()` is best-effort
 
-Generated migration's `down()` reverses the ops: `DROP COLUMN IF EXISTS` for added columns; `DROP TABLE IF EXISTS` for created tables, in reverse op order. This is a safe-for-rollback inverse, not a "restore data" path — apps with rollback-critical migrations should write them by hand.
+Generated migration's `down()` reverses the ops in reverse order:
+
+- `add-column` → `DROP COLUMN IF EXISTS`
+- `create-table` → `DROP TABLE IF EXISTS`
+- `rename-table` / `rename-column` → reverse-rename
+- `drop-table` / `drop-column` → **NO-OP** (the diff discarded the original schema definition; apps that need to undo a drop recreate the entity by hand)
+
+This is a safe-for-rollback inverse, not a "restore data" path. Apps with rollback-critical migrations should write them by hand.
 
 ## Multi-tenancy
 
