@@ -1,0 +1,12 @@
+{
+  "name": "@strav-tests/m2-http-db",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "End-to-end smoke for M2: real Bun.serve() + HttpKernel + DatabaseProvider + TenantManager + a CRUD entity with FormRequest validation and per-request tenant isolation.",
+  "dependencies": {
+    "@strav/kernel": "workspace:*",
+    "@strav/http": "workspace:*",
+    "@strav/database": "workspace:*"
+  }
+}

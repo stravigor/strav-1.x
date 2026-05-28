@@ -66,13 +66,18 @@ That runs `DROP SCHEMA public CASCADE; CREATE SCHEMA public;` against the config
 
 ```
 tests/
-├── e2e/                    # per-milestone end-to-end smoke (real subprocess)
-│   └── m1-boot/
-├── integration/            # Postgres-required suites; self-skip without DB_*
+├── e2e/                    # per-milestone end-to-end smoke
+│   ├── m1-boot/            # ConsoleKernel + ConfigProvider (real subprocess)
+│   └── m2-http-db/         # HttpKernel.serve() + DatabaseProvider + TenantManager
+│                           # + a CRUD entity + FormRequest + two-tenant
+│                           # roundtrip via real fetch(); self-skips without DB_*
+├── integration/            # Postgres-required unit-shaped suites; self-skip
 │   └── postgres_smoke.test.ts
 └── support/                # shared test helpers
     └── postgres_test_db.ts # connection + schema-reset helpers
 ```
+
+The M2 e2e (`tests/e2e/m2-http-db/`) is the milestone-exit integration test. Boots a full Application with `ConfigProvider` → `LoggerProvider` → `DatabaseProvider` → `HttpProvider` → an app-specific provider that registers the `tenant` middleware + routes + binds `TenantManager`. Then `HttpKernel.serve({ port: 0 })` opens an ephemeral port; tests fire real `fetch()` calls against it. Reads `X-Tenant-ID` from each request, wraps the response in `TenantManager.withTenant(...)`, so RLS scopes every read/write per-tenant. The "cross-tenant invisibility" test proves the policy actually enforces — tenant B can't see tenant A's posts even via direct `:id` lookup.
 
 ## Common pitfalls
 
