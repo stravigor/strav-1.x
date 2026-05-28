@@ -84,13 +84,7 @@ export class SessionGuard<U extends Authenticatable = Authenticatable> implement
       user_id: user.getAuthIdentifier(),
       expires_at: expiresAt,
     } as Partial<Session>)
-    ctx.response.cookie(this.cookieName, id, {
-      httpOnly: true,
-      sameSite: 'lax',
-      secure: this.secure,
-      path: '/',
-      expires: expiresAt,
-    })
+    this.setSessionCookie(ctx, id, expiresAt)
   }
 
   async logout(ctx: HttpContext): Promise<void> {
@@ -100,5 +94,83 @@ export class SessionGuard<U extends Authenticatable = Authenticatable> implement
       if (session) await this.sessions.delete(session)
     }
     ctx.response.forgetCookie(this.cookieName, { path: '/' })
+  }
+
+  /**
+   * Rotate the session id — mints a fresh row carrying the same `user_id`
+   * and `payload`, deletes the old row, sets the new cookie. Standard
+   * session-fixation prevention: call right after credential verification
+   * in a login route, so the pre-authenticated session id becomes useless.
+   *
+   * No-op (returns `null`) when the request has no valid session — the
+   * caller probably wanted to call `login` instead.
+   *
+   * The new session inherits the old `payload` (so flash messages /
+   * CSRF tokens survive the rotation) and gets a fresh `expires_at`
+   * `now + ttlSeconds`.
+   */
+  async regenerate(ctx: HttpContext): Promise<Session | null> {
+    const sid = ctx.request.cookies[this.cookieName]
+    if (!sid) return null
+    const existing = await this.sessions.findValid(sid)
+    if (!existing) return null
+
+    const newId = ulid()
+    const expiresAt = new Date(Date.now() + this.ttlMs)
+    const created = await this.sessions.create({
+      id: newId,
+      user_id: existing.user_id,
+      expires_at: expiresAt,
+      payload: existing.payload ?? null,
+    } as Partial<Session>)
+    await this.sessions.delete(existing)
+    this.setSessionCookie(ctx, newId, expiresAt)
+    return created
+  }
+
+  /**
+   * Bump `expires_at` for the current request's session — the sliding-
+   * window pattern. Call from an "active user" middleware (after auth,
+   * before the handler) so active users stay logged in past the static
+   * TTL-from-login. No-op when the request has no valid session.
+   *
+   * The cookie's `expires` attribute is also bumped so the client's
+   * view stays in sync with the server's.
+   */
+  async touch(ctx: HttpContext): Promise<Session | null> {
+    const sid = ctx.request.cookies[this.cookieName]
+    if (!sid) return null
+    const existing = await this.sessions.findValid(sid)
+    if (!existing) return null
+    const expiresAt = new Date(Date.now() + this.ttlMs)
+    const next = await this.sessions.update(existing, {
+      expires_at: expiresAt,
+    } as Partial<Session>)
+    this.setSessionCookie(ctx, existing.id, expiresAt)
+    return next
+  }
+
+  /**
+   * Revoke every session for a user. The current request's cookie is
+   * NOT touched (apps that need to log the current user out should
+   * call `logout(ctx)` separately); this is intended for backend
+   * "kill all sessions" flows triggered from elsewhere (password
+   * change, account compromise, admin override).
+   *
+   * Returns the affected row count.
+   */
+  async killAllForUser(userId: string): Promise<number> {
+    return this.sessions.killAllForUser(userId)
+  }
+
+  /** Centralizes the cookie shape so login / regenerate / touch can't drift. */
+  private setSessionCookie(ctx: HttpContext, id: string, expiresAt: Date): void {
+    ctx.response.cookie(this.cookieName, id, {
+      httpOnly: true,
+      sameSite: 'lax',
+      secure: this.secure,
+      path: '/',
+      expires: expiresAt,
+    })
   }
 }

@@ -2,9 +2,9 @@
 
 Authentication primitives for Strav 1.0 — `Hasher` (argon2id), guards, the per-request `ctx.auth` façade, and `auth` / `guest` middleware.
 
-> **Status: 1.0.0-alpha — M2 in progress (foundation + Session + Token + payload).**
-> Shipping: **Hasher** (Bun.password / argon2id), **Authenticatable** contract, **Guard** + **AuthManager** + **AuthContext** (`ctx.auth`), **MemoryGuard** (dev/test), **SessionGuard** (production cookie-based, DB-backed) + **Session** with `payload jsonb` for flash / CSRF / locale + **SessionRepository.patchPayload**, **TokenGuard** (bearer-token, DB-backed; `<id>|<secret>` plaintext with SHA-256 hash storage + constant-time verification), **AccessToken** Model / Schema / Repository, **auth / guest middleware**, **AuthProvider** (auto-wires the lot + `'session'` / `'token'` driver entries).
-> Deferred (each its own slice): **magic links**, **email verification**, **TOTP**, **sliding-window expiry**, **session-fixation prevention** (rotate session id on login), **auto-flush payload middleware**, **session cleanup command** (`sessions:gc`), **token abilities / scopes** (lands with auth policies), **token `last_used_at` updates** (needs write batching). **JWT** driver opt-in: post-1.0.
+> **Status: 1.0.0-alpha — M2 in progress (foundation + Session + Token + lifecycle helpers).**
+> Shipping: **Hasher** (Bun.password / argon2id), **Authenticatable** contract, **Guard** + **AuthManager** + **AuthContext** (`ctx.auth`), **MemoryGuard** (dev/test), **SessionGuard** (production cookie-based, DB-backed) + lifecycle helpers (`regenerate` for session-fixation prevention, `touch` for sliding-window expiry, `killAllForUser` for bulk revoke) + **Session** with `payload jsonb` for flash / CSRF / locale + **SessionRepository.patchPayload**, **TokenGuard** (bearer-token, DB-backed; `<id>|<secret>` plaintext with SHA-256 hash storage + constant-time verification), **AccessToken** Model / Schema / Repository, **auth / guest middleware**, **AuthProvider** (auto-wires the lot + `'session'` / `'token'` driver entries).
+> Deferred (each its own slice): **magic links**, **email verification**, **TOTP**, **auto-flush payload middleware**, **session cleanup command** (`sessions:gc`), **token abilities / scopes** (lands with auth policies), **token `last_used_at` updates** (needs write batching). **JWT** driver opt-in: post-1.0.
 
 ## Install
 
@@ -66,10 +66,10 @@ export default {
 | `AuthContext` | Per-request façade attached as `ctx.auth`; delegates to the default guard view |
 | `AuthGuardView` | The per-guard view returned by `ctx.auth.guard(name)`; caches user per-request |
 | `MemoryGuard` | In-process guard for tests + dev (cookie → in-memory map) |
-| `SessionGuard` | Production cookie-based guard backed by the `session` table |
+| `SessionGuard` | Production cookie-based guard backed by the `session` table; ships `regenerate` / `touch` / `killAllForUser` lifecycle helpers |
 | `Session` | Session row Model — id, user_id, expires_at, payload (jsonb), timestamps |
 | `sessionSchema` | The `@strav/database` Schema for the `session` table — register + migrate |
-| `SessionRepository` | Repository<Session> with `findValid(id)` / `deleteExpired(now?)` / `patchPayload(session, partial)` |
+| `SessionRepository` | Repository<Session> with `findValid(id)` / `deleteExpired(now?)` / `patchPayload(session, partial)` / `killAllForUser(userId)` |
 | `TokenGuard` | Bearer-token guard backed by the `access_token` table |
 | `AccessToken` | Token row Model — id, user_id, name, hash, expires_at, timestamps |
 | `accessTokenSchema` | The `@strav/database` Schema for the `access_token` table — register + migrate |

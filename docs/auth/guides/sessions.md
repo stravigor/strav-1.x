@@ -111,15 +111,62 @@ class SessionGuard implements Guard {
 | `path` | `'/'` | Visible to the whole app. |
 | `expires` | `now + ttl` | Client-side cleanup matches server-side TTL. |
 
+## Session lifecycle helpers
+
+Three small helpers cover the session-management patterns every production app needs.
+
+### `regenerate(ctx)` — session-fixation prevention
+
+Call right after credential verification in a login route. Mints a fresh session id (so the pre-authenticated cookie value can't be hijacked), copies the existing `user_id` + `payload` across, deletes the old row, sets the new cookie.
+
+```ts
+async login(ctx: HttpContext) {
+  const user = await this.authenticate(ctx.request.input('email'), ctx.request.input('password'))
+  if (!user) return ctx.response.unauthorized()
+  await ctx.auth.guard().login(ctx, user)
+  await ctx.auth.guard().regenerate(ctx)     // ← rotate the id after the credential check
+  return ctx.response.redirect('/dashboard')
+}
+```
+
+Returns the new `Session` or `null` if no valid session was bound (e.g., the user has no cookie yet — call `login(ctx, user)` instead).
+
+### `touch(ctx)` — sliding-window expiry
+
+By default, `expires_at` is set once at `login` and never bumped — a 14-day token starts the clock at login and dies 14 days later regardless of activity. `touch(ctx)` bumps `expires_at` to `now + ttlSeconds` so active users stay signed in. Call from an "active user" middleware after auth:
+
+```ts
+// app/middleware/touch_session.ts
+export const touchSession: HttpMiddleware = async (ctx, next) => {
+  await ctx.auth.guard().touch(ctx)
+  return next()
+}
+```
+
+Returns the updated `Session` or `null` if there's no valid session bound. The cookie's `expires` attribute is bumped too so the client's view matches.
+
+### `killAllForUser(userId)` — bulk revoke
+
+For password-change flows and "log out everywhere" buttons. Wipes every session row for the user. The current request's cookie is NOT touched — apps that need to log the current user out call `logout(ctx)` separately.
+
+```ts
+async changePassword(ctx: HttpContext) {
+  const user = await ctx.auth.userOrFail()
+  await this.users.updatePassword(user.id, ctx.request.input('new_password'))
+  await ctx.auth.guard().killAllForUser(user.id)   // invalidate every other session
+  await ctx.auth.guard().logout(ctx)                // and the current one
+  return ctx.response.redirect('/login?reason=password-changed')
+}
+```
+
+Returns the affected row count.
+
 ## What's NOT here
 
 Each lands as its own slice on top of this foundation:
 
-- **Sliding-window expiry.** `expires_at` is set at login and never bumped. Apps that want active users to stay signed in past `ttl` minutes-since-login (typical web auth) will get a `touch()` enrichment that runs after authenticate.
-- **Session-fixation prevention.** Standard practice is to rotate the session id on login (after credential verification). A `regenerate()` helper lands separately — call it from your login route once it ships.
 - **Auto-flush middleware** that calls `patchPayload` automatically when handlers mutate the session payload. Today, payload writes are explicit (apps call `sessions.patchPayload(s, { … })`).
 - **`sessions:gc` console command.** `SessionRepository.deleteExpired(now)` is already implemented; the CLI command that calls it on a cron lands with `@strav/cli`.
-- **`SessionGuard.killAllForUser(id)`.** Useful for "log me out everywhere." Trivial to implement, lands when the use case shows up.
 
 ## Payload column — flash messages, CSRF tokens, locale
 

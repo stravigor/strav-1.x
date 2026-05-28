@@ -146,12 +146,22 @@ class SessionGuard<U extends Authenticatable> implements Guard<U> {
     sessions: SessionRepository
     userResolver: (id: string) => Authenticatable | null | Promise<…>
   })
+
+  authenticate(ctx): Promise<U | null>
+  login(ctx, user, opts?): Promise<void>
+  logout(ctx): Promise<void>
+  regenerate(ctx): Promise<Session | null>     // session-id rotation
+  touch(ctx): Promise<Session | null>           // sliding-window expiry
+  killAllForUser(userId): Promise<number>       // bulk revoke
 }
 ```
 
 - **`authenticate(ctx)`** — reads the cookie, calls `sessions.findValid(id)` (one round-trip), then `userResolver(session.user_id)`. Returns `null` for missing cookie / stale row / expired / deleted user.
 - **`login(ctx, user)`** — mints a ULID, inserts the row, sets the cookie. Cookie `expires` matches the row's `expires_at`.
 - **`logout(ctx)`** — deletes the row (if any), clears the cookie.
+- **`regenerate(ctx)`** — rotate the session id (session-fixation prevention). Mints a fresh row carrying the same `user_id` + `payload`, deletes the old, sets the new cookie. Returns the new `Session` or `null` if no valid session was bound. Call right after credential verification in a login route.
+- **`touch(ctx)`** — bump `expires_at` to `now + ttlSeconds` for the current request's session (sliding-window expiry). Returns the updated `Session` or `null` if no valid session. Call from an "active user" middleware after the user has been authenticated.
+- **`killAllForUser(userId)`** — bulk-revoke every session for a user. Used by "log out everywhere" + password-change flows. Returns the affected row count. Does NOT touch the current request's cookie — call `logout(ctx)` separately for that.
 
 Cookie defaults: `httpOnly: true`, `sameSite: 'lax'`, `secure: true`, `path: '/'`.
 
@@ -186,6 +196,7 @@ class SessionRepository extends Repository<Session> {
   findValid(id: string, now?: Date): Promise<Session | null>
   deleteExpired(now?: Date): Promise<number>
   patchPayload(session: Session, partial: Record<string, unknown>): Promise<Session>
+  killAllForUser(userId: string): Promise<number>
   // …plus all Repository methods: find / findOrFail / findMany / create / update / delete / query / etc.
 }
 ```

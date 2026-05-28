@@ -71,12 +71,16 @@ function makeCtx(cookies: Record<string, string> = {}): FakeCtx {
 }
 
 /** Stub SessionRepository — records calls, returns scripted results. */
-function stubSessionRepo(scripted: { findValid?: Session | null; find?: Session | null } = {}) {
+function stubSessionRepo(
+  scripted: { findValid?: Session | null; find?: Session | null; killAllAffected?: number } = {},
+) {
   const calls = {
     findValid: [] as string[],
     create: [] as Partial<Session>[],
     find: [] as string[],
     delete: [] as string[],
+    update: [] as Array<{ id: string; changes: Partial<Session> }>,
+    killAllForUser: [] as string[],
   }
   const stub = {
     async findValid(id: string) {
@@ -93,6 +97,14 @@ function stubSessionRepo(scripted: { findValid?: Session | null; find?: Session 
     },
     async delete(session: Session) {
       calls.delete.push(session.id)
+    },
+    async update(session: Session, changes: Partial<Session>) {
+      calls.update.push({ id: session.id, changes })
+      return { ...session, ...changes } as Session
+    },
+    async killAllForUser(userId: string) {
+      calls.killAllForUser.push(userId)
+      return scripted.killAllAffected ?? 0
     },
   }
   return { stub: stub as unknown as SessionRepository, calls }
@@ -231,6 +243,104 @@ describe('SessionGuard.logout', () => {
 })
 
 // ─────────────────────────────────────────────────────────────────────────────
+// SessionGuard.regenerate — session-id rotation
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('SessionGuard.regenerate', () => {
+  test('returns null when no cookie is present', async () => {
+    const { stub } = stubSessionRepo()
+    const guard = new SessionGuard({ sessions: stub, userResolver: () => null })
+    expect(await guard.regenerate(makeCtx() as never)).toBeNull()
+  })
+
+  test('returns null when the cookie maps to no valid session', async () => {
+    const { stub, calls } = stubSessionRepo({ findValid: null })
+    const guard = new SessionGuard({ sessions: stub, userResolver: () => null })
+    const result = await guard.regenerate(makeCtx({ strav_session: 'stale' }) as never)
+    expect(result).toBeNull()
+    expect(calls.findValid).toEqual(['stale'])
+    expect(calls.create).toEqual([])
+  })
+
+  test('mints a new session preserving user_id + payload, deletes the old, sets new cookie', async () => {
+    const old = makeSession('old-sid', 'user-1', new Date(Date.now() + 60_000))
+    old.payload = { csrf_token: 'abc', 'flash.success': 'Welcome back!' }
+    const { stub, calls } = stubSessionRepo({ findValid: old })
+    const guard = new SessionGuard({ sessions: stub, userResolver: () => null })
+    const ctx = makeCtx({ strav_session: 'old-sid' })
+
+    const next = await guard.regenerate(ctx as never)
+    expect(next).not.toBeNull()
+    const newSession = nonNull(calls.create[0])
+    expect(newSession.id).not.toBe('old-sid')
+    expect((newSession.id as string).length).toBe(26)
+    expect(newSession.user_id).toBe('user-1')
+    expect(newSession.payload).toEqual({ csrf_token: 'abc', 'flash.success': 'Welcome back!' })
+    expect(calls.delete).toEqual(['old-sid'])
+
+    const cookie = nonNull(ctx.response.setCookies.get('strav_session'))
+    expect(cookie.value).toBe(newSession.id as string)
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SessionGuard.touch — sliding-window expiry
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('SessionGuard.touch', () => {
+  test('returns null when no cookie is present', async () => {
+    const { stub } = stubSessionRepo()
+    const guard = new SessionGuard({ sessions: stub, userResolver: () => null })
+    expect(await guard.touch(makeCtx() as never)).toBeNull()
+  })
+
+  test('returns null + does nothing when the session is stale', async () => {
+    const { stub, calls } = stubSessionRepo({ findValid: null })
+    const guard = new SessionGuard({ sessions: stub, userResolver: () => null })
+    const result = await guard.touch(makeCtx({ strav_session: 'stale' }) as never)
+    expect(result).toBeNull()
+    expect(calls.update).toEqual([])
+  })
+
+  test('updates expires_at + re-sets the cookie with the bumped expiry', async () => {
+    const existing = makeSession('sid', 'user-1', new Date(Date.now() + 30_000))
+    const { stub, calls } = stubSessionRepo({ findValid: existing })
+    const guard = new SessionGuard({
+      sessions: stub,
+      userResolver: () => null,
+      ttlSeconds: 60,
+    })
+    const ctx = makeCtx({ strav_session: 'sid' })
+    const before = Date.now()
+    await guard.touch(ctx as never)
+    expect(calls.update).toHaveLength(1)
+    const update = nonNull(calls.update[0])
+    expect(update.id).toBe('sid')
+    const bumped = (update.changes.expires_at as Date).getTime()
+    expect(bumped).toBeGreaterThanOrEqual(before + 60_000 - 50)
+    expect(bumped).toBeLessThanOrEqual(before + 60_000 + 50)
+
+    const cookie = nonNull(ctx.response.setCookies.get('strav_session'))
+    expect(cookie.value).toBe('sid')
+    expect((cookie.opts.expires as Date).getTime()).toBe(bumped)
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SessionGuard.killAllForUser — bulk revoke
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('SessionGuard.killAllForUser', () => {
+  test('delegates to the repository + returns the affected count', async () => {
+    const { stub, calls } = stubSessionRepo({ killAllAffected: 3 })
+    const guard = new SessionGuard({ sessions: stub, userResolver: () => null })
+    const removed = await guard.killAllForUser('user-victim')
+    expect(removed).toBe(3)
+    expect(calls.killAllForUser).toEqual(['user-victim'])
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Session.isValid (Model helper)
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -301,6 +411,21 @@ describe('SessionRepository.deleteExpired', () => {
     const exec = nonNull(db.queries.find((q) => q.sql.startsWith('DELETE')))
     expect(exec.sql).toBe('DELETE FROM "session" WHERE "expires_at" <= $1')
     expect(exec.params).toEqual([cutoff])
+  })
+})
+
+describe('SessionRepository.killAllForUser', () => {
+  test('emits DELETE WHERE user_id = $1, returns affected count', async () => {
+    const db = new SpyDb()
+    db.scriptedExecute = 5
+    const repo = new SessionRepository(db as unknown as PostgresDatabase, new EventBus())
+    const removed = await repo.killAllForUser('user-1')
+    expect(removed).toBe(5)
+    const exec = nonNull(
+      db.queries.find((q) => q.sql.startsWith('DELETE') && q.sql.includes('user_id')),
+    )
+    expect(exec.sql).toBe('DELETE FROM "session" WHERE "user_id" = $1')
+    expect(exec.params).toEqual(['user-1'])
   })
 })
 

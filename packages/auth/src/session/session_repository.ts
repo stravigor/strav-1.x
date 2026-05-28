@@ -54,4 +54,18 @@ export class SessionRepository extends Repository<Session> {
     const next = { ...(session.payload ?? {}), ...partial }
     return this.update(session, { payload: next } as Partial<Session>)
   }
+
+  /**
+   * Bulk-delete every session for a user. Used by "log out everywhere"
+   * flows and after password changes. Returns the affected row count.
+   *
+   * Lifecycle events do NOT fire for this bulk operation — it'd be N
+   * events for N sessions, with no caller-meaningful payload (the
+   * lifecycle event types want a Model, not a count). Apps that need
+   * per-session events should iterate explicitly.
+   */
+  async killAllForUser(userId: string): Promise<number> {
+    const sql = `DELETE FROM ${quoteIdent(sessionSchema.name)} WHERE ${quoteIdent('user_id')} = $1`
+    return this.db.execute(sql, [userId])
+  }
 }
