@@ -2,7 +2,13 @@
 
 `generateMigration({ registry, db })` walks every Schema you've registered and compares it against `information_schema`. If anything is missing (a whole table, or columns on an existing table), it returns a ready-to-register `Migration`. If nothing is missing, it returns `null`.
 
-By default the generator is **additive only** — new tables and new columns are detected and emitted; drops and renames are opt-in via `{ allowDrop: true }` and `{ renames: … }`. Type changes are still deferred (they need `USING` clauses or backfill semantics).
+By default the generator is **additive only** — new tables and new columns are detected and emitted. Three opt-in toggles unlock more:
+
+- `{ allowDrop: true }` — drop tables / columns present in the DB but not the registry.
+- `{ allowAlter: true }` — emit `ALTER COLUMN` ops for type / nullability drift on existing columns.
+- `{ renames: … }` — convert drop+add pairs into rename ops apps declare explicitly.
+
+Default-value drift is **not** detected — Postgres reports defaults as serialized SQL fragments (`'foo'::text`, `nextval(...)`) that don't round-trip cleanly against literal schema defaults. Apps that change a default write the migration by hand.
 
 ## Quick example
 
@@ -42,6 +48,8 @@ SELECT
   c.column_name,
   c.data_type,
   c.character_maximum_length,
+  c.numeric_precision,
+  c.numeric_scale,
   c.is_nullable,
   c.column_default
 FROM information_schema.tables t
@@ -131,9 +139,45 @@ The diff produces `rename-table` / `rename-column` ops instead of drop+add pairs
 
 `renames` and `allowDrop` compose — declare the renames you mean, then turn on `allowDrop` to also clean up the unrelated leftovers.
 
+## Type + nullability drift (opt-in)
+
+`{ allowAlter: true }` makes the diff compare every existing column's type + nullability against the schema field and emit an `alter-column` op when they disagree:
+
+```ts
+const generated = await generateMigration({
+  registry,
+  db,
+  allowAlter: true,
+})
+```
+
+What's compared:
+- **Canonical SQL type**, e.g. `varchar(255)` vs `varchar(500)`, `numeric(10, 2)` vs `numeric(12, 4)`, `timestamptz` vs `timestamp`. `bigserial` collapses to `bigint` on both sides, so a `bigSerial` field doesn't churn against the post-create `bigint` Postgres reports.
+- **Nullability** — `NULL` ↔ `NOT NULL`.
+
+What's emitted (combined into one multi-statement SQL string per drifted column):
+
+```sql
+ALTER TABLE "user" ALTER COLUMN "email" TYPE varchar(500) USING "email"::varchar(500);
+ALTER TABLE "user" ALTER COLUMN "email" DROP NOT NULL
+```
+
+The `USING "col"::newtype` clause lets Postgres apply any cast it knows about. Incompatible casts (e.g., `text` containing non-numeric values → `integer`) surface as a Postgres error at migration run time, not at diff time — so apps with delicate data should preview the diff and write a backfill-aware migration by hand.
+
+The `alter-column` operation carries the captured `from` state, so `Migration.down()` reverses precisely:
+
+```sql
+-- forward
+ALTER TABLE "user" ALTER COLUMN "email" TYPE varchar(500) USING "email"::varchar(500)
+-- down (auto-generated)
+ALTER TABLE "user" ALTER COLUMN "email" TYPE varchar(255) USING "email"::varchar(255)
+```
+
+Beware: a forward alter that widened then truncated data (e.g., `varchar(500) → varchar(100)` against rows containing 200-character values) can't cleanly reverse — the data is already gone. Apps with rollback-critical alters should write the migration by hand.
+
 ## What's still not detected
 
-- **Type / nullability / default changes** on existing columns. ALTER COLUMN semantics need a `USING` clause or backfill strategy that the diff can't infer. Apps write these migrations explicitly.
+- **Default values** on existing columns. The DB reports defaults as serialized SQL fragments that don't round-trip against literal schema defaults. Apps write default changes by hand.
 - **Indexes** — schemas don't declare them today. Indexes added via `emitCreateIndex` aren't introspected back into the schema.
 - **Standalone FK / CHECK / UNIQUE constraints** beyond what columns capture inline.
 
@@ -144,6 +188,7 @@ The generated `Migration` has a `down()` that reverses the ops:
 - `add-column` → `ALTER TABLE … DROP COLUMN IF EXISTS …`
 - `create-table` → `DROP TABLE IF EXISTS …`
 - `rename-table` / `rename-column` → reverse-rename
+- `alter-column` → reverse to the captured `from` state (best-effort; see the type drift section above)
 - `drop-table` / `drop-column` → **no-op** (the diff discarded the original schema definition; apps recreate the entity by hand if they need to undo a drop)
 
 Reverse order. Apps with rollback-critical migrations should write them by hand.
@@ -154,11 +199,13 @@ Reverse order. Apps with rollback-critical migrations should write them by hand.
 |---|---|---|
 | New table from a schema | ✓ | extra effort |
 | New column on a schema | ✓ | extra effort |
+| Type + nullability drift on existing columns | ✓ (`allowAlter`) | ✓ |
+| Renames | ✓ (`renames`) | ✓ |
+| Drops | ✓ (`allowDrop`) | ✓ |
 | Custom indexes / partial indexes | — | ✓ |
 | Data backfill | — | ✓ |
-| Type changes with `USING` clauses | — | ✓ |
-| Renames | — | ✓ |
-| Drops | — | ✓ |
+| Type changes with non-default `USING` clauses | — | ✓ |
+| Default-value changes on existing columns | — | ✓ |
 | Tenancy / RLS plumbing | — (lands with tenancy slice) | ✓ |
 
 The pattern that works: run the generator for the additive 80%, hand-write the 20% that needs careful semantics. Both kinds of migration go through the same `MigrationRunner.register(...)`.

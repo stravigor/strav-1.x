@@ -14,9 +14,11 @@
  *   - **Foreign keys / CHECK constraints.** Already inlined in columns
  *     via REFERENCES + CHECK; standalone constraint diffing is its own
  *     concern.
- *   - **Type / nullability / default differences on existing columns.**
- *     V1 only detects MISSING things; alterations need destructive-or-
- *     backfill migration semantics that warrant explicit design.
+ *   - **Default value differences on existing columns.** The DB reports
+ *     defaults as serialized SQL fragments (`'foo'::text`, `nextval(...)`)
+ *     that don't round-trip cleanly against the schema's literal default.
+ *     Type + nullability changes ARE detected (see `allowAlter`); default
+ *     drift is left to its own slice.
  */
 
 import type { DatabaseExecutor } from '../database.ts'
@@ -29,6 +31,10 @@ export interface ColumnInfo {
   dataType: string
   /** From `character_maximum_length` — only set for varchar / char. */
   maxLength: number | null
+  /** From `numeric_precision` — only set for numeric/decimal columns. */
+  numericPrecision: number | null
+  /** From `numeric_scale` — only set for numeric/decimal columns. */
+  numericScale: number | null
   nullable: boolean
   default: string | null
 }
@@ -49,6 +55,8 @@ interface JoinedRow {
   column_name: string | null
   data_type: string | null
   character_maximum_length: number | null
+  numeric_precision: number | null
+  numeric_scale: number | null
   is_nullable: string | null
   column_default: string | null
 }
@@ -66,6 +74,8 @@ export async function inspectDatabase(db: DatabaseExecutor): Promise<DbSnapshot>
        c.column_name,
        c.data_type,
        c.character_maximum_length,
+       c.numeric_precision,
+       c.numeric_scale,
        c.is_nullable,
        c.column_default
      FROM information_schema.tables t
@@ -89,7 +99,9 @@ export async function inspectDatabase(db: DatabaseExecutor): Promise<DbSnapshot>
     table.columns.push({
       name: row.column_name,
       dataType: row.data_type ?? '',
-      maxLength: row.character_maximum_length,
+      maxLength: row.character_maximum_length ?? null,
+      numericPrecision: row.numeric_precision ?? null,
+      numericScale: row.numeric_scale ?? null,
       nullable: row.is_nullable === 'YES',
       default: row.column_default,
     })

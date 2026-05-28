@@ -1,11 +1,13 @@
 // Schema-diff subsystem — read live DB + registered Schemas → migration ops.
 
 export {
+  type AlterColumnState,
   type DiffOperation,
   type DiffOptions,
   type DiffRenames,
   type DiffResult,
   diffSchemas,
+  emitAlterColumnSql,
 } from './diff.ts'
 export {
   type GeneratedMigration,

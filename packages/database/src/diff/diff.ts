@@ -9,10 +9,14 @@
  *   - `renames: { tables, columns }` converts what would otherwise look
  *     like a drop+add into a rename op. Apps declare which renames
  *     happened — diff alone can't tell.
- *
- * Type / nullability / default changes on EXISTING columns still aren't
- * detected — `ALTER COLUMN TYPE` needs `USING` clauses or backfill
- * strategies that warrant their own design surface.
+ *   - `allowAlter: true` enables `alter-column` emission for type and
+ *     nullability drift on existing columns. The forward SQL uses
+ *     `USING "col"::newtype`, which works for any cast Postgres knows
+ *     about — incompatible casts surface a Postgres error at execution
+ *     time rather than at diff time. Default value changes are NOT
+ *     detected; defaults round-trip through `information_schema` as
+ *     serialized fragments (`'foo'::text`, `nextval(...)`) that can't
+ *     be cleanly compared against literal schema defaults.
  *
  * Operation ordering:
  *   1. `rename-table` ops first — must precede any reference resolution.
@@ -20,8 +24,11 @@
  *      becomes correct before any further work.
  *   3. `create-table` ops, topologically sorted by FK refs.
  *   4. `add-column` ops, after create-table.
- *   5. `drop-column` ops, after additions (no ordering dep between drops).
- *   6. `drop-table` ops LAST, in reverse-topological order — drop the
+ *   5. `alter-column` ops, after add-column (a newly-added column can't
+ *      be altered the same pass; alters only target columns that already
+ *      existed pre-migration).
+ *   6. `drop-column` ops, after alterations.
+ *   7. `drop-table` ops LAST, in reverse-topological order — drop the
  *      dependents before their targets so FK constraints don't block.
  *
  * Cycle detection: if two registered schemas reference each other AND
@@ -30,11 +37,17 @@
  * nullable, or land both tables in separate migrations.
  */
 
-import { emitAddColumn, emitCreateTable, emitDropTable } from '../ddl/index.ts'
+import {
+  canonicalDbSqlType,
+  canonicalSchemaSqlType,
+  emitAddColumn,
+  emitCreateTable,
+  emitDropTable,
+} from '../ddl/index.ts'
 import { quoteIdent } from '../orm/sql_emitter.ts'
-import type { Schema } from '../schema/types.ts'
+import type { Schema, SchemaField } from '../schema/types.ts'
 import type { SchemaRegistry } from '../schema_registry.ts'
-import type { DbSnapshot } from './inspect.ts'
+import type { ColumnInfo, DbSnapshot } from './inspect.ts'
 
 export type DiffOperation =
   | {
@@ -73,6 +86,23 @@ export type DiffOperation =
       to: string
       sql: string
     }
+  | {
+      kind: 'alter-column'
+      tableName: string
+      columnName: string
+      /** What's currently in the live DB. Captured so down() can revert. */
+      from: AlterColumnState
+      /** What the registered schema wants. */
+      to: AlterColumnState
+      sql: string
+    }
+
+/** Snapshot of the diffable column attributes captured by an `alter-column` op. */
+export interface AlterColumnState {
+  /** Canonical SQL type, e.g. `varchar(255)`, `numeric(10, 2)`, `timestamptz`. */
+  type: string
+  nullable: boolean
+}
 
 export interface DiffResult {
   operations: DiffOperation[]
@@ -106,6 +136,14 @@ export interface DiffOptions {
    * visibility.
    */
   allowDrop?: boolean
+  /**
+   * Emit `alter-column` ops for type / nullability drift on existing
+   * columns. Default `false` — ALTERs can rewrite the whole table and
+   * may need backfill thought, so they're opt-in. Forward SQL uses
+   * `USING "col"::newtype`; incompatible casts surface at execution time
+   * with the standard Postgres error.
+   */
+  allowAlter?: boolean
   /**
    * Explicit rename mappings, applied before drop detection. See
    * `DiffRenames`.
@@ -153,18 +191,29 @@ export function diffSchemas(
   const finalSnapshot = applyColumnRenames(renamedSnapshot, renames.columns)
 
   // ─── Pass 1: which schemas need creating, which need column additions ───────
+  //              also collect alter candidates (existing column, drifted type/null).
   const toCreate: Schema[] = []
   const columnAdditions: Array<{ schema: Schema; column: string }> = []
+  const columnAlters: Array<{
+    schema: Schema
+    field: SchemaField
+    liveColumn: ColumnInfo
+  }> = []
   for (const schema of registered) {
     const live = finalSnapshot.tables.get(schema.name)
     if (!live) {
       toCreate.push(schema)
       continue
     }
-    const liveColumns = new Set(live.columns.map((c) => c.name))
+    const liveColumnsByName = new Map(live.columns.map((c) => [c.name, c] as const))
     for (const field of schema.fields) {
-      if (!liveColumns.has(field.name)) {
+      const liveCol = liveColumnsByName.get(field.name)
+      if (!liveCol) {
         columnAdditions.push({ schema, column: field.name })
+        continue
+      }
+      if (hasColumnDrift(field, liveCol, registry)) {
+        columnAlters.push({ schema, field, liveColumn: liveCol })
       }
     }
   }
@@ -190,7 +239,15 @@ export function diffSchemas(
     })
   }
 
-  // ─── Pass 4 + 5: drops (gated by allowDrop) + unknownTables reporting ──────
+  // ─── Pass 4: AlterColumn ops (gated by allowAlter) ──────────────────────────
+  if (options.allowAlter) {
+    for (const { schema, field, liveColumn } of columnAlters) {
+      const op = buildAlterColumnOp(schema.name, field, liveColumn, registry)
+      if (op) operations.push(op)
+    }
+  }
+
+  // ─── Pass 5 + 6: drops (gated by allowDrop) + unknownTables reporting ──────
   const knownNames = new Set(registered.map((s) => s.name))
   const unknownTables: string[] = []
 
@@ -306,6 +363,99 @@ function applyTableRenames(snapshot: DbSnapshot, renames: ReadonlyMap<string, st
     next.set(to, { ...table, name: to })
   }
   return { tables: next }
+}
+
+/**
+ * True when an existing column's canonical type OR nullability has drifted
+ * from the schema field. Identity-kind fields (id / uuid / bigSerial /
+ * tenantedBigSerial) compare like any other — the canonicalizer collapses
+ * `bigserial` → `bigint` so the synthetic sequence default doesn't trip a
+ * false-positive against the underlying `bigint` info_schema reports.
+ */
+function hasColumnDrift(
+  field: SchemaField,
+  liveCol: ColumnInfo,
+  registry: SchemaRegistry,
+): boolean {
+  const schemaType = canonicalSchemaSqlType(field, registry)
+  const dbType = canonicalDbSqlType(liveCol)
+  if (schemaType !== dbType) return true
+  if (field.nullable !== liveCol.nullable) return true
+  return false
+}
+
+/**
+ * Build the alter-column op for one drifted field. Combines TYPE + SET/DROP
+ * NOT NULL into a single multi-statement SQL string joined by `;\n` — the
+ * runner forwards the whole string to `db.execute()`, which handles
+ * multi-statement SQL without further splitting.
+ */
+function buildAlterColumnOp(
+  tableName: string,
+  field: SchemaField,
+  liveCol: ColumnInfo,
+  registry: SchemaRegistry,
+): DiffOperation | null {
+  const from: AlterColumnState = {
+    type: canonicalDbSqlType(liveCol),
+    nullable: liveCol.nullable,
+  }
+  const to: AlterColumnState = {
+    type: canonicalSchemaSqlType(field, registry),
+    nullable: field.nullable,
+  }
+  const statements = alterColumnStatements(tableName, field.name, from, to)
+  if (statements.length === 0) return null
+  return {
+    kind: 'alter-column',
+    tableName,
+    columnName: field.name,
+    from,
+    to,
+    sql: statements.join(';\n'),
+  }
+}
+
+/**
+ * Forward statements that transform `from` into `to`. Empty when the two
+ * are identical. Order: TYPE change first (so the column is in the right
+ * shape before nullability constraints are applied).
+ */
+function alterColumnStatements(
+  tableName: string,
+  columnName: string,
+  from: AlterColumnState,
+  to: AlterColumnState,
+): string[] {
+  const stmts: string[] = []
+  const table = quoteIdent(tableName)
+  const column = quoteIdent(columnName)
+  if (from.type !== to.type) {
+    stmts.push(
+      `ALTER TABLE ${table} ALTER COLUMN ${column} TYPE ${to.type} USING ${column}::${to.type}`,
+    )
+  }
+  if (from.nullable !== to.nullable) {
+    stmts.push(
+      to.nullable
+        ? `ALTER TABLE ${table} ALTER COLUMN ${column} DROP NOT NULL`
+        : `ALTER TABLE ${table} ALTER COLUMN ${column} SET NOT NULL`,
+    )
+  }
+  return stmts
+}
+
+/**
+ * Public counterpart of `alterColumnStatements` — exposed so the migration
+ * down() can compute the reverse SQL without re-introspecting the DB.
+ */
+export function emitAlterColumnSql(
+  tableName: string,
+  columnName: string,
+  from: AlterColumnState,
+  to: AlterColumnState,
+): string {
+  return alterColumnStatements(tableName, columnName, from, to).join(';\n')
 }
 
 /** Apply column renames to a snapshot — returns a new snapshot. */

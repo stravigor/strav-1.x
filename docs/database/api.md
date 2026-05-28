@@ -1,6 +1,6 @@
 # @strav/database — API Reference
 
-> **Status:** Reflects what's implemented as of M2 — Database wrapper, DatabaseProvider, Schema DSL (including `t.softDeletes()` / `t.hasMany()` / `t.belongsTo()` / `t.encrypted()`), SchemaRegistry, MigrationRunner, Model with `@hidden` / `@cast` / `@ulid` / `@encrypt` decorators, Repository<T> (lifecycle events + `{ tx? }` opt-in / ALS auto-routing + soft-delete + restore/forceDelete), QueryBuilder (`.with(...)` eager loading + soft-delete scopes + `.paginate({ page, perPage })`), SQL emitter, DDL emitters (including indexes + renames), schema-diff generator (additive + destructive with `allowDrop` + `renames`), multi-tenancy (DDL + TenantManager.withTenant / withoutTenant / withTenantLock / withLock built on UoW), `UnitOfWork.run(fn)` with queue-until-commit lifecycle events, boot-time `validateTenantRegistry` + `emitTenantIdFunction`, Cipher + EncryptionProvider. Explicit `.join()` / migration builder DSL / `generateMigration` type-change detection all land in follow-up cuts.
+> **Status:** Reflects what's implemented as of M2 — Database wrapper, DatabaseProvider, Schema DSL (including `t.softDeletes()` / `t.hasMany()` / `t.belongsTo()` / `t.encrypted()`), SchemaRegistry, MigrationRunner, Model with `@hidden` / `@cast` / `@ulid` / `@encrypt` decorators, Repository<T> (lifecycle events + `{ tx? }` opt-in / ALS auto-routing + soft-delete + restore/forceDelete), QueryBuilder (`.with(...)` eager loading + soft-delete scopes + `.paginate({ page, perPage })`), SQL emitter, DDL emitters (including indexes + renames), schema-diff generator (additive + destructive with `allowDrop` + `renames` + `allowAlter` type/nullability drift), multi-tenancy (DDL + TenantManager.withTenant / withoutTenant / withTenantLock / withLock built on UoW), `UnitOfWork.run(fn)` with queue-until-commit lifecycle events, boot-time `validateTenantRegistry` + `emitTenantIdFunction`, Cipher + EncryptionProvider. Explicit `.join()` / migration builder DSL / default-value drift detection all land in follow-up cuts.
 
 ## `Database` / `PostgresDatabase`
 
@@ -685,6 +685,7 @@ function inspectDatabase(db: DatabaseExecutor): Promise<DbSnapshot>
 
 interface DiffOptions {
   allowDrop?: boolean           // emit drop-table / drop-column ops (default false)
+  allowAlter?: boolean          // emit alter-column ops for type / nullability drift (default false)
   renames?: DiffRenames         // convert add+drop pairs into rename ops
 }
 
@@ -713,6 +714,19 @@ type DiffOperation =
   | { kind: 'drop-column'; tableName: string; columnName: string; sql: string }
   | { kind: 'rename-table'; from: string; to: string; sql: string }
   | { kind: 'rename-column'; tableName: string; from: string; to: string; sql: string }
+  | {
+      kind: 'alter-column'
+      tableName: string
+      columnName: string
+      from: AlterColumnState  // captured live-DB state — feeds down()
+      to: AlterColumnState    // what the schema field asks for
+      sql: string             // forward SQL; may be multi-statement (`;\n`-joined)
+    }
+
+interface AlterColumnState {
+  type: string                // canonical SQL type, e.g. 'varchar(255)', 'numeric(10, 2)', 'timestamptz'
+  nullable: boolean
+}
 
 interface DiffResult {
   operations: DiffOperation[]
@@ -739,14 +753,20 @@ Renames (opt-in via `renames: { tables, columns }`):
 - **Renamed tables** — caller declares `{ tables: { oldName: newName } }`. The mapping consumes the would-be drop+create pair and emits a `rename-table` op.
 - **Renamed columns** — caller declares `{ columns: { schemaName: { oldColumn: newColumn } } }` (keyed by the SCHEMA name, i.e., post-table-rename). Consumes the would-be add+drop pair.
 
+Alters (opt-in via `allowAlter: true`):
+- **Type drift** on existing columns — canonical SQL types differ between schema and DB (e.g., `varchar(255)` → `varchar(500)`, `numeric(10, 2)` → `numeric(12, 4)`, `timestamptz` → `timestamp`). `bigserial` collapses to `bigint` on the schema side so it matches the post-create info_schema view.
+- **Nullability drift** — `NOT NULL` ↔ `NULL` on existing columns.
+- Multi-aspect drift on the same column emits ONE `alter-column` op with a multi-statement `sql` string (TYPE change first, then `SET/DROP NOT NULL`). `db.execute()` handles multi-statement SQL without splitting.
+
 ### Ordering
 
 1. `rename-table` ops first — table identity is set before anything else references it.
 2. `rename-column` ops — column identity becomes correct.
 3. `create-table` ops, topologically sorted by FK references.
 4. `add-column` ops.
-5. `drop-column` ops (only when `allowDrop`).
-6. `drop-table` ops LAST, reverse-alphabetical (only when `allowDrop`).
+5. `alter-column` ops (only when `allowAlter`).
+6. `drop-column` ops (only when `allowDrop`).
+7. `drop-table` ops LAST, reverse-alphabetical (only when `allowDrop`).
 
 ### Cycles
 
@@ -754,7 +774,7 @@ A circular FK between two MISSING tables (each references the other) can't be cr
 
 ### What still gets ignored
 
-- **Type / nullability / default changes** on existing columns — needs ALTER COLUMN semantics with backfill design.
+- **Default-value changes** on existing columns — Postgres reports defaults as serialized SQL fragments that don't cleanly round-trip against literal schema defaults.
 - **Indexes / constraints** — schemas don't declare them today (apart from inline UNIQUE / NOT NULL / CHECK / REFERENCES).
 
 ### `down()` is best-effort

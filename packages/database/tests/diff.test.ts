@@ -30,8 +30,17 @@ function col(
   dataType = 'text',
   nullable = false,
   maxLength: number | null = null,
+  extras: { numericPrecision?: number | null; numericScale?: number | null } = {},
 ): ColumnInfo {
-  return { name, dataType, maxLength, nullable, default: null }
+  return {
+    name,
+    dataType,
+    maxLength,
+    numericPrecision: extras.numericPrecision ?? null,
+    numericScale: extras.numericScale ?? null,
+    nullable,
+    default: null,
+  }
 }
 
 /**
@@ -610,6 +619,270 @@ describe('generateMigration — destructive options', () => {
     // The down should reverse-rename — `user` → `users`.
     expect(runDb.executed.some((q) => q.sql.includes('ALTER TABLE "user" RENAME TO "users"'))).toBe(
       true,
+    )
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// diffSchemas — type + nullability drift (gated by allowAlter)
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('diffSchemas — alters (gated by allowAlter)', () => {
+  test('varchar widening: DB has varchar(255), schema asks for varchar(500)', () => {
+    const user = defineSchema('user', Archetype.Entity, (t) => {
+      t.id()
+      t.string('email').max(500)
+    })
+    const registry = new SchemaRegistry().registerAll([user])
+    const snap = snapshot({
+      name: 'user',
+      columns: [col('id', 'character', false, 26), col('email', 'character varying', false, 255)],
+    })
+
+    // Default: drift is ignored.
+    expect(diffSchemas(registry, snap).operations).toEqual([])
+
+    // allowAlter: emits an alter-column op.
+    const result = diffSchemas(registry, snap, { allowAlter: true })
+    expect(result.operations).toHaveLength(1)
+    const op = nonNull(result.operations[0])
+    expect(op.kind).toBe('alter-column')
+    if (op.kind === 'alter-column') {
+      expect(op.tableName).toBe('user')
+      expect(op.columnName).toBe('email')
+      expect(op.from).toEqual({ type: 'varchar(255)', nullable: false })
+      expect(op.to).toEqual({ type: 'varchar(500)', nullable: false })
+      expect(op.sql).toBe(
+        'ALTER TABLE "user" ALTER COLUMN "email" TYPE varchar(500) USING "email"::varchar(500)',
+      )
+    }
+  })
+
+  test('nullability flip alone: NOT NULL → NULL emits DROP NOT NULL', () => {
+    const user = defineSchema('user', Archetype.Entity, (t) => {
+      t.id()
+      t.string('handle').nullable()
+    })
+    const registry = new SchemaRegistry().registerAll([user])
+    const snap = snapshot({
+      name: 'user',
+      columns: [col('id', 'character', false, 26), col('handle', 'character varying', false, 255)],
+    })
+    const result = diffSchemas(registry, snap, { allowAlter: true })
+    expect(result.operations).toHaveLength(1)
+    const op = nonNull(result.operations[0])
+    if (op.kind === 'alter-column') {
+      expect(op.sql).toBe('ALTER TABLE "user" ALTER COLUMN "handle" DROP NOT NULL')
+    }
+  })
+
+  test('NULL → NOT NULL emits SET NOT NULL', () => {
+    const user = defineSchema('user', Archetype.Entity, (t) => {
+      t.id()
+      t.string('handle') // not nullable
+    })
+    const registry = new SchemaRegistry().registerAll([user])
+    const snap = snapshot({
+      name: 'user',
+      columns: [col('id', 'character', false, 26), col('handle', 'character varying', true, 255)],
+    })
+    const result = diffSchemas(registry, snap, { allowAlter: true })
+    const op = nonNull(result.operations[0])
+    if (op.kind === 'alter-column') {
+      expect(op.sql).toBe('ALTER TABLE "user" ALTER COLUMN "handle" SET NOT NULL')
+    }
+  })
+
+  test('type + nullability change together produce one multi-statement op', () => {
+    const user = defineSchema('user', Archetype.Entity, (t) => {
+      t.id()
+      t.string('handle').max(500).nullable()
+    })
+    const registry = new SchemaRegistry().registerAll([user])
+    const snap = snapshot({
+      name: 'user',
+      columns: [col('id', 'character', false, 26), col('handle', 'character varying', false, 255)],
+    })
+    const result = diffSchemas(registry, snap, { allowAlter: true })
+    expect(result.operations).toHaveLength(1)
+    const op = nonNull(result.operations[0])
+    if (op.kind === 'alter-column') {
+      expect(op.sql).toBe(
+        'ALTER TABLE "user" ALTER COLUMN "handle" TYPE varchar(500) USING "handle"::varchar(500);\n' +
+          'ALTER TABLE "user" ALTER COLUMN "handle" DROP NOT NULL',
+      )
+    }
+  })
+
+  test('text → varchar detected (text-kind ↔ string-kind)', () => {
+    const note = defineSchema('note', Archetype.Entity, (t) => {
+      t.id()
+      t.string('body').max(500)
+    })
+    const registry = new SchemaRegistry().registerAll([note])
+    const snap = snapshot({
+      name: 'note',
+      columns: [col('id', 'character', false, 26), col('body', 'text', false)],
+    })
+    const result = diffSchemas(registry, snap, { allowAlter: true })
+    const op = nonNull(result.operations[0])
+    if (op.kind === 'alter-column') {
+      expect(op.from.type).toBe('text')
+      expect(op.to.type).toBe('varchar(500)')
+    }
+  })
+
+  test('decimal precision/scale change detected', () => {
+    const product = defineSchema('product', Archetype.Entity, (t) => {
+      t.id()
+      t.decimal('price', 12, 4)
+    })
+    const registry = new SchemaRegistry().registerAll([product])
+    const snap = snapshot({
+      name: 'product',
+      columns: [
+        col('id', 'character', false, 26),
+        col('price', 'numeric', false, null, { numericPrecision: 10, numericScale: 2 }),
+      ],
+    })
+    const result = diffSchemas(registry, snap, { allowAlter: true })
+    expect(result.operations).toHaveLength(1)
+    const op = nonNull(result.operations[0])
+    if (op.kind === 'alter-column') {
+      expect(op.from.type).toBe('numeric(10, 2)')
+      expect(op.to.type).toBe('numeric(12, 4)')
+      expect(op.sql).toContain('TYPE numeric(12, 4)')
+    }
+  })
+
+  test('timestamp tz change detected', () => {
+    const evt = defineSchema('evt', Archetype.Entity, (t) => {
+      t.id()
+      t.timestamp('at', { withTimezone: false })
+    })
+    const registry = new SchemaRegistry().registerAll([evt])
+    const snap = snapshot({
+      name: 'evt',
+      columns: [col('id', 'character', false, 26), col('at', 'timestamp with time zone', false)],
+    })
+    const result = diffSchemas(registry, snap, { allowAlter: true })
+    const op = nonNull(result.operations[0])
+    if (op.kind === 'alter-column') {
+      expect(op.from.type).toBe('timestamptz')
+      expect(op.to.type).toBe('timestamp')
+    }
+  })
+
+  test('bigSerial schema field matches bigint live column (no drift)', () => {
+    // bigserial is a CREATE-TABLE macro; information_schema reports it as
+    // bigint. The canonicalizer collapses both, so no spurious alter.
+    const evt = defineSchema('evt', Archetype.Entity, (t) => {
+      t.id()
+      t.bigSerial('n')
+    })
+    const registry = new SchemaRegistry().registerAll([evt])
+    const snap = snapshot({
+      name: 'evt',
+      columns: [col('id', 'character', false, 26), col('n', 'bigint', false)],
+    })
+    expect(diffSchemas(registry, snap, { allowAlter: true }).operations).toEqual([])
+  })
+
+  test('no op when type matches exactly (varchar(320) ↔ character varying + 320)', () => {
+    const user = defineSchema('user', Archetype.Entity, (t) => {
+      t.id()
+      t.string('email').max(320)
+    })
+    const registry = new SchemaRegistry().registerAll([user])
+    const snap = snapshot({
+      name: 'user',
+      columns: [col('id', 'character', false, 26), col('email', 'character varying', false, 320)],
+    })
+    expect(diffSchemas(registry, snap, { allowAlter: true }).operations).toEqual([])
+  })
+
+  test('alter ops come after add-column ops', () => {
+    const user = defineSchema('user', Archetype.Entity, (t) => {
+      t.id()
+      t.string('email').max(500) // existing column, drifted
+      t.string('handle').nullable() // new column
+    })
+    const registry = new SchemaRegistry().registerAll([user])
+    const snap = snapshot({
+      name: 'user',
+      columns: [col('id', 'character', false, 26), col('email', 'character varying', false, 255)],
+    })
+    const result = diffSchemas(registry, snap, { allowAlter: true })
+    expect(result.operations.map((o) => o.kind)).toEqual(['add-column', 'alter-column'])
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// generateMigration — allowAlter flows through; down() reverses to `from`
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('generateMigration — allowAlter', () => {
+  test('allowAlter flows through to the diff engine', async () => {
+    const user = defineSchema('user', Archetype.Entity, (t) => {
+      t.id()
+      t.string('email').max(500)
+    })
+    const registry = new SchemaRegistry().registerAll([user])
+    const db = new FakeExecutor()
+    db.scriptedRows = [
+      {
+        table_name: 'user',
+        column_name: 'id',
+        data_type: 'character',
+        character_maximum_length: 26,
+        is_nullable: 'NO',
+        column_default: null,
+      },
+      {
+        table_name: 'user',
+        column_name: 'email',
+        data_type: 'character varying',
+        character_maximum_length: 255,
+        is_nullable: 'NO',
+        column_default: null,
+      },
+    ]
+    const generated = nonNull(await generateMigration({ registry, db, allowAlter: true }))
+    expect(generated.diff.operations.map((o) => o.kind)).toEqual(['alter-column'])
+  })
+
+  test('down() reverts to the captured `from` state', async () => {
+    const user = defineSchema('user', Archetype.Entity, (t) => {
+      t.id()
+      t.string('email').max(500).nullable()
+    })
+    const registry = new SchemaRegistry().registerAll([user])
+    const db = new FakeExecutor()
+    db.scriptedRows = [
+      {
+        table_name: 'user',
+        column_name: 'id',
+        data_type: 'character',
+        character_maximum_length: 26,
+        is_nullable: 'NO',
+        column_default: null,
+      },
+      {
+        table_name: 'user',
+        column_name: 'email',
+        data_type: 'character varying',
+        character_maximum_length: 255,
+        is_nullable: 'NO',
+        column_default: null,
+      },
+    ]
+    const generated = nonNull(await generateMigration({ registry, db, allowAlter: true }))
+    const runDb = new FakeExecutor()
+    await generated.migration.down(runDb)
+    expect(runDb.executed).toHaveLength(1)
+    expect(nonNull(runDb.executed[0]).sql).toBe(
+      'ALTER TABLE "user" ALTER COLUMN "email" TYPE varchar(255) USING "email"::varchar(255);\n' +
+        'ALTER TABLE "user" ALTER COLUMN "email" SET NOT NULL',
     )
   })
 })

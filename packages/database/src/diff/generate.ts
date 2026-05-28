@@ -22,7 +22,7 @@ import { emitDropTable } from '../ddl/index.ts'
 import type { Migration } from '../migrations/index.ts'
 import { quoteIdent } from '../orm/sql_emitter.ts'
 import type { SchemaRegistry } from '../schema_registry.ts'
-import { type DiffOptions, type DiffResult, diffSchemas } from './diff.ts'
+import { type DiffOptions, type DiffResult, diffSchemas, emitAlterColumnSql } from './diff.ts'
 import { inspectDatabase } from './inspect.ts'
 
 export interface GenerateMigrationOptions extends DiffOptions {
@@ -52,6 +52,7 @@ export async function generateMigration(
   const snapshot = await inspectDatabase(options.db)
   const diff = diffSchemas(options.registry, snapshot, {
     allowDrop: options.allowDrop,
+    allowAlter: options.allowAlter,
     renames: options.renames,
   })
   if (diff.operations.length === 0) return null
@@ -71,6 +72,7 @@ export async function generateMigration(
       // - `add-column` → `DROP COLUMN IF EXISTS`
       // - `create-table` → `DROP TABLE IF EXISTS`
       // - `rename-*` → reverse the rename
+      // - `alter-column` → reverse to the captured `from` state
       //
       // Drops (`drop-table` / `drop-column`) DO NOT have a clean inverse —
       // we'd need the schema definition for the dropped entity, which the
@@ -97,6 +99,15 @@ export async function generateMigration(
               `ALTER TABLE ${quoteIdent(op.tableName)} RENAME COLUMN ${quoteIdent(op.to)} TO ${quoteIdent(op.from)}`,
             )
             break
+          case 'alter-column': {
+            // Reverse: go from the schema-side state back to the captured
+            // live-DB state. May still hit incompatible-cast errors if the
+            // forward `USING` widened then narrowed a value — apps with
+            // rollback-critical alters write the down() by hand.
+            const reverseSql = emitAlterColumnSql(op.tableName, op.columnName, op.to, op.from)
+            if (reverseSql) await db.execute(reverseSql)
+            break
+          }
           // `drop-table` / `drop-column` have no clean inverse — the diff
           // discarded the original schema definition. No-op intentionally.
           case 'drop-table':

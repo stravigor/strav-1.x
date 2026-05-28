@@ -15,7 +15,13 @@ export {
   emitRenameColumn,
   emitRenameTable,
 } from './emit.ts'
-export { findPrimaryKey, isPrimaryKeyKind, sqlTypeFor } from './sql_type.ts'
+export {
+  canonicalDbSqlType,
+  canonicalSchemaSqlType,
+  findPrimaryKey,
+  isPrimaryKeyKind,
+  sqlTypeFor,
+} from './sql_type.ts'
 export {
   emitRlsForTenanted,
   emitTenantedBigSerialSetup,

@@ -13,7 +13,8 @@
 // Still deferred (each is its own follow-up cut):
 //   - QueryBuilder joins / CTEs / cursor pagination / .chunk()
 //   - tenantedBigSerial per-tenant sequence + trigger + composite PK
-//   - generateMigration type-change detection + tenancy awareness
+//   - generateMigration tenancy awareness (RLS + tenant-FK churn)
+//   - generateMigration default-value drift detection
 //   - Two-role (BYPASSRLS / NOBYPASSRLS) connection config
 //   - Console commands (db:migrate, make:migration, …) — needs @strav/cli
 //   - Relations: typed children, nested loads, hasOne, belongsToMany, lazy
@@ -55,6 +56,7 @@ export {
   tenantRegistrySchema,
 } from './ddl/index.ts'
 export {
+  type AlterColumnState,
   type ColumnInfo,
   type DbSnapshot,
   type DiffOperation,
@@ -62,6 +64,7 @@ export {
   type DiffRenames,
   type DiffResult,
   diffSchemas,
+  emitAlterColumnSql,
   type GeneratedMigration,
   type GenerateMigrationOptions,
   generateMigration,

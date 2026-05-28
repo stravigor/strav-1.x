@@ -27,6 +27,7 @@
  *                          just `bigint NOT NULL PRIMARY KEY`.
  */
 
+import type { ColumnInfo } from '../diff/inspect.ts'
 import type {
   DecimalField,
   Schema,
@@ -110,6 +111,68 @@ export function isPrimaryKeyKind(field: SchemaField): boolean {
     field.kind === 'bigSerial' ||
     field.kind === 'tenantedBigSerial'
   )
+}
+
+/**
+ * Canonical SQL type for a schema field — `sqlTypeFor` with the post-creation
+ * normalization the diff engine needs. `bigserial` is a CREATE-TABLE macro
+ * that lives in `information_schema` as plain `bigint`, so we strip the
+ * "serial-ness" here. Use this — not `sqlTypeFor` — when comparing against
+ * a live DB column.
+ */
+export function canonicalSchemaSqlType(field: SchemaField, registry?: SchemaRegistry): string {
+  const raw = sqlTypeFor(field, registry)
+  return raw === 'bigserial' ? 'bigint' : raw
+}
+
+/**
+ * Canonical SQL type for a live DB column (from `information_schema`).
+ * Returns the same string shape `canonicalSchemaSqlType` returns — so the
+ * diff engine can string-compare the two to detect type drift.
+ *
+ * `information_schema.data_type` is verbose ("character varying", "timestamp
+ * with time zone"); this collapses it back to the short forms the schema
+ * DSL uses ("varchar(N)", "timestamptz"). Unknown / unmapped types fall
+ * through as-is — better to surface a false-positive diff than to silently
+ * treat a divergent column as matching.
+ */
+export function canonicalDbSqlType(col: ColumnInfo): string {
+  const dt = col.dataType
+  switch (dt) {
+    case 'character varying':
+      return col.maxLength !== null ? `varchar(${col.maxLength})` : 'varchar'
+    case 'character':
+      return col.maxLength !== null ? `char(${col.maxLength})` : 'char'
+    case 'text':
+      return 'text'
+    case 'integer':
+      return 'integer'
+    case 'bigint':
+      return 'bigint'
+    case 'smallint':
+      return 'smallint'
+    case 'boolean':
+      return 'boolean'
+    case 'numeric':
+      if (col.numericPrecision !== null && col.numericScale !== null) {
+        return `numeric(${col.numericPrecision}, ${col.numericScale})`
+      }
+      return 'numeric'
+    case 'jsonb':
+      return 'jsonb'
+    case 'json':
+      return 'json'
+    case 'timestamp with time zone':
+      return 'timestamptz'
+    case 'timestamp without time zone':
+      return 'timestamp'
+    case 'bytea':
+      return 'bytea'
+    case 'uuid':
+      return 'uuid'
+    default:
+      return dt
+  }
 }
 
 /** Look up the referenced schema; loud-fail when missing. Internal. */
