@@ -69,10 +69,48 @@ const hidden = hiddenFieldsOf(User)
 // → Set { 'password_hash' }
 ```
 
+## `@cast` — bidirectional type coercion
+
+Maps between the DB column type and an in-memory Model type. `fromDb` runs on hydration (DB → Model); `toDb` runs on `create` / `update` before the SQL emitter sees the value. Useful for custom value objects, jsonb-as-string transformations on non-Bun drivers, or any time the Model field type differs from the column's storage type.
+
+```ts
+import { cast, Model } from '@strav/database'
+
+class Money {
+  constructor(readonly amount: number) {}
+  static fromString(s: string) { return new Money(Number.parseFloat(s)) }
+  toString() { return this.amount.toFixed(2) }
+}
+
+class Order extends Model {
+  static schema = orderSchema
+  id!: string
+  @cast({
+    fromDb: (raw: unknown) => Money.fromString(String(raw)),
+    toDb:   (m: unknown) => (m as Money).toString(),
+  })
+  total!: Money
+}
+
+// On read: Repository.find('o-1').total is a Money instance.
+// On write: Repository.create({ total: new Money(50) }) sends '50.00' to Postgres.
+```
+
+Either side of the cast is optional — apps that only need one direction (e.g., parse on read, store as-is) omit the other.
+
+### Inheritance
+
+Same own-property reseed pattern as `@hidden`. Subclasses inherit parent casts; adding a `@cast` on the subclass reseeds a new Map (parent's stays untouched); decorating the SAME field name on a subclass overrides the parent's caster for that field.
+
+### Helpers
+
+- `castFor(ModelClass, fieldName)` — the `FieldCaster` for a single field, or `undefined`.
+- `castsFor(ModelClass)` — the full `ReadonlyMap<string, FieldCaster>` for runtime inspection.
+- `applyCastsToDb(ModelClass, attrs)` — returns a fresh object with every decorated field's `toDb` applied. Repository uses it internally; exposed for custom paths.
+
 ## What's NOT here (yet)
 
 Each lands as its own follow-up slice on this same metadata pattern:
 
-- **`@cast`** — declarative field type coercion (e.g., `@cast('date')` for columns that come back as strings from some Postgres drivers).
-- **`@encrypt`** — encryption-at-rest. Needs key config + a cipher provider; integrates with Repository's hydrate (decrypt on SELECT) and the SQL emitter (encrypt before INSERT/UPDATE).
+- **`@encrypt`** — encryption-at-rest. Needs key config + a cipher provider; integrates with Repository's hydrate (decrypt on SELECT) and the SQL emitter (encrypt before INSERT/UPDATE). The schema's `t.encrypted()` field kind already maps to `bytea` storage; `@encrypt` is the runtime cipher piece.
 - **`@ulid`** — per-field ULID auto-mint on the Model side (`emitInsert` already mints id-column ULIDs from the schema; this would be for non-PK columns).

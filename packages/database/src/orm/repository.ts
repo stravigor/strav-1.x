@@ -35,6 +35,7 @@ import type { Database, DatabaseExecutor, PostgresDatabase } from '../database.t
 import type { Schema } from '../schema/types.ts'
 import type { SchemaRegistry } from '../schema_registry.ts'
 import { transactionalStorage } from '../unit_of_work/context.ts'
+import { applyCastsToDb } from './decorators.ts'
 import { hydrateRow, type ModelClass } from './model.ts'
 import { QueryBuilder } from './query_builder.ts'
 import {
@@ -187,7 +188,8 @@ export abstract class Repository<TModel extends object> {
       resource: this.schema.name,
       attrs,
     })
-    const { sql, params } = emitInsert(this.schema, attrs as Record<string, unknown>)
+    const dbAttrs = applyCastsToDb(this.modelCtor as object, attrs as Record<string, unknown>)
+    const { sql, params } = emitInsert(this.schema, dbAttrs)
     const row = await this.executor(opts).queryOne<Record<string, unknown>>(sql, params)
     if (!row) {
       throw new Error(
@@ -214,7 +216,8 @@ export abstract class Repository<TModel extends object> {
       model,
       changes,
     })
-    const { sql, params } = emitUpdateById(this.schema, id, changes as Record<string, unknown>)
+    const dbChanges = applyCastsToDb(this.modelCtor as object, changes as Record<string, unknown>)
+    const { sql, params } = emitUpdateById(this.schema, id, dbChanges)
     const row = await this.executor(opts).queryOne<Record<string, unknown>>(sql, params)
     if (!row) {
       throw new NotFoundError(`${this.schema.name} "${String(id)}" no longer exists.`, {
@@ -408,6 +411,9 @@ export abstract class Repository<TModel extends object> {
 
   protected hydrate(row: Record<string, unknown>): TModel {
     const instance = new this.modelCtor() as TModel
+    // hydrateRow applies @cast `fromDb` transforms when the target's
+    // constructor carries cast metadata — Repository doesn't repeat the
+    // pass here.
     return hydrateRow(this.schema, row, instance as object) as TModel
   }
 }

@@ -63,7 +63,12 @@ export {
   type MigrationStatus,
 } from './migrations/index.ts'
 export {
+  applyCastsToDb,
   type BuiltQuery,
+  CAST_FIELDS,
+  cast,
+  castFor,
+  castsFor,
   type EmittedSql,
   emitDeleteById,
   emitFindById,
@@ -72,6 +77,7 @@ export {
   emitRestoreById,
   emitSoftDeleteById,
   emitUpdateById,
+  type FieldCaster,
   HIDDEN_FIELDS,
   hasField,
   hidden,

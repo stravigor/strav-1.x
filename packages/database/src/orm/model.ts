@@ -15,7 +15,7 @@
  */
 
 import type { Schema } from '../schema/types.ts'
-import { hiddenFieldsOf } from './decorators.ts'
+import { castsFor, hiddenFieldsOf } from './decorators.ts'
 
 export interface ModelClass<T extends object = Model> {
   /** Required — the schema this Model maps to. Set by the subclass. */
@@ -57,15 +57,34 @@ export class Model {
  *
  * Repository uses this internally; exposed for advanced cases (writing a
  * custom query result type that bypasses the Repository).
+ *
+ * When `target` carries `@cast`-decorated fields (looked up via its
+ * constructor), `fromDb` is applied to each populated field after the
+ * copy. Hydrating a plain object skips this step (no class → no
+ * decorators).
  */
 export function hydrateRow<T extends object>(
   schema: Schema,
   row: Record<string, unknown>,
   target: T,
 ): T {
+  const obj = target as Record<string, unknown>
   for (const field of schema.fields) {
     if (Object.hasOwn(row, field.name)) {
-      ;(target as Record<string, unknown>)[field.name] = row[field.name]
+      obj[field.name] = row[field.name]
+    }
+  }
+  // Apply @cast `fromDb` transforms when the target has a class (and that
+  // class has cast metadata). Pure-POJO hydration skips this branch.
+  const ctor = (target as { constructor?: object }).constructor
+  if (ctor) {
+    const casts = castsFor(ctor)
+    if (casts.size > 0) {
+      for (const [name, caster] of casts) {
+        if (!caster.fromDb) continue
+        if (!Object.hasOwn(obj, name)) continue
+        obj[name] = caster.fromDb(obj[name])
+      }
     }
   }
   return target

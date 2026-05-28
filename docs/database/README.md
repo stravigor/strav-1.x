@@ -121,7 +121,8 @@ The console commands (`bun strav db:migrate` / `db:rollback` / `db:status`) land
 | `Migration` | `{ name, up(db), down(db) }` |
 | `MigrationRunner` | `register` / `registerAll` / `migrate` / `rollback` / `status` / `list` |
 | `Model` | Plain typed entity. `static schema = …`. `toJSON()` honors `@hidden`. |
-| `@hidden` decorator | Marks a field as omitted from `toJSON()` / `JSON.stringify`. `@cast` / `@encrypt` / `@ulid` follow up on the same pattern. |
+| `@hidden` decorator | Marks a field as omitted from `toJSON()` / `JSON.stringify`. |
+| `@cast` decorator | Bidirectional DB↔Model type coercion (`fromDb` on read, `toDb` on write). Useful for value objects, jsonb-as-string, custom enum types. |
 | `Repository<TModel>` | Injectable data-access object — `find` / `create` / `update` / `delete` / `forceDelete` / `restore` / `query()` / `exists` / `count` |
 | `QueryBuilder<TModel>` | Fluent SELECT — `where` / `orderBy` / `limit` / `offset` / `select` / `withTrashed` / `onlyTrashed` / `with` (eager loading) / `get` / `first` / `count` / `pluck` / `paginate` |
 | `PaginatedResult<T>` | `{ data, total, page, perPage, totalPages }` returned by `query().paginate({ page, perPage })` |

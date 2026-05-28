@@ -279,7 +279,26 @@ JSON.stringify(new User())   // ← never includes `password_hash`
 
 Subclasses inherit `@hidden` fields. Subclasses adding their own `@hidden` get their own metadata set (parent's set stays untouched). `hiddenFieldsOf(ModelClass)` returns the readonly Set for runtime inspection. See [`guides/model_decorators.md`](./guides/model_decorators.md).
 
-`@encrypt` / `@cast` / `@ulid` land in follow-up slices on the same metadata pattern.
+### `@cast` — bidirectional type coercion
+
+Maps a column's stored type to/from an in-memory Model type. `fromDb` runs on hydration; `toDb` runs on `create` / `update`.
+
+```ts
+import { cast, Model } from '@strav/database'
+
+class Order extends Model {
+  static schema = orderSchema
+  @cast({
+    fromDb: (raw: unknown) => Money.fromString(String(raw)),
+    toDb:   (m: unknown) => (m as Money).toString(),
+  })
+  total!: Money
+}
+```
+
+Either side is optional. `castFor(ModelClass, fieldName)` and `castsFor(ModelClass)` are the runtime accessors; `applyCastsToDb(ModelClass, attrs)` runs the `toDb` pass on a plain object (used internally by Repository). Same inheritance rules as `@hidden`.
+
+`@encrypt` / `@ulid` land in follow-up slices on the same metadata pattern.
 
 ## `Repository<TModel>`
 
