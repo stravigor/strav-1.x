@@ -17,16 +17,20 @@ import {
   emitCreateTable,
   type PostgresDatabase,
   SchemaRegistry,
+  TenantManager,
   UnitOfWork,
 } from '../../packages/database/src/index.ts'
 import { Application, EventBus } from '../../packages/kernel/src/index.ts'
 import {
   DatabaseQueue,
+  everyMinute,
   Job,
   type JobContext,
   type JobFailedContext,
   JobRegistry,
   jobSchema,
+  Scheduler,
+  schedulerRunsSchema,
   Worker,
 } from '../../packages/queue/src/index.ts'
 import {
@@ -63,8 +67,9 @@ describe.skipIf(!PG_AVAILABLE)('integration: @strav/queue DatabaseQueue smoke', 
     db = createTestDatabase()
     await resetSchema(db)
 
-    const registry = new SchemaRegistry().registerAll([jobSchema])
+    const registry = new SchemaRegistry().registerAll([jobSchema, schedulerRunsSchema])
     await db.execute(emitCreateTable(jobSchema, { registry }).sql)
+    await db.execute(emitCreateTable(schedulerRunsSchema, { registry }).sql)
 
     queue = new DatabaseQueue({ db, container: new Application() })
   })
@@ -219,6 +224,64 @@ describe.skipIf(!PG_AVAILABLE)('integration: @strav/queue DatabaseQueue smoke', 
 
     // Clean up so subsequent tests start fresh.
     await db.execute(`DELETE FROM "strav_jobs" WHERE id = $1`, [jobId])
+  })
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // Scheduler — cron-driven dispatch + onOneServer advisory lock
+  // ───────────────────────────────────────────────────────────────────────────
+
+  test('Scheduler.tick with oneServer dispatches once + records the run', async () => {
+    class ScheduledJob extends Job<unknown> {
+      static override readonly jobName = 'integration.scheduled-once'
+      async handle(): Promise<void> {}
+    }
+    const tenants = new TenantManager(db, new EventBus())
+    const scheduler = new Scheduler({ queue, tenants })
+    scheduler.schedule({
+      job: ScheduledJob,
+      cron: everyMinute(),
+      name: 'integration:scheduled-once',
+      oneServer: true,
+    })
+
+    const tickAt = new Date('2026-05-28T10:30:00Z')
+    await scheduler.tick(tickAt)
+
+    // One queue row for the job exists.
+    const rows = await db.query<{ id: string }>(`SELECT id FROM "strav_jobs" WHERE job_name = $1`, [
+      'integration.scheduled-once',
+    ])
+    expect(rows).toHaveLength(1)
+
+    // strav_scheduler_runs records the tick boundary.
+    const run = await db.queryOne<{ name: string; last_run_at: Date }>(
+      `SELECT name, last_run_at FROM "strav_scheduler_runs" WHERE name = $1`,
+      ['integration:scheduled-once'],
+    )
+    expect(run?.last_run_at.toISOString()).toBe(tickAt.toISOString())
+
+    // A second tick at the SAME boundary on a "different server" skips:
+    // emulate that by running another Scheduler instance + tick. The lock
+    // sees last_run_at >= boundary and returns without dispatching.
+    const scheduler2 = new Scheduler({ queue, tenants })
+    scheduler2.schedule({
+      job: ScheduledJob,
+      cron: everyMinute(),
+      name: 'integration:scheduled-once',
+      oneServer: true,
+    })
+    await scheduler2.tick(tickAt)
+    const rowsAfter = await db.query<{ id: string }>(
+      `SELECT id FROM "strav_jobs" WHERE job_name = $1`,
+      ['integration.scheduled-once'],
+    )
+    expect(rowsAfter).toHaveLength(1) // still just the one — second tick skipped
+
+    // Clean up.
+    await db.execute(`DELETE FROM "strav_jobs" WHERE job_name = $1`, ['integration.scheduled-once'])
+    await db.execute(`DELETE FROM "strav_scheduler_runs" WHERE name = $1`, [
+      'integration:scheduled-once',
+    ])
   })
 })
 

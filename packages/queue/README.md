@@ -2,7 +2,7 @@
 
 Background-job primitives for Strav 1.0 — the `Job` base class, the `JobRegistry`, the `Queue` contract, and a synchronous in-process driver. Postgres-backed `DatabaseQueue` + `Worker` + `Scheduler` land in follow-up M3 slices.
 
-> **Status: 1.0.0-alpha — M3 in progress (contract layer + `SyncQueue` + `DatabaseQueue` (queue-until-commit) + `Worker` (SKIP LOCKED + backoff) shipped; Scheduler + failed-jobs to follow).**
+> **Status: 1.0.0-alpha — M3 in progress (contract layer + `SyncQueue` + `DatabaseQueue` (queue-until-commit) + `Worker` (SKIP LOCKED + backoff) + `Scheduler` (cron + `onOneServer`) shipped; failed-jobs table + retry to follow).**
 
 ## Install
 
@@ -192,9 +192,35 @@ Default backoff: exponential with ±25% jitter, capped at 300 seconds. Per-job o
 
 `processOne()` (single-shot) is also exposed — useful for tests + one-off CLI invocations.
 
+## Scheduler — cron-driven dispatch
+
+```ts
+import { Scheduler, dailyAt, everyMinutes, hourly } from '@strav/queue'
+
+const scheduler = new Scheduler({
+  queue: app.resolve(Queue),
+  tenants: app.resolve(TenantManager),
+})
+
+scheduler
+  .schedule({ job: CleanupOldSessions, cron: hourly() })
+  .schedule({ job: GenerateNightlyReports, cron: dailyAt('02:00'), oneServer: true })
+  .schedule({ job: SyncStripe, cron: everyMinutes(15), oneServer: true })
+
+const controller = new AbortController()
+process.on('SIGTERM', () => controller.abort())
+process.on('SIGINT',  () => controller.abort())
+await scheduler.run(controller.signal)
+```
+
+`oneServer: true` uses `TenantManager.withLock` to acquire a fleet-wide advisory lock + `strav_scheduler_runs.last_run_at` to track which tick boundary already dispatched. Only one server in the fleet dispatches per tick — exactly-once across however many scheduler processes you run.
+
+Register `schedulerRunsSchema` alongside `jobSchema` in your `SchemaRegistry` so `generateMigration` picks up the table.
+
+Cron matching is UTC-based for predictability. Helper builders cover the common cases (`everyMinute`, `everyMinutes`, `hourly`, `daily`, `dailyAt`) — reach for `cron(expression)` directly when you need weekly / monthly / arbitrary expressions.
+
 ## What's NOT here yet
 
 Each is its own M3 slice:
 
-- **`Scheduler`** — cron parser, `daily()` / `hourly()` / `everyMinutes()` builders, `SchedulerKernel.run()` minute tick, `onOneServer()` advisory lock (built on `TenantManager.withLock` from `@strav/database`).
 - **Failed-jobs handling** — `failed_jobs` table, `queue:retry` / `queue:flush` console commands (need `@strav/cli`, lands in M4).

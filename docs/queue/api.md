@@ -1,6 +1,6 @@
 # @strav/queue — API Reference
 
-> **Status:** V1 contract + two drivers + Worker shipped — `Job` + `JobContext` + `JobClass` + `PayloadOf` + `JobRegistry` + `isJobClass` + `Queue` + `SyncQueue` + `DatabaseQueue` + `jobSchema` + `Worker`. `Scheduler` / failed-jobs land in follow-up cuts.
+> **Status:** V1 contract + two drivers + Worker + Scheduler shipped — `Job` + `JobContext` + `JobClass` + `PayloadOf` + `JobRegistry` + `isJobClass` + `Queue` + `SyncQueue` + `DatabaseQueue` + `jobSchema` + `Worker` + `CronExpression` + `Scheduler` + `schedulerRunsSchema`. `failed_jobs` table + retry land in a follow-up cut.
 
 ## `Job<TPayload>`
 
@@ -280,3 +280,89 @@ A timed-out handler counts as a normal failure — the `failed()` hook runs, ret
 ### Concurrency
 
 Multiple Worker instances can poll the same queue concurrently. `SKIP LOCKED` is the load-bearing primitive — each claim transaction skips rows already locked by another Worker's claim transaction, so the same row is never handed to two Workers. Run as many Worker processes as you have CPU budget.
+
+## `CronExpression` + helpers
+
+5-field cron expression (`minute hour day-of-month month day-of-week`) with UTC-based matching.
+
+```ts
+class CronExpression {
+  constructor(expression: string)                    // throws on invalid syntax / out-of-range
+  matches(date: Date): boolean                       // checks `date.getUTC*()` against every field
+  readonly expression: string                        // the input string, preserved
+}
+
+function everyMinute(): CronExpression               // '* * * * *'
+function everyMinutes(n: number): CronExpression     // '*/n * * * *'
+function hourly():     CronExpression                // '0 * * * *'
+function daily():      CronExpression                // '0 0 * * *'
+function dailyAt(time: string): CronExpression       // 'HH:MM' (24-hour, UTC) → '<m> <h> * * *'
+function cron(expression: string): CronExpression    // escape hatch — raw 5-field string
+```
+
+Per-field syntax: `*`, `N`, `A-B`, `A,B,C`, `*/N`, `A-B/N`. Name aliases (`jan` / `mon` / etc.) are not supported — use numbers.
+
+Time zone is **UTC** for predictability. Apps that want local-time scheduling shift the expression by hand or pass a `Date` already shifted to local components.
+
+## `Scheduler`
+
+Recurring job dispatch on a cron cadence. Each registered entry dispatches via the wired `Queue` when its cron matches the current tick.
+
+```ts
+class Scheduler {
+  constructor(opts: SchedulerOptions)
+  schedule(options: ScheduleOptions): this
+  tick(now?: Date): Promise<void>                    // process one tick; tests + one-shot CLI
+  run(signal: AbortSignal): Promise<void>            // minute-loop; aborts on signal
+  all(): readonly ScheduledEntry[]                   // inspection helper
+}
+
+interface SchedulerOptions {
+  queue: Queue
+  tenants: TenantManager                             // for withLock on oneServer entries
+  logger?: Logger                                    // default: no-op
+}
+
+interface ScheduleOptions {
+  job: JobClass
+  payload?: unknown                                  // default undefined
+  cron: CronExpression
+  name?: string                                      // default: job.jobName
+  oneServer?: boolean                                // default false
+}
+```
+
+### `tick(now)`
+
+Floors `now` to the minute boundary, then for each entry whose `cron.matches(boundary)`:
+- If `oneServer: false` → dispatches directly via `queue.dispatch(job, payload)`.
+- If `oneServer: true` → routes through `tenants.withLock('scheduler:${name}', tx => ...)`:
+  1. SELECT `last_run_at` from `strav_scheduler_runs` WHERE name matches.
+  2. If `last_run_at >= boundary`, another server already won this tick — skip.
+  3. Otherwise dispatch + UPSERT `last_run_at = boundary` atomically (the lock's UoW also routes the queue INSERT through the same tx).
+
+A throw from one entry's dispatch is logged but doesn't block the others — `tick` processes every matched entry independently.
+
+### `run(signal)`
+
+Minute-loop. Each iteration sleeps to the next minute boundary, calls `tick(boundary)`, repeats. The sleep is abort-aware — `signal.abort()` returns within one tick rather than waiting out the minute.
+
+The FIRST tick runs at the next boundary, not immediately. Callers that want a dispatch on startup invoke `tick()` explicitly before `run()`.
+
+### `oneServer` mechanics
+
+The advisory lock + run-tracking pair handles the "multiple servers polling simultaneously" case:
+
+- `pg_advisory_xact_lock` releases on COMMIT, so the lock window is short (~10ms). Without the run-tracking row, Server A could dispatch + release the lock, then Server B acquires the lock at the same minute and dispatches again.
+- The `strav_scheduler_runs` row carries `last_run_at` — set to the tick boundary on each dispatch. Server B reads it inside the lock; if `>= boundary`, it skips.
+- The lock serializes the read + write, so the check is honest. Exactly-once-per-tick across the fleet.
+
+## `schedulerRunsSchema`
+
+```ts
+export const schedulerRunsSchema: Schema
+```
+
+The `strav_scheduler_runs` table — ULID PK + `name` (varchar(128), UNIQUE) + `last_run_at` (timestamptz) + `created_at` / `updated_at`. Apps register it alongside `jobSchema` and `generateMigration` picks it up.
+
+The ULID PK is dead weight from the framework constraint (PK kinds are `id` / `uuid` / `bigSerial` / `tenantedBigSerial` — none text). The logical key is `name`; UPSERTs target it via `ON CONFLICT (name) DO UPDATE`.

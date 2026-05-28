@@ -1,8 +1,8 @@
 # @strav/queue
 
-Background-job primitives for Strav 1.0 — the `Job` base class, the `JobRegistry`, the `Queue` contract, plus two drivers (`SyncQueue` in-process + `DatabaseQueue` Postgres-backed with queue-until-commit semantics). `Worker` (SELECT FOR UPDATE SKIP LOCKED poll loop) + `Scheduler` (cron + `onOneServer` advisory lock) land in follow-up M3 slices.
+Background-job primitives for Strav 1.0 — the `Job` base class + `JobRegistry` + `Queue` contract + two drivers (`SyncQueue` in-process + `DatabaseQueue` Postgres-backed with queue-until-commit semantics) + `Worker` (SELECT FOR UPDATE SKIP LOCKED poll loop, backoff, abort-aware shutdown) + `Scheduler` (cron + `onOneServer` advisory lock).
 
-> **Status: 1.0.0-alpha — M3 in progress.** Shipping: contract layer + `SyncQueue` + `DatabaseQueue` (queue-until-commit) + `jobSchema` + `Worker` (SKIP LOCKED + backoff). Scheduler / failed-jobs follow.
+> **Status: 1.0.0-alpha — M3 in progress.** Shipping: contract layer + `SyncQueue` + `DatabaseQueue` (queue-until-commit) + `jobSchema` + `Worker` (SKIP LOCKED + backoff) + `Scheduler` (cron + `onOneServer`) + `schedulerRunsSchema`. Failed-jobs table + retry follow.
 
 ## Install
 
@@ -34,6 +34,11 @@ Peer dep: `@strav/kernel`.
 | `Worker` | Consumer side. `processOne()` claims via SELECT FOR UPDATE SKIP LOCKED + runs handle + deletes/retries. `run(signal)` is the poll loop with graceful shutdown |
 | `WorkerOptions` | `{ db, registry, container, logger?, queues?, pollInterval?, timeoutSeconds?, defaultAttempts?, defaultBackoff? }` |
 | `JobResult` | `processOne()` return — `{ status: 'completed' \| 'retried' \| 'failed', ... }` |
+| `CronExpression` | 5-field cron parser + `matches(date)`. UTC-based |
+| `cron` / `everyMinute` / `everyMinutes` / `hourly` / `daily` / `dailyAt` | `CronExpression` factory helpers |
+| `Scheduler` | Recurring dispatch on a cron cadence. `.schedule({ job, cron, oneServer? })` registers; `.tick()` processes one boundary; `.run(signal)` is the minute-loop. `oneServer` uses `TenantManager.withLock` + `strav_scheduler_runs` for exactly-once-per-tick |
+| `SchedulerOptions` / `ScheduleOptions` | Constructor + registration option shapes |
+| `schedulerRunsSchema` | The `strav_scheduler_runs` `Schema` — ULID PK + `name` UNIQUE + `last_run_at` for `oneServer` run-tracking |
 
 ## Documentation
 
@@ -42,7 +47,6 @@ Peer dep: `@strav/kernel`.
 
 ## What's NOT here yet
 
-Each is its own M3 slice on top of this contract layer:
+Each is its own M3 slice:
 
-- **`Scheduler`** — cron parser, `daily()` / `hourly()` / `everyMinutes()` builders, `SchedulerKernel.run()` minute tick, `onOneServer()` via `TenantManager.withLock` (already shipped in `@strav/database`).
 - **Failed-jobs** — `failed_jobs` table + `queue:retry` / `queue:flush` console commands (need `@strav/cli`, M4).
