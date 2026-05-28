@@ -1,6 +1,6 @@
 # @strav/database — API Reference
 
-> **Status:** Reflects what's implemented as of M2 — Database wrapper, DatabaseProvider, Schema DSL (including `t.softDeletes()` / `t.hasMany()` / `t.belongsTo()` / `t.encrypted()`), SchemaRegistry, MigrationRunner, Model with `@hidden` / `@cast` / `@ulid` / `@encrypt` decorators, Repository<T> (lifecycle events + `{ tx? }` opt-in / ALS auto-routing + soft-delete + restore/forceDelete), QueryBuilder (`.with(...)` eager loading + soft-delete scopes + `.paginate({ page, perPage })`), SQL emitter, DDL emitters (including indexes + renames), schema-diff generator (additive + destructive with `allowDrop` + `renames`), multi-tenancy (DDL + TenantManager.withTenant / withoutTenant / withTenantLock / withLock built on UoW), `UnitOfWork.run(fn)` with queue-until-commit lifecycle events, boot-time `validateTenantRegistry` + `emitTenantIdFunction`, Cipher + EncryptionProvider. Explicit `.join()` / `tenantedBigSerial` per-tenant sequencing / two-role connection config / migration builder DSL / `generateMigration` type-change detection / SchemaRegistry auto-discovery all land in follow-up cuts.
+> **Status:** Reflects what's implemented as of M2 — Database wrapper, DatabaseProvider, Schema DSL (including `t.softDeletes()` / `t.hasMany()` / `t.belongsTo()` / `t.encrypted()`), SchemaRegistry, MigrationRunner, Model with `@hidden` / `@cast` / `@ulid` / `@encrypt` decorators, Repository<T> (lifecycle events + `{ tx? }` opt-in / ALS auto-routing + soft-delete + restore/forceDelete), QueryBuilder (`.with(...)` eager loading + soft-delete scopes + `.paginate({ page, perPage })`), SQL emitter, DDL emitters (including indexes + renames), schema-diff generator (additive + destructive with `allowDrop` + `renames`), multi-tenancy (DDL + TenantManager.withTenant / withoutTenant / withTenantLock / withLock built on UoW), `UnitOfWork.run(fn)` with queue-until-commit lifecycle events, boot-time `validateTenantRegistry` + `emitTenantIdFunction`, Cipher + EncryptionProvider. Explicit `.join()` / `tenantedBigSerial` per-tenant sequencing / two-role connection config / migration builder DSL / `generateMigration` type-change detection all land in follow-up cuts.
 
 ## `Database` / `PostgresDatabase`
 
@@ -175,17 +175,23 @@ Both composites are idempotent — calling twice is a no-op.
 class SchemaRegistry {
   register(schema: Schema): this
   registerAll(schemas: readonly Schema[]): this
+  discover(pattern: string | string[], options?: { cwd?: string }): Promise<this>
   get(name: string): Schema | undefined
-  getOrFail(name: string): Schema       // throws ConfigError on miss
+  getOrFail(name: string): Schema        // throws ConfigError on miss
   has(name: string): boolean
   all(): readonly Schema[]
   clear(): void                          // test helper
 }
+
+function isSchema(value: unknown): value is Schema
 ```
 
-Apps register schemas in a provider (typically `SchemasProvider`, depends on `'database'`). `register` throws `ConfigError` on duplicate name.
+Apps register schemas explicitly (`register` / `registerAll`) or via auto-discovery (`discover(pattern)` uses `Bun.Glob` + dynamic `import()` to scan files, then registers every export that satisfies `isSchema`). `cwd` defaults to `process.cwd()`. Re-exports of the same Schema instance are deduplicated by object identity; different schemas with the same name still throw `ConfigError` — that's programmer error. Files exporting no schemas are silently skipped. `isSchema` is exported for hand-rolled discovery loops.
 
-Auto-discovery of `database/schemas/**.ts` via `Bun.Glob` lands when the convention is fully baked in `@strav/cli`'s generator. The manual API is the source of truth for now.
+```ts
+// Typical SchemasProvider boot:
+await app.resolve(SchemaRegistry).discover('database/schemas/**/*.ts')
+```
 
 ## `Migration`
 

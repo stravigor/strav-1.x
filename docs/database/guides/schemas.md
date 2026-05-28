@@ -126,34 +126,48 @@ defineSchema('lead', Archetype.Entity, (t) => {
 
 ## Registering with the SchemaRegistry
 
-Schemas don't auto-discover yet — register them explicitly in a provider that depends on `'database'`:
+Two paths — explicit registration (full control) or auto-discovery (zero per-schema wiring).
+
+### Auto-discovery via `Bun.Glob`
+
+Point `discover()` at a glob and it `import()`s every match, registering every export that satisfies the `Schema` shape. Re-exports of the same schema instance (e.g. through a barrel) are deduplicated by object identity; two different schemas claiming the same name still throw — programmer error.
 
 ```ts
 // app/providers/schemas_provider.ts
 import { type Application, ServiceProvider } from '@strav/kernel'
 import { SchemaRegistry } from '@strav/database'
-import { userSchema } from '../../database/schemas/user_schema.ts'
-import { leadSchema } from '../../database/schemas/lead_schema.ts'
 
 export class SchemasProvider extends ServiceProvider {
   override readonly name = 'schemas'
   override readonly dependencies = ['database']
 
   override register(app: Application): void {
-    app.singleton(SchemaRegistry, () => new SchemaRegistry().registerAll([
-      userSchema,
-      leadSchema,
-    ]))
+    app.singleton(SchemaRegistry, () => new SchemaRegistry())
+  }
+
+  override async boot(app: Application): Promise<void> {
+    await app.resolve(SchemaRegistry).discover('database/schemas/**/*.ts')
   }
 }
 ```
 
-The runner and (eventually) the Repository layer resolve `SchemaRegistry` from the container, so the registry is the one place that knows the full set of tables.
+`discover()` accepts a single pattern or an array, plus an optional `{ cwd }` (defaults to `process.cwd()`). Files that export non-Schema values (helpers, type-only re-exports) are silently skipped. The `isSchema(value)` type-guard is exported for apps that want to roll their own discovery loop.
+
+### Explicit registration
+
+When you want full control over what's loaded (or to keep boot synchronous):
+
+```ts
+import { userSchema } from '../../database/schemas/user_schema.ts'
+import { leadSchema } from '../../database/schemas/lead_schema.ts'
+
+new SchemaRegistry().registerAll([userSchema, leadSchema])
+// or one-by-one:
+//   registry.register(userSchema).register(leadSchema)
+```
+
+The runner, the diff generator, and the Repository layer all resolve `SchemaRegistry` from the container, so the registry is the one place that knows the full set of tables.
 
 ## What's NOT here yet
 
-- **Auto-discovery** of `database/schemas/**.ts` via `Bun.Glob` — lands with the `@strav/cli` generator integration.
-- **Model class + decorators** (`@encrypt` / `@hidden` / `@cast`) — separate slice.
-- **Repository pattern** + **query builder** — same slice as Model.
-- **RLS policy emission** + **tenant FK injection** — the tenancy slice.
-- **Schema-diff migration generator** — a separate slice; today, hand-write migrations referencing your schemas.
+- **Schema-diff migration generator + console commands** (`bun strav make:migration`) — needs `@strav/cli`'s db integration.

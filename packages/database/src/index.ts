@@ -15,7 +15,6 @@
 //   - tenantedBigSerial per-tenant sequence + trigger + composite PK
 //   - generateMigration type-change detection + tenancy awareness
 //   - Two-role (BYPASSRLS / NOBYPASSRLS) connection config
-//   - SchemaRegistry auto-discovery via Bun.Glob
 //   - Console commands (db:migrate, make:migration, …) — needs @strav/cli
 //   - Relations: typed children, nested loads, hasOne, belongsToMany, lazy
 //   - Encryption key rotation, blind-index helpers, per-tenant keys
@@ -151,7 +150,7 @@ export {
   type TimestampField,
   type UuidField,
 } from './schema/index.ts'
-export { SchemaRegistry } from './schema_registry.ts'
+export { isSchema, SchemaRegistry } from './schema_registry.ts'
 export { emitTenantIdFunction, TenantManager, validateTenantRegistry } from './tenancy/index.ts'
 export {
   currentTransactionalContext,
