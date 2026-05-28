@@ -135,13 +135,11 @@ Useful for `bun strav db:status` (which lands with `@strav/cli`'s db integration
 
 **Important:** if the database has an applied migration whose code isn't registered with the runner, `rollback()` **throws**. This is by design — the runner refuses to delete the tracking row for a migration it can't actually undo. The fix is to register every historical migration, even ones from years ago, so the runner's view matches the database's.
 
-## Why no auto-diff yet
+## Auto-generated migrations
 
-The spec calls for `bun strav make:migration` that compares a registered `Schema` against the live DB and emits SQL. That's a separate slice — it has its own complexity (reading `information_schema`, diff ordering, FK dependency ordering, RLS policy emission, manual conflict resolution).
+`generateMigration({ registry, db })` does the additive 80% for you — new tables and new columns from registered Schemas, in topological FK order. See [`migration_generator.md`](./migration_generator.md) for the full walkthrough. The console wrapper (`bun strav make:migration`) lands with `@strav/cli`; today, call the function from a script.
 
-The DDL emitters (`emitCreateTable` / `emitAddColumn` / `emitDropColumn`) are the foundation it'll build on. With those in place, the generator's job becomes: walk the registry, walk the live DB, decide what changed, and emit the right emitter call. That work is its own focused slice — landing today wouldn't be worth the breadth of the diff surface, but the foundation is now in place.
-
-For now, write migrations by hand using the emitters or raw SQL. The schemas serve as documentation and (soon) as runtime checks.
+Destructive operations (drops, renames, type changes) stay hand-written until the destructive-diff slice ships — the additive baseline is safe by construction.
 
 ## Testing migrations without Postgres
 

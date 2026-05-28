@@ -1,11 +1,12 @@
 // Public API of @strav/database.
 //
-// Foundation slice + ORM slice + DDL-emission slice: connection pool
+// Foundation + ORM + DDL emission + schema-diff generator: connection pool
 // (Bun.SQL), schema DSL, schema registry, migration runner, Model class,
-// Repository<T>, QueryBuilder, schema → DDL emitters. RLS scoping, eager
-// loading, encryption-at-rest, schema-diff migration generator, repository
-// hooks, pagination helpers, soft-delete integration land in follow-up
-// cuts.
+// Repository<T>, QueryBuilder, schema → DDL emitters, and a diff engine
+// that produces additive migrations from registry vs live-DB state.
+// RLS scoping, eager loading, encryption-at-rest, repository hooks,
+// pagination helpers, soft-delete integration, destructive-diff handling
+// (drops / type changes / renames) land in follow-up cuts.
 
 export {
   type Database,
@@ -31,6 +32,18 @@ export {
   isPrimaryKeyKind,
   sqlTypeFor,
 } from './ddl/index.ts'
+export {
+  type ColumnInfo,
+  type DbSnapshot,
+  type DiffOperation,
+  type DiffResult,
+  diffSchemas,
+  type GeneratedMigration,
+  type GenerateMigrationOptions,
+  generateMigration,
+  inspectDatabase,
+  type TableInfo,
+} from './diff/index.ts'
 export {
   type AppliedMigration,
   type Migration,

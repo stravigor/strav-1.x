@@ -2,9 +2,9 @@
 
 Postgres connection pool, schema DSL, migration runner, Model + Repository + QueryBuilder for Strav 1.0. Built on **Bun.SQL** (Bun's built-in Postgres driver) — no native modules.
 
-> **Status: 1.0.0-alpha — M2 in progress (foundation + ORM + DDL slice).**
-> Shipping: **PostgresDatabase** (connection pool, query/queryOne/execute/transaction), **DatabaseProvider** (config-driven lifecycle, lazy or eager connect), **defineSchema** + **Archetype** + **t.* builders**, **SchemaRegistry**, **MigrationRunner** (migrate/rollback/status, `_strav_migrations` tracking, per-migration transactions, batch grouping), **Model** (minimal — schema link + hydration), **Repository<T>** (find/findOrFail/findMany/first/all/create/update/delete/exists/count + .query()), **QueryBuilder** (where/orderBy/limit/offset/select + get/first/firstOrFail/count/exists/pluck; immutable chains), **SQL emitter** (auto-ULID, auto-`updated_at`, RETURNING), **DDL emitters** (`emitCreateTable` / `emitDropTable` / `emitAddColumn` / `emitDropColumn` — schema → Postgres DDL, full field-type → SQL mapping, references resolve via registry).
-> Deferred (each is its own slice): **decorators** (`@encrypt` / `@hidden` / `@cast` / `@ulid`), **repository lifecycle hooks** (`<resource>.creating` / `.created` / etc. on the EventBus), **soft-delete integration** (`.withTrashed()`, `delete()` writing `deleted_at`), **relationships + eager loading**, **pagination helpers**, **joins + CTEs**, **schema-diff migration generator** (compare registered schemas vs live DB), **migration builder DSL** (`m.createTable(name, fn)` / `m.addIndex(...)` etc. — the thin sugar on top of the DDL emitters), **multi-tenancy / RLS emission**, the **`db:migrate` / `db:rollback` / `db:status` console commands** (need `@strav/cli` integration).
+> **Status: 1.0.0-alpha — M2 in progress (foundation + ORM + DDL + diff generator).**
+> Shipping: **PostgresDatabase** (connection pool, query/queryOne/execute/transaction), **DatabaseProvider** (config-driven lifecycle, lazy or eager connect), **defineSchema** + **Archetype** + **t.* builders**, **SchemaRegistry**, **MigrationRunner** (migrate/rollback/status, `_strav_migrations` tracking, per-migration transactions, batch grouping), **Model** (minimal — schema link + hydration), **Repository<T>** (find/findOrFail/findMany/first/all/create/update/delete/exists/count + .query()), **QueryBuilder** (where/orderBy/limit/offset/select + get/first/firstOrFail/count/exists/pluck; immutable chains), **SQL emitter** (auto-ULID, auto-`updated_at`, RETURNING), **DDL emitters** (`emitCreateTable` / `emitDropTable` / `emitAddColumn` / `emitDropColumn`), **schema-diff generator** (`inspectDatabase` reads `information_schema`; `diffSchemas` produces additive ops in topological FK order; `generateMigration` wraps into a ready-to-register `Migration`).
+> Deferred (each is its own slice): **decorators** (`@encrypt` / `@hidden` / `@cast` / `@ulid`), **repository lifecycle hooks** (`<resource>.creating` / `.created` / etc. on the EventBus), **soft-delete integration** (`.withTrashed()`, `delete()` writing `deleted_at`), **relationships + eager loading**, **pagination helpers**, **joins + CTEs**, **destructive diff** (dropped tables/columns, type changes, renames — needs explicit `--allow-drop` semantics), **migration builder DSL** (`m.createTable(name, fn)` / `m.addIndex(...)` etc.), **multi-tenancy / RLS emission**, the **`db:migrate` / `db:rollback` / `db:status` / `make:migration` console commands** (need `@strav/cli` integration).
 
 ## Install
 
@@ -127,10 +127,14 @@ The console commands (`bun strav db:migrate` / `db:rollback` / `db:status`) land
 | `emitCreateTable` / `emitDropTable` / `emitAddColumn` / `emitDropColumn` | DDL emitters — schema → Postgres SQL, used by migrations |
 | `sqlTypeFor` / `columnDefinition` / `defaultSql` / `findPrimaryKey` / `isPrimaryKeyKind` | DDL building blocks; exposed for migration generators and bespoke shapes |
 | `quoteIdent` / `selectColumnList` | Building blocks the emitter uses; exposed for raw-SQL escape hatches |
+| `inspectDatabase` | Read live `information_schema` into a `DbSnapshot` |
+| `diffSchemas` | Compare registry vs snapshot → `DiffResult` (additive ops + unknownTables) |
+| `generateMigration` | One-call wrapper — returns a ready-to-register `Migration` or `null` if no changes |
 
 ## Documentation
 
 - [`api.md`](./api.md) — every export with signature + semantics.
 - [`guides/schemas.md`](./guides/schemas.md) — defining schemas, field types, modifiers, composites, tenancy flags, registry usage.
-- [`guides/migrations.md`](./guides/migrations.md) — writing migrations, runner mechanics, batching + rollback semantics, transactional boundaries, why there's no auto-diff (yet).
+- [`guides/migrations.md`](./guides/migrations.md) — writing migrations, runner mechanics, batching + rollback semantics, transactional boundaries.
+- [`guides/migration_generator.md`](./guides/migration_generator.md) — `generateMigration(registry, db)` end-to-end, what's detected, what's not, FK topological ordering, cycle handling.
 - [`guides/repositories.md`](./guides/repositories.md) — Model + Repository<T> + QueryBuilder; the three-layer split; what's automatic (ULID, updated_at, RETURNING) vs deferred (hooks, soft deletes, relationships, pagination); testing patterns.

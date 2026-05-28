@@ -433,4 +433,63 @@ Each lands in a follow-up cut:
 - **`ADD INDEX` / `DROP INDEX`** — indexes aren't part of the Schema; explicit index ops belong to the migration builder DSL.
 - **Standalone `ADD FOREIGN KEY` / `DROP FOREIGN KEY`** — references inline into `CREATE TABLE` / `ADD COLUMN` already.
 - **Tenancy plumbing** — RLS policies, tenant-FK column injection on `tenanted: true` schemas, the composite `(tenant_id, id)` PK. The current emitter ignores `tenancy.tenanted`; the tenancy slice wraps the DDL with those policies.
-- **Schema-diff generator** — comparing registered schemas against the live DB and emitting an ordered migration. This DDL slice is the foundation.
+- **Destructive diff** — see "Migration generator" below; V1 detects only additive changes (new tables, new columns). Dropped tables/columns and type changes need explicit `--allow-drop` semantics + backfill design.
+
+## Migration generator
+
+Produces an additive migration from registered Schemas vs the live DB.
+
+```ts
+function inspectDatabase(db: DatabaseExecutor): Promise<DbSnapshot>
+
+function diffSchemas(registry: SchemaRegistry, snapshot: DbSnapshot): DiffResult
+
+function generateMigration(opts: {
+  registry: SchemaRegistry
+  db: DatabaseExecutor
+  name?: string                 // default YYYYMMDDHHMMSS_auto_diff (UTC)
+  now?: Date                    // override for deterministic naming in tests
+}): Promise<GeneratedMigration | null>   // null when DB matches registry
+
+type DiffOperation =
+  | { kind: 'create-table'; schemaName: string; schema: Schema; sql: string }
+  | { kind: 'add-column'; schemaName: string; columnName: string; sql: string }
+
+interface DiffResult {
+  operations: DiffOperation[]
+  unknownTables: string[]       // tables in DB the registry doesn't know about
+}
+
+interface GeneratedMigration {
+  migration: Migration          // hand to MigrationRunner.register()
+  diff: DiffResult              // for preview / logging
+}
+```
+
+### What gets detected
+
+- **New tables** — schema in registry, no matching table in `information_schema` → `emitCreateTable(schema)` op.
+- **New columns** — column on a schema, not in the existing table → `emitAddColumn(schema, column)` op.
+
+### Ordering
+
+1. All `create-table` ops first, **topologically sorted** by FK references. A table referencing another comes after its target. References to tables already in the DB impose no ordering constraint (the target exists).
+2. All `add-column` ops, after all `create-table` ops. So a new column with `REFERENCES` resolves cleanly.
+
+### Cycles
+
+A circular FK between two MISSING tables (each references the other) can't be created in one `CREATE TABLE` order. `diffSchemas` throws — apps break the cycle by making one reference nullable + adding it via a follow-up migration, or land the two tables in separate migrations.
+
+### What gets ignored
+
+Each lands as its own slice:
+
+- **Dropped tables** — surfaced in `result.unknownTables` (informational); never auto-dropped. Apps that need to drop write the migration by hand or wait for the `--allow-drop` slice.
+- **Dropped columns** — same reasoning.
+- **Type / nullability / default changes** on existing columns — needs ALTER COLUMN semantics with backfill design.
+- **Renames** — undetectable from diff alone; needs explicit `rename: { from, to }` mapping support.
+- **Indexes / constraints** — schemas don't declare them today (apart from inline UNIQUE / NOT NULL / CHECK / REFERENCES).
+
+### `down()` is best-effort
+
+Generated migration's `down()` reverses the ops: `DROP COLUMN IF EXISTS` for added columns; `DROP TABLE IF EXISTS` for created tables, in reverse op order. This is a safe-for-rollback inverse, not a "restore data" path — apps with rollback-critical migrations should write them by hand.
