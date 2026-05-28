@@ -1,7 +1,12 @@
 // ORM subsystem — Model, Repository, QueryBuilder, SQL emitter.
 
 export { hydrateRow, isModelClass, Model, type ModelClass } from './model.ts'
-export { type BuiltQuery, QueryBuilder, type WhereOperator } from './query_builder.ts'
+export {
+  type BuiltQuery,
+  type PaginatedResult,
+  QueryBuilder,
+  type WhereOperator,
+} from './query_builder.ts'
 export {
   Repository,
   type RepositoryCreatedEvent,

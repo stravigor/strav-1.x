@@ -16,6 +16,7 @@ import type {
   ReferenceField,
   Schema,
   SchemaField,
+  SchemaRelation,
   StringField,
 } from './types.ts'
 
@@ -73,6 +74,7 @@ class StringFieldBuilder extends FieldBuilder<StringField> {
 
 export class SchemaBuilder {
   private readonly fields: SchemaField[] = []
+  private readonly relations: SchemaRelation[] = []
   private hasSoftDeletes = false
   private hasTimestamps = false
 
@@ -201,9 +203,59 @@ export class SchemaBuilder {
     return this
   }
 
+  // ─── Relations ─────────────────────────────────────────────────────────────
+
+  /**
+   * One-to-many relation. Parent has many child rows; the child carries a
+   * `foreignKey` column pointing back to the parent's PK.
+   *
+   * `target` is the child schema's name (Schema, ModelClass-like, or string).
+   * `as` defaults to the target name (`hasMany('post', { foreignKey: 'user_id' })`
+   * → accessor `post` on the parent). Apps usually override to the plural:
+   * `as: 'posts'`.
+   */
+  hasMany(
+    target: Schema | { name: string } | string,
+    options: { foreignKey: string; as?: string },
+  ): this {
+    const targetName = typeof target === 'string' ? target : target.name
+    this.relations.push({
+      kind: 'hasMany',
+      name: options.as ?? targetName,
+      target: targetName,
+      foreignKey: options.foreignKey,
+    })
+    return this
+  }
+
+  /**
+   * Inverse-of-hasMany. THIS row carries the `foreignKey` column pointing
+   * at the target row's PK. Typically paired with a `t.reference(...)` for
+   * the column itself — `belongsTo` only declares the relation, not the
+   * column.
+   */
+  belongsTo(
+    target: Schema | { name: string } | string,
+    options: { foreignKey: string; as?: string },
+  ): this {
+    const targetName = typeof target === 'string' ? target : target.name
+    this.relations.push({
+      kind: 'belongsTo',
+      name: options.as ?? targetName,
+      target: targetName,
+      foreignKey: options.foreignKey,
+    })
+    return this
+  }
+
   /** Internal — used by `defineSchema()` to finalize. */
   build(): readonly SchemaField[] {
     return this.fields
+  }
+
+  /** Internal — finalize relation declarations. */
+  buildRelations(): readonly SchemaRelation[] {
+    return this.relations
   }
 
   // ─── Internals ─────────────────────────────────────────────────────────────

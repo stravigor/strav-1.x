@@ -40,12 +40,14 @@ export function defineSchema(
   const builder = new SchemaBuilder()
   build(builder)
   const fields = builder.build()
+  const relations = builder.buildRelations()
 
   return Object.freeze({
     name,
     archetype,
     fields,
     tenancy: Object.freeze({ ...options }),
+    relations,
   })
 }
 

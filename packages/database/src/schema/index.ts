@@ -16,6 +16,7 @@ export {
   type ReferenceField,
   type Schema,
   type SchemaField,
+  type SchemaRelation,
   type SchemaTenancy,
   type StringField,
   type TenantedSerialField,

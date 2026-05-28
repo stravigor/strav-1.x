@@ -277,7 +277,7 @@ abstract class Repository<TModel> {
   static readonly schema: Schema
   static readonly model: ModelClass
 
-  constructor(db: PostgresDatabase, events?: EventBus)
+  constructor(db: PostgresDatabase, events?: EventBus, registry?: SchemaRegistry)
 
   find(id, opts?: RepositoryScope): Promise<TModel | null>
   findOrFail(id, opts?: RepositoryScope): Promise<TModel>             // throws NotFoundError
@@ -301,7 +301,7 @@ abstract class Repository<TModel> {
 }
 ```
 
-`@inject()`-marked subclasses get both `PostgresDatabase` and `EventBus` resolved via the container — the kernel's `Application` registers `EventBus` as a singleton in its constructor. Subclasses that don't list `EventBus` in their constructor (or test code that passes only the db) get an `events`-less repository — `create` / `update` / `delete` still work, they just don't emit lifecycle events.
+`@inject()`-marked subclasses get all three dependencies resolved via the container — the kernel's `Application` registers `EventBus` as a singleton in its constructor, and apps bind their `SchemaRegistry` via a provider. Subclasses that don't list `EventBus` or `SchemaRegistry` in their constructor (or test code that passes only the db) get a Repository missing those features — `create` / `update` / `delete` still work without `events` (no lifecycle events fire); CRUD still works without `registry` (only `query().with(...)` eager loading throws if attempted).
 
 Every CRUD method takes an optional `{ tx? }` as its final arg. The executor is resolved in this order:
 
@@ -376,6 +376,8 @@ class QueryBuilder<TModel> {
   withTrashed(): QueryBuilder<TModel>
   /** Return only soft-deleted rows. Throws on schemas without `t.softDeletes()`. */
   onlyTrashed(): QueryBuilder<TModel>
+  /** Eager-load one or more declared relations. Requires a `SchemaRegistry`. */
+  with(...names: string[]): QueryBuilder<TModel>
 
   toSql(): { sql: string; params: unknown[] }
 
@@ -385,6 +387,16 @@ class QueryBuilder<TModel> {
   count(): Promise<number>                     // SELECT COUNT(*) — ignores LIMIT
   exists(): Promise<boolean>                   // SELECT 1 ... LIMIT 1
   pluck<T>(column: string): Promise<T[]>
+  /** Offset pagination — main query + COUNT(*) in parallel. */
+  paginate(opts: { page: number; perPage: number }): Promise<PaginatedResult<TModel>>
+}
+
+interface PaginatedResult<TModel> {
+  data: TModel[]            // page rows (with any .with(...) eager-loads applied)
+  total: number              // total rows matching the query
+  page: number
+  perPage: number
+  totalPages: number         // Math.ceil(total / perPage)
 }
 
 type WhereOperator =
@@ -404,6 +416,29 @@ When the schema declared `t.softDeletes()`, `QueryBuilder` automatically appends
 - `onlyTrashed()` — flip the predicate to `IS NOT NULL`; query returns only trashed rows. Throws on schemas without `t.softDeletes()`.
 
 The default scope applies to every terminal — `get`, `first`, `firstOrFail`, `count`, `exists`, `pluck` — because they all share `compileWhere`. See [`guides/soft_delete.md`](./guides/soft_delete.md) for the full pattern.
+
+### Eager loading
+
+`.with(...names)` runs the main query, then issues ONE batched SELECT per declared relation (`WHERE fk IN (parent ids)`), and attaches results to parents. This is the N+1 prevention guarantee — for N relations on N parents, you get exactly N+1 queries.
+
+- **`hasMany`** → attaches as an array on each parent (empty for parents with no children).
+- **`belongsTo`** → attaches as a single row or `null` (foreign-key values are deduplicated before lookup).
+- Children are plain `Record<string, unknown>` — V1 doesn't hydrate them to Model instances. Apps that need typed children cast: `user.posts as Post[]`.
+- Requires a `SchemaRegistry` to be wired on the builder via the Repository constructor; `.with()` throws otherwise. The relation name must exist on the schema (declared via `t.hasMany` / `t.belongsTo`).
+- `.with(...)` flows through every terminal — `get`, `first`, `firstOrFail`, `paginate`.
+
+See [`guides/relationships.md`](./guides/relationships.md) for the full pattern + the deferred items (typed children, nested loads, `hasOne` / `belongsToMany`, lazy loading, cursor pagination).
+
+### Pagination
+
+`.paginate({ page, perPage })` runs the main SELECT with `LIMIT/OFFSET` AND a parallel `COUNT(*)`, returning the page rows + total. `page` is 1-based; both args must be positive integers. The page result has eager-loads applied — `.with('posts').paginate({...})` populates `posts` on the returned rows.
+
+```ts
+const result = await users.query().orderBy('created_at', 'desc').paginate({ page: 1, perPage: 20 })
+// { data: User[], total, page, perPage, totalPages }
+```
+
+Cursor pagination (`.cursorPaginate(...)`) is a follow-up — needs an explicit sort-key contract. For tables under ~10k page-deep rows, offset is fine.
 
 ## SQL emitter
 

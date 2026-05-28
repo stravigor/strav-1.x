@@ -130,6 +130,37 @@ export interface SchemaTenancy {
   tenanted?: boolean
 }
 
+/**
+ * A relationship declaration on a schema. Drives `QueryBuilder.with(...)`
+ * eager loading; doesn't affect DDL emission (FK columns are declared
+ * separately via `t.reference(...)`).
+ *
+ * V1 supports `hasMany` (one-to-many — parent has many children whose
+ * `foreignKey` column points back) and `belongsTo` (the inverse —
+ * the row owns a single related row identified by a local
+ * `foreignKey` column). `hasOne` + `belongsToMany` are follow-up
+ * slices.
+ */
+export type SchemaRelation =
+  | {
+      kind: 'hasMany'
+      /** Accessor name on the parent row (e.g. `posts` on a user). */
+      name: string
+      /** Target schema name (the child table, e.g. `'post'`). */
+      target: string
+      /** Column on the CHILD that points back to the parent's PK. */
+      foreignKey: string
+    }
+  | {
+      kind: 'belongsTo'
+      /** Accessor name on this row (e.g. `author` on a post). */
+      name: string
+      /** Target schema name (the parent table, e.g. `'user'`). */
+      target: string
+      /** Column on THIS row holding the parent's PK. */
+      foreignKey: string
+    }
+
 /** Compiled schema returned from `defineSchema()`. */
 export interface Schema {
   /** Snake-case singular name (matches the DB table 1:1). */
@@ -137,4 +168,6 @@ export interface Schema {
   readonly archetype: Archetype
   readonly fields: readonly SchemaField[]
   readonly tenancy: SchemaTenancy
+  /** Declared relations to other schemas; drives `QueryBuilder.with(...)`. */
+  readonly relations: readonly SchemaRelation[]
 }

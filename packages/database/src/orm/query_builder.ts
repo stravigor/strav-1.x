@@ -17,11 +17,26 @@
 import { NotFoundError } from '@strav/kernel'
 import type { DatabaseExecutor } from '../database.ts'
 import type { Schema } from '../schema/types.ts'
+import type { SchemaRegistry } from '../schema_registry.ts'
 import { hydrateRow, type ModelClass } from './model.ts'
 import { quoteIdent, schemaHasSoftDelete, selectColumnList } from './sql_emitter.ts'
 
 /** Soft-delete scope applied to the WHERE clause. */
 type TrashedScope = 'exclude' | 'include' | 'only'
+
+/** Result of an offset-paginated query. */
+export interface PaginatedResult<TModel> {
+  /** The rows for this page (already eager-loaded if `.with(...)` was used). */
+  data: TModel[]
+  /** Total rows matching the query — runs a parallel `COUNT(*)`. */
+  total: number
+  /** The page number that was requested. */
+  page: number
+  /** Rows per page that was requested. */
+  perPage: number
+  /** `Math.ceil(total / perPage)`. */
+  totalPages: number
+}
 
 export type WhereOperator =
   | '='
@@ -67,6 +82,8 @@ export class QueryBuilder<TModel extends object = Record<string, unknown>> {
    * No-op on schemas without a `deleted_at` column.
    */
   private trashedScope: TrashedScope = 'exclude'
+  /** Relation names requested via `.with(...)` — loaded after the main query. */
+  private readonly eagerLoads: string[] = []
 
   constructor(
     private readonly schema: Schema,
@@ -74,6 +91,7 @@ export class QueryBuilder<TModel extends object = Record<string, unknown>> {
     private readonly modelCtor:
       | ModelClass<TModel & { constructor: ModelClass<TModel> }>
       | undefined,
+    private readonly registry?: SchemaRegistry,
   ) {}
 
   // ─── Modifiers (each returns a fresh builder; chainable) ───────────────────
@@ -182,6 +200,27 @@ export class QueryBuilder<TModel extends object = Record<string, unknown>> {
     return next
   }
 
+  /**
+   * Eager-load one or more declared relations. After the main query
+   * returns, the builder runs ONE additional SELECT per relation
+   * (`WHERE fk IN (parent ids)`), groups the children by foreign key,
+   * and attaches them to the parents as plain row objects.
+   *
+   * Requires a `SchemaRegistry` to be wired on the builder (passed via
+   * `Repository`'s constructor). `.with()` throws if no registry was
+   * provided or if the relation name isn't on this schema.
+   *
+   * Eager-loaded children come back as plain `Record<string, unknown>`
+   * — V1 doesn't hydrate them to Model instances. Apps that need typed
+   * children cast: `user.posts as Post[]`. Typed-Model children land
+   * with the relations follow-up (needs a Model registry).
+   */
+  with(...names: string[]): QueryBuilder<TModel> {
+    const next = this.clone()
+    next.eagerLoads.push(...names)
+    return next
+  }
+
   // ─── Build ─────────────────────────────────────────────────────────────────
 
   /** Compile to `{ sql, params }`. Used by every terminal method. */
@@ -207,7 +246,9 @@ export class QueryBuilder<TModel extends object = Record<string, unknown>> {
   async get(): Promise<TModel[]> {
     const { sql, params } = this.toSql()
     const rows = await this.db.query<Record<string, unknown>>(sql, params)
-    return rows.map((row) => this.hydrate(row))
+    const models = rows.map((row) => this.hydrate(row))
+    if (this.eagerLoads.length > 0) await this.loadEager(models)
+    return models
   }
 
   /** First row or null. Implicit `LIMIT 1`. */
@@ -215,7 +256,10 @@ export class QueryBuilder<TModel extends object = Record<string, unknown>> {
     const limited = this.limitN === undefined ? this.limit(1) : this
     const { sql, params } = limited.toSql()
     const row = await this.db.queryOne<Record<string, unknown>>(sql, params)
-    return row ? this.hydrate(row) : null
+    if (!row) return null
+    const model = this.hydrate(row)
+    if (this.eagerLoads.length > 0) await this.loadEager([model])
+    return model
   }
 
   /** First row; throws `NotFoundError` when missing. */
@@ -227,6 +271,44 @@ export class QueryBuilder<TModel extends object = Record<string, unknown>> {
       })
     }
     return found
+  }
+
+  /**
+   * Offset pagination. Runs the main SELECT with `LIMIT perPage OFFSET
+   * (page - 1) * perPage` PLUS a parallel `COUNT(*)` for the total.
+   * Honors every WHERE / soft-delete predicate; eager-loads via `.with()`
+   * run on the page's rows.
+   *
+   * `page` is 1-based. Apps typically read it from a query string +
+   * clamp to >= 1 before calling.
+   *
+   * Cursor pagination (`.cursorPaginate(...)`) is a follow-up — it's
+   * faster on large tables and stable under inserts, but needs a
+   * sort-key contract.
+   */
+  async paginate({
+    page,
+    perPage,
+  }: {
+    page: number
+    perPage: number
+  }): Promise<PaginatedResult<TModel>> {
+    if (!Number.isInteger(page) || page < 1) {
+      throw new Error(`QueryBuilder.paginate: page must be a positive integer, got ${page}.`)
+    }
+    if (!Number.isInteger(perPage) || perPage < 1) {
+      throw new Error(`QueryBuilder.paginate: perPage must be a positive integer, got ${perPage}.`)
+    }
+    const offset = (page - 1) * perPage
+    const sized = this.limit(perPage).offset(offset)
+    const [data, total] = await Promise.all([sized.get(), this.count()])
+    return {
+      data,
+      total,
+      page,
+      perPage,
+      totalPages: total === 0 ? 0 : Math.ceil(total / perPage),
+    }
   }
 
   /** Aggregate row count for the matched set (ignores LIMIT / OFFSET / SELECT). */
@@ -269,14 +351,96 @@ export class QueryBuilder<TModel extends object = Record<string, unknown>> {
     return hydrateRow(this.schema, row, instance as object) as TModel
   }
 
+  /**
+   * Eager-load every relation requested via `.with(...)` onto the given
+   * parent rows. One SELECT per relation, batched via `WHERE fk IN
+   * (parentIds)`. Children attach as plain `Record<string, unknown>`
+   * (hasMany → array; belongsTo → single object or null).
+   *
+   * Throws if the builder has no `SchemaRegistry` wired or if a requested
+   * relation name isn't on the schema. Apps reach for this via Repository
+   * (which threads the registry through automatically).
+   */
+  private async loadEager(parents: TModel[]): Promise<void> {
+    if (parents.length === 0) return
+    if (!this.registry) {
+      throw new Error(
+        `QueryBuilder.with("${this.schema.name}"): eager loading requires a SchemaRegistry — construct the Repository with one (the @inject() flow does this automatically when SchemaRegistry is bound on the container).`,
+      )
+    }
+
+    for (const name of this.eagerLoads) {
+      const relation = this.schema.relations.find((r) => r.name === name)
+      if (!relation) {
+        throw new Error(
+          `QueryBuilder.with: schema "${this.schema.name}" has no relation named "${name}". ` +
+            `Declared relations: ${this.schema.relations.map((r) => r.name).join(', ') || '(none)'}.`,
+        )
+      }
+
+      const target = this.registry.getOrFail(relation.target)
+
+      if (relation.kind === 'hasMany') {
+        // Parent's PK (`id`) → child's foreignKey column.
+        const parentIds = parents
+          .map((p) => (p as Record<string, unknown>).id)
+          .filter((id) => id !== undefined && id !== null)
+        if (parentIds.length === 0) {
+          for (const parent of parents) {
+            ;(parent as Record<string, unknown>)[name] = []
+          }
+          continue
+        }
+        const placeholders = parentIds.map((_, i) => `$${i + 1}`).join(', ')
+        const childSql = `SELECT * FROM ${quoteIdent(target.name)} WHERE ${quoteIdent(relation.foreignKey)} IN (${placeholders})`
+        const children = await this.db.query<Record<string, unknown>>(childSql, parentIds)
+        const byParent = new Map<unknown, Record<string, unknown>[]>()
+        for (const row of children) {
+          const fk = row[relation.foreignKey]
+          const list = byParent.get(fk) ?? []
+          list.push(row)
+          byParent.set(fk, list)
+        }
+        for (const parent of parents) {
+          const id = (parent as Record<string, unknown>).id
+          ;(parent as Record<string, unknown>)[name] = byParent.get(id) ?? []
+        }
+      } else {
+        // belongsTo: parent's foreignKey column → target's PK (`id`).
+        const fkValues = parents
+          .map((p) => (p as Record<string, unknown>)[relation.foreignKey])
+          .filter((v) => v !== undefined && v !== null)
+        if (fkValues.length === 0) {
+          for (const parent of parents) {
+            ;(parent as Record<string, unknown>)[name] = null
+          }
+          continue
+        }
+        const unique = Array.from(new Set(fkValues))
+        const placeholders = unique.map((_, i) => `$${i + 1}`).join(', ')
+        const targetSql = `SELECT * FROM ${quoteIdent(target.name)} WHERE ${quoteIdent('id')} IN (${placeholders})`
+        const rows = await this.db.query<Record<string, unknown>>(targetSql, unique)
+        const byId = new Map<unknown, Record<string, unknown>>()
+        for (const row of rows) {
+          byId.set(row.id, row)
+        }
+        for (const parent of parents) {
+          const fk = (parent as Record<string, unknown>)[relation.foreignKey]
+          ;(parent as Record<string, unknown>)[name] = byId.get(fk) ?? null
+        }
+      }
+    }
+  }
+
   private clone(): QueryBuilder<TModel> {
-    const next = new QueryBuilder<TModel>(this.schema, this.db, this.modelCtor)
+    const next = new QueryBuilder<TModel>(this.schema, this.db, this.modelCtor, this.registry)
     next.wheres.push(...this.wheres)
     next.orders.push(...this.orders)
     next.selectColumns = this.selectColumns
     next.limitN = this.limitN
     next.offsetN = this.offsetN
     next.trashedScope = this.trashedScope
+    next.eagerLoads.push(...this.eagerLoads)
     return next
   }
 

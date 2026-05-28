@@ -33,6 +33,7 @@
 import { type EventBus, NotFoundError } from '@strav/kernel'
 import type { Database, DatabaseExecutor, PostgresDatabase } from '../database.ts'
 import type { Schema } from '../schema/types.ts'
+import type { SchemaRegistry } from '../schema_registry.ts'
 import { transactionalStorage } from '../unit_of_work/context.ts'
 import { hydrateRow, type ModelClass } from './model.ts'
 import { QueryBuilder } from './query_builder.ts'
@@ -117,13 +118,16 @@ export abstract class Repository<TModel extends object> {
   /**
    * `events` is optional so subclasses that don't need lifecycle hooks can
    * stay as-is (and so apps under test can construct a Repository without
-   * wiring a bus). When the param IS bound (which the @inject() flow does
-   * automatically in real apps), `create` / `update` / `delete` fire the
-   * canonical `<resource>.<verb>ing` / `.<verb>ed` events.
+   * wiring a bus). `registry` is optional too — apps that use eager
+   * loading via `query().with(...)` need it; everything else works without.
+   * Both are auto-resolved by the container when the subclass's
+   * constructor declares them (the @inject() flow reads paramtypes via
+   * reflect-metadata).
    */
   constructor(
     protected readonly db: PostgresDatabase,
     protected readonly events?: EventBus,
+    protected readonly registry?: SchemaRegistry,
   ) {
     const Ctor = this.constructor as unknown as {
       schema?: Schema
@@ -370,7 +374,7 @@ export abstract class Repository<TModel extends object> {
 
   /** Fluent query builder scoped to this repository's schema. */
   query(opts?: RepositoryScope): QueryBuilder<TModel> {
-    return new QueryBuilder<TModel>(this.schema, this.executor(opts), this.modelCtor)
+    return new QueryBuilder<TModel>(this.schema, this.executor(opts), this.modelCtor, this.registry)
   }
 
   // ─── Aggregates ────────────────────────────────────────────────────────────
