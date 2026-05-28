@@ -26,7 +26,12 @@ import { quoteIdent } from '../orm/sql_emitter.ts'
 import type { EnumField, ReferenceField, Schema, SchemaField } from '../schema/types.ts'
 import type { SchemaRegistry } from '../schema_registry.ts'
 import { findPrimaryKey, isPrimaryKeyKind, resolveReferenceTarget, sqlTypeFor } from './sql_type.ts'
-import { emitRlsForTenanted, tenantIdColumnField, tenantRegistrySchema } from './tenancy.ts'
+import {
+  emitRlsForTenanted,
+  emitTenantedBigSerialSetup,
+  tenantIdColumnField,
+  tenantRegistrySchema,
+} from './tenancy.ts'
 
 export interface EmittedDdl {
   sql: string
@@ -65,8 +70,13 @@ export function emitCreateTable(schema: Schema, opts: EmitOptions = {}): Emitted
     return { sql: createTable }
   }
 
-  const rls = emitRlsForTenanted(schema, opts.registry)
-  return { sql: `${createTable};\n${rls}` }
+  const pk = findPrimaryKey(schema)
+  const parts: string[] = [createTable]
+  if (pk.kind === 'tenantedBigSerial') {
+    parts.push(emitTenantedBigSerialSetup(schema, opts.registry))
+  }
+  parts.push(emitRlsForTenanted(schema, opts.registry))
+  return { sql: parts.join(';\n') }
 }
 
 /**
@@ -204,18 +214,26 @@ export function emitDropIndex(name: string, opts: { ifExists?: boolean } = {}): 
  */
 export function columnDefinition(field: SchemaField, registry?: SchemaRegistry): string {
   const isPk = isPrimaryKeyKind(field)
+  // `tenantedBigSerial` gets a composite (tenant_id, id) PRIMARY KEY at
+  // the table-constraint level — the inline `PRIMARY KEY` per-column
+  // is skipped. The DEFAULT 0 lets callers omit `id` on INSERT; the
+  // BEFORE INSERT trigger replaces 0 with the per-tenant next-id.
+  const tenantedBigSerial = field.kind === 'tenantedBigSerial'
+  const inlinePk = isPk && !tenantedBigSerial
 
   const parts: string[] = [quoteIdent(field.name), sqlTypeFor(field, registry)]
 
   // PRIMARY KEY implies NOT NULL + UNIQUE — don't re-emit the implications.
-  if (isPk) {
+  if (inlinePk) {
     parts.push('PRIMARY KEY')
   } else {
     if (!field.nullable) parts.push('NOT NULL')
     if (field.unique) parts.push('UNIQUE')
   }
 
-  if (field.hasDefault) {
+  if (tenantedBigSerial) {
+    parts.push('DEFAULT 0')
+  } else if (field.hasDefault) {
     parts.push(`DEFAULT ${defaultSql(field.default)}`)
   }
 

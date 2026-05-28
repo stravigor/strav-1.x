@@ -55,7 +55,13 @@ ULID is the default. Lexicographically sortable, 26-char, secret-scanner-friendl
 
 **No `t.serial()` (32-bit int).** Intentionally omitted — bigint-by-default avoids the painful overflow migration that 32-bit `serial` PKs eventually force (Postgres `serial` tops out at ~2.1 billion). `bigSerial` is the only auto-increment kind Strav ships; choose ULID if you don't need a numeric PK.
 
-**`t.tenantedBigSerial()` is partially implemented today** — the column emits as plain `bigint NOT NULL PRIMARY KEY`. The per-tenant sequence + trigger + composite `(tenant_id, id)` PK that make it actually per-tenant land in a follow-up tenancy slice. Until then, **prefer `t.id()` (ULID) for tenanted schemas** — globally unique by construction, no per-tenant plumbing needed. The builder method exists so apps can adopt the name now and migrate to real per-tenant sequencing later without renaming columns.
+**`t.tenantedBigSerial()` ships per-tenant sequencing on `tenanted: true` schemas.** The DDL emitter wires:
+- the column as `bigint NOT NULL DEFAULT 0` (no inline `PRIMARY KEY`),
+- a composite `PRIMARY KEY (tenant_id, id)` so id values can repeat across tenants,
+- a `BEFORE INSERT` trigger that replaces `0` with the next-id allocated from a shared `_strav_tenant_sequences` counter table (idempotent — re-running migrations is safe),
+- the same RLS plumbing every tenanted schema gets.
+
+Each tenant's ids start at 1 and increment independently — Tenant A's `ledger` rows 1, 2, 3 coexist with Tenant B's `ledger` rows 1, 2 in the same table without collision. Outside a `tenanted: true` schema, `t.tenantedBigSerial()` still emits as `bigint NOT NULL DEFAULT 0` but without the trigger / composite PK — the per-tenant sequencing requires the tenant FK to key off, so non-tenanted use is the degraded "just a numeric column" mode. For tenanted schemas where you don't need per-tenant numeric ids, **prefer `t.id()` (ULID)** — globally unique, no trigger.
 
 ### Scalars
 

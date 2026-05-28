@@ -45,6 +45,7 @@ export {
   emitRenameColumn,
   emitRenameTable,
   emitRlsForTenanted,
+  emitTenantedBigSerialSetup,
   findPrimaryKey,
   isPrimaryKeyKind,
   sqlTypeFor,

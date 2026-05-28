@@ -75,6 +75,33 @@ class PostRepository extends Repository<Post> {
   static override readonly model: ModelClass = Post as unknown as ModelClass
 }
 
+// Per-tenant sequencing fixture — tenantedBigSerial PK exercises the
+// trigger + composite (tenant_id, id) PK + counter table.
+const ledgerSchema = defineSchema(
+  'ledger',
+  Archetype.Entity,
+  (t) => {
+    t.tenantedBigSerial()
+    t.string('description').max(255)
+    t.timestamps()
+  },
+  { tenanted: true },
+)
+
+class Ledger extends Model {
+  static override readonly schema = ledgerSchema
+  id!: number
+  tenant_id!: string
+  description!: string
+  created_at!: Date
+  updated_at!: Date
+}
+
+class LedgerRepository extends Repository<Ledger> {
+  static override readonly schema = ledgerSchema
+  static override readonly model: ModelClass = Ledger as unknown as ModelClass
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Smoke suite
 // ─────────────────────────────────────────────────────────────────────────────
@@ -90,12 +117,15 @@ describe.skipIf(!PG_AVAILABLE)('integration: Postgres smoke', () => {
     registry = new SchemaRegistry()
     registry.register(tenantSchema)
     registry.register(postSchema)
+    registry.register(ledgerSchema)
 
     // Bring up the tables with the framework's DDL emitter. Real planner
     // accepts what `emitCreateTable` produces — including the RLS plumbing
-    // for the tenanted schema.
+    // for the tenanted schemas + the per-tenant sequencing layer for the
+    // ledger (tenantedBigSerial PK).
     await db.execute(emitCreateTable(tenantSchema, { registry }).sql)
     await db.execute(emitCreateTable(postSchema, { registry }).sql)
+    await db.execute(emitCreateTable(ledgerSchema, { registry }).sql)
   })
 
   afterAll(async () => {
@@ -180,6 +210,54 @@ describe.skipIf(!PG_AVAILABLE)('integration: Postgres smoke', () => {
     })
     expect(globexView).toHaveLength(1)
     expect(globexView[0]?.title).toBe('Globex welcome')
+  })
+
+  test('tenantedBigSerial assigns per-tenant ids starting at 1, independent per tenant', async () => {
+    const tenants = new TenantManager(db, new EventBus())
+
+    // Acme inserts three ledger rows.
+    const acmeRows = await tenants.withTenant('01TENANTAAA000000000000001', async () => {
+      const ledgers = new LedgerRepository(db)
+      const a = await ledgers.create({
+        tenant_id: '01TENANTAAA000000000000001',
+        description: 'opening balance',
+      } as never)
+      const b = await ledgers.create({
+        tenant_id: '01TENANTAAA000000000000001',
+        description: 'first transaction',
+      } as never)
+      const c = await ledgers.create({
+        tenant_id: '01TENANTAAA000000000000001',
+        description: 'second transaction',
+      } as never)
+      return [a, b, c]
+    })
+    // The BEFORE INSERT trigger replaced DEFAULT 0 with 1, 2, 3.
+    expect(acmeRows.map((l) => Number(l.id))).toEqual([1, 2, 3])
+
+    // Globex inserts two ledger rows — ids start fresh at 1 (per-tenant).
+    const globexRows = await tenants.withTenant('01TENANTBBB000000000000002', async () => {
+      const ledgers = new LedgerRepository(db)
+      const a = await ledgers.create({
+        tenant_id: '01TENANTBBB000000000000002',
+        description: 'globex opening',
+      } as never)
+      const b = await ledgers.create({
+        tenant_id: '01TENANTBBB000000000000002',
+        description: 'globex first',
+      } as never)
+      return [a, b]
+    })
+    expect(globexRows.map((l) => Number(l.id))).toEqual([1, 2])
+
+    // The counter table reflects both tenants' last_id values.
+    const counters = await db.query<{ tenant_id: string; last_id: number | string }>(
+      'SELECT tenant_id, last_id FROM "_strav_tenant_sequences" WHERE table_name = $1 ORDER BY tenant_id',
+      ['ledger'],
+    )
+    expect(counters).toHaveLength(2)
+    expect(Number(counters[0]?.last_id)).toBe(3)
+    expect(Number(counters[1]?.last_id)).toBe(2)
   })
 })
 

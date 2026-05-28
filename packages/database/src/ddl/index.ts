@@ -16,4 +16,9 @@ export {
   emitRenameTable,
 } from './emit.ts'
 export { findPrimaryKey, isPrimaryKeyKind, sqlTypeFor } from './sql_type.ts'
-export { emitRlsForTenanted, tenantIdColumnName, tenantRegistrySchema } from './tenancy.ts'
+export {
+  emitRlsForTenanted,
+  emitTenantedBigSerialSetup,
+  tenantIdColumnName,
+  tenantRegistrySchema,
+} from './tenancy.ts'

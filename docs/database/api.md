@@ -1,6 +1,6 @@
 # @strav/database — API Reference
 
-> **Status:** Reflects what's implemented as of M2 — Database wrapper, DatabaseProvider, Schema DSL (including `t.softDeletes()` / `t.hasMany()` / `t.belongsTo()` / `t.encrypted()`), SchemaRegistry, MigrationRunner, Model with `@hidden` / `@cast` / `@ulid` / `@encrypt` decorators, Repository<T> (lifecycle events + `{ tx? }` opt-in / ALS auto-routing + soft-delete + restore/forceDelete), QueryBuilder (`.with(...)` eager loading + soft-delete scopes + `.paginate({ page, perPage })`), SQL emitter, DDL emitters (including indexes + renames), schema-diff generator (additive + destructive with `allowDrop` + `renames`), multi-tenancy (DDL + TenantManager.withTenant / withoutTenant / withTenantLock / withLock built on UoW), `UnitOfWork.run(fn)` with queue-until-commit lifecycle events, boot-time `validateTenantRegistry` + `emitTenantIdFunction`, Cipher + EncryptionProvider. Explicit `.join()` / `tenantedBigSerial` per-tenant sequencing / two-role connection config / migration builder DSL / `generateMigration` type-change detection all land in follow-up cuts.
+> **Status:** Reflects what's implemented as of M2 — Database wrapper, DatabaseProvider, Schema DSL (including `t.softDeletes()` / `t.hasMany()` / `t.belongsTo()` / `t.encrypted()`), SchemaRegistry, MigrationRunner, Model with `@hidden` / `@cast` / `@ulid` / `@encrypt` decorators, Repository<T> (lifecycle events + `{ tx? }` opt-in / ALS auto-routing + soft-delete + restore/forceDelete), QueryBuilder (`.with(...)` eager loading + soft-delete scopes + `.paginate({ page, perPage })`), SQL emitter, DDL emitters (including indexes + renames), schema-diff generator (additive + destructive with `allowDrop` + `renames`), multi-tenancy (DDL + TenantManager.withTenant / withoutTenant / withTenantLock / withLock built on UoW), `UnitOfWork.run(fn)` with queue-until-commit lifecycle events, boot-time `validateTenantRegistry` + `emitTenantIdFunction`, Cipher + EncryptionProvider. Explicit `.join()` / two-role connection config / migration builder DSL / `generateMigration` type-change detection all land in follow-up cuts.
 
 ## `Database` / `PostgresDatabase`
 
@@ -109,7 +109,7 @@ Immutable. `fields` preserves declaration order so generated SQL is auditable.
 | `'id'` | (ULID by default) |
 | `'uuid'` | — |
 | `'bigSerial'` | (auto-increment bigint) |
-| `'tenantedBigSerial'` | (per-tenant auto-increment bigint — column emits as plain `bigint` today; per-tenant sequencing deferred) |
+| `'tenantedBigSerial'` | (per-tenant auto-increment `bigint` — on `tenanted: true` schemas the emitter wires a composite `(tenant_id, id)` PK + `BEFORE INSERT` trigger + shared counter table) |
 | `'string'` | `max: number` (default 255) |
 | `'text'` | — |
 | `'integer'` | — |
@@ -131,10 +131,10 @@ Identity:
 t.id()                                   // ULID, name 'id'
 t.uuid()                                 // UUID variant
 t.bigSerial()                            // auto-increment bigint
-t.tenantedBigSerial()                    // per-tenant auto-increment bigint — DEFERRED (emits plain bigint today)
+t.tenantedBigSerial()                    // per-tenant auto-increment bigint (composite PK + trigger; tenanted-only)
 ```
 
-`t.serial()` (32-bit int) is intentionally not provided — bigint-by-default avoids the painful overflow migration that 32-bit serial PKs eventually force. `t.tenantedBigSerial()` is reserved for the per-tenant sequencing slice; today it emits a plain `bigint NOT NULL PRIMARY KEY`. Prefer `t.id()` (ULID) for tenanted schemas until the sequence + trigger plumbing lands.
+`t.serial()` (32-bit int) is intentionally not provided — bigint-by-default avoids the painful overflow migration that 32-bit serial PKs eventually force. `t.tenantedBigSerial()` on a `tenanted: true` schema emits the full per-tenant sequencing layer: column as `bigint NOT NULL DEFAULT 0`, composite `PRIMARY KEY (tenant_id, id)`, a `BEFORE INSERT` trigger that allocates the next per-tenant id from `_strav_tenant_sequences`. On a non-tenanted schema, `t.tenantedBigSerial()` degrades to just `bigint NOT NULL DEFAULT 0` (no trigger / composite PK / RLS). Prefer `t.id()` (ULID) when you don't need per-tenant numeric ids — globally unique, no trigger.
 
 Scalars:
 
@@ -625,7 +625,7 @@ function isPrimaryKeyKind(field: SchemaField): boolean
 | `id` | `char(26)` | ULID — exactly 26 Crockford base32 chars. Inline `PRIMARY KEY`. |
 | `uuid` | `uuid` | Inline `PRIMARY KEY`. |
 | `bigSerial` | `bigserial` | Inline `PRIMARY KEY`. Postgres auto-creates the sequence. |
-| `tenantedBigSerial` | `bigint` | Inline `PRIMARY KEY`. Per-tenant sequencing (trigger + sequence + composite `(tenant_id, id)` PK) lands with a follow-up tenancy slice — today the column is just `bigint NOT NULL PRIMARY KEY`. |
+| `tenantedBigSerial` | `bigint NOT NULL DEFAULT 0` | On `tenanted: true` schemas: composite `PRIMARY KEY (tenant_id, id)` + `BEFORE INSERT` trigger calling `_strav_next_tenant_id(table, tenant_id)`. On non-tenanted schemas: just the plain column (no trigger / composite PK). |
 | `string` | `varchar(N)` | `N` = `.max` (default 255). |
 | `text` | `text` | |
 | `integer` | `integer` | |
@@ -868,7 +868,6 @@ Apps include it in their initial tenancy migration. After that, raw-SQL paths ca
 
 Each is its own follow-up tenancy slice:
 
-- **Composite `(tenant_id, id)` PK for `t.tenantedBigSerial()`.** Today's tenanted schemas should use `t.id()` (ULID) — globally unique by construction, so the tenant FK is just a scoping column. `t.tenantedBigSerial()` emits a plain `bigint NOT NULL PRIMARY KEY` today; the per-tenant sequence + trigger + composite PK plumbing lands with this slice.
 - **Two-role connection config.** Apps need a `NOBYPASSRLS` Postgres role for runtime + a `BYPASSRLS` role for migrations / admin. Today: wire two `DatabaseProvider`s with different config slices. Framework-managed dual roles land later.
 - **Boot-time tenant-registry validation.** The provider doesn't yet check that the tenant registry table exists in the live DB with the expected PK type. Misconfiguration surfaces as a Postgres error at first query.
 - **Schema-diff awareness.** `generateMigration` doesn't detect "this existing table is missing its tenant_id column / RLS policy." Apps adding tenancy to an existing table write the migration explicitly.

@@ -131,6 +131,48 @@ await tenants.withLock('housekeeping:expire-tokens', async (tx) => {
 
 If you call `withTenantLock` inside an existing `withTenant`, the lock is acquired on the existing transaction — no nested transaction opened. Multiple locks in the same scope compose (Postgres allows many advisory locks per transaction); they all release together at COMMIT/ROLLBACK.
 
+## Per-tenant sequenced ids — `t.tenantedBigSerial()`
+
+Tenanted schemas usually use `t.id()` (ULID) — globally unique, no extra plumbing. When you need **per-tenant numeric ids** (invoice numbers that restart at 1 for each tenant, ledger entry counters, etc.), declare the PK with `t.tenantedBigSerial()`:
+
+```ts
+export const ledgerSchema = defineSchema(
+  'ledger',
+  Archetype.Entity,
+  (t) => {
+    t.tenantedBigSerial()      // ← per-tenant numeric PK
+    t.string('description').max(255)
+    t.timestamps()
+  },
+  { tenanted: true },
+)
+```
+
+The DDL emitter wires four things on top of the standard tenanted-table plumbing:
+
+1. The column emits as `bigint NOT NULL DEFAULT 0` (no inline `PRIMARY KEY`).
+2. A composite `PRIMARY KEY (tenant_id, id)` so id values can repeat across tenants.
+3. A shared `_strav_tenant_sequences` counter table + `_strav_next_tenant_id(table, tenant_id)` SQL function — both `CREATE ... IF NOT EXISTS` / `CREATE OR REPLACE`, so re-running migrations is safe.
+4. A per-table `BEFORE INSERT` trigger that replaces `0` with the next id allocated for `(table, tenant_id)`.
+
+Inserts work the same as any other tenanted schema:
+
+```ts
+await tenants.withTenant(tenantA, async () => {
+  await ledgerRepo.create({ tenant_id: tenantA, description: 'opening balance' })
+  // → tenant A's ledger row has id = 1
+  await ledgerRepo.create({ tenant_id: tenantA, description: 'first transaction' })
+  // → id = 2
+})
+
+await tenants.withTenant(tenantB, async () => {
+  await ledgerRepo.create({ tenant_id: tenantB, description: 'globex opening' })
+  // → tenant B's ledger row has id = 1 (independent counter)
+})
+```
+
+Callers can override the trigger by passing a non-zero `id` explicitly — useful for tests + seed data. The counter table holds `(table_name, tenant_id, last_id)`; querying it is the canonical "next id will be" check.
+
 ## Two Postgres roles
 
 Until the framework ships dual-role config, do it manually:
@@ -219,7 +261,6 @@ Outside `withTenant`, `current_tenant_id()` returns `NULL` (the `true` second ar
 
 Each is its own follow-up slice:
 
-- **Composite `(tenant_id, id)` PK for `t.tenantedBigSerial()`.** Today's tenanted schemas use `t.id()` (ULID), which is globally unique by construction. Per-tenant auto-incrementing sequences (the `tenantedBigSerial` case) need the per-tenant sequence + trigger plumbing — `t.tenantedBigSerial()` emits a plain `bigint NOT NULL PRIMARY KEY` today and is reserved for the follow-up slice.
 - **Framework-managed dual-role config.** Apps wire two `DatabaseProvider`s manually today.
 - **`generateMigration` tenancy awareness.** The diff doesn't yet add `tenant_id` + RLS to an existing table that's missing them. Apps that retrofit tenancy onto an existing table write the migration explicitly (use `emitRlsForTenanted` + a hand-written `ALTER TABLE … ADD COLUMN`).
 - **Tenant-id rotation / impersonation.** Useful for admin tooling ("view as tenant X"). Trivial to layer on top of `withTenant`; not part of V1.
