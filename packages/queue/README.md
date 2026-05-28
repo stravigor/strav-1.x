@@ -2,7 +2,7 @@
 
 Background-job primitives for Strav 1.0 — the `Job` base class, the `JobRegistry`, the `Queue` contract, and a synchronous in-process driver. Postgres-backed `DatabaseQueue` + `Worker` + `Scheduler` land in follow-up M3 slices.
 
-> **Status: 1.0.0-alpha — M3 in progress (contract layer + `SyncQueue` + `DatabaseQueue` (queue-until-commit) + `Worker` (SKIP LOCKED + backoff) + `Scheduler` (cron + `onOneServer`) shipped; failed-jobs table + retry to follow).**
+> **Status: 1.0.0-alpha — queue package functionally complete.** Contract layer + `SyncQueue` + `DatabaseQueue` (queue-until-commit) + `Worker` (SKIP LOCKED + backoff + atomic-move-to-failed) + `Scheduler` (cron + `onOneServer`) + `failedJobsSchema` all shipped. Only the `queue:retry` / `queue:flush` console commands remain — they wait on `@strav/cli` (M4).
 
 ## Install
 
@@ -219,8 +219,25 @@ Register `schedulerRunsSchema` alongside `jobSchema` in your `SchemaRegistry` so
 
 Cron matching is UTC-based for predictability. Helper builders cover the common cases (`everyMinute`, `everyMinutes`, `hourly`, `daily`, `dailyAt`) — reach for `cron(expression)` directly when you need weekly / monthly / arbitrary expressions.
 
+## Failed jobs — `strav_failed_jobs` dead-letter
+
+When `Worker.processOne()` exhausts a job's `max_attempts`, the row moves from `strav_jobs` to `strav_failed_jobs` atomically (INSERT + DELETE in one transaction). Apps inspect this table to triage what blew up:
+
+```sql
+SELECT job_name, exception, attempts, failed_at
+FROM strav_failed_jobs
+WHERE job_name = 'mail.welcome'
+ORDER BY failed_at DESC;
+```
+
+Register `failedJobsSchema` alongside `jobSchema` + `schedulerRunsSchema` so `generateMigration` picks up the table:
+
+```ts
+registry.registerAll([userSchema, jobSchema, schedulerRunsSchema, failedJobsSchema])
+```
+
+The `queue:retry` / `queue:flush` console commands (bulk re-enqueue / drop) ship with `@strav/cli` in M4. Until then, retry by hand: SELECT the failed row, INSERT into `strav_jobs` with the same payload, DELETE from `strav_failed_jobs`.
+
 ## What's NOT here yet
 
-Each is its own M3 slice:
-
-- **Failed-jobs handling** — `failed_jobs` table, `queue:retry` / `queue:flush` console commands (need `@strav/cli`, lands in M4).
+- **`queue:retry` / `queue:flush` console commands** — bulk operations on the `strav_failed_jobs` table. Waits on `@strav/cli` in M4.

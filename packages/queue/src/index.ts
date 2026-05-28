@@ -16,8 +16,13 @@
 //   - Scheduler + schedulerRunsSchema — recurring dispatch with optional
 //     onOneServer advisory lock (built on TenantManager.withLock).
 //
-// Still deferred (each is its own M3 slice):
-//   - failed_jobs table + queue:retry / failed:* console commands
+//   - failedJobsSchema — the `strav_failed_jobs` dead-letter table.
+//     Worker moves terminal failures here atomically (INSERT + DELETE
+//     in one tx).
+//
+// Still deferred (waiting on @strav/cli — M4):
+//   - queue:retry / queue:flush console commands (re-enqueue / drop
+//     failed rows in bulk).
 
 export {
   CronExpression,
@@ -29,6 +34,7 @@ export {
   hourly,
 } from './cron.ts'
 export { DatabaseQueue, type DatabaseQueueOptions } from './database_queue.ts'
+export { failedJobsSchema } from './failed_jobs_schema.ts'
 export {
   Job,
   type JobClass,

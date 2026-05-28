@@ -24,6 +24,7 @@ import { Application, EventBus } from '../../packages/kernel/src/index.ts'
 import {
   DatabaseQueue,
   everyMinute,
+  failedJobsSchema,
   Job,
   type JobContext,
   type JobFailedContext,
@@ -67,9 +68,14 @@ describe.skipIf(!PG_AVAILABLE)('integration: @strav/queue DatabaseQueue smoke', 
     db = createTestDatabase()
     await resetSchema(db)
 
-    const registry = new SchemaRegistry().registerAll([jobSchema, schedulerRunsSchema])
+    const registry = new SchemaRegistry().registerAll([
+      jobSchema,
+      schedulerRunsSchema,
+      failedJobsSchema,
+    ])
     await db.execute(emitCreateTable(jobSchema, { registry }).sql)
     await db.execute(emitCreateTable(schedulerRunsSchema, { registry }).sql)
+    await db.execute(emitCreateTable(failedJobsSchema, { registry }).sql)
 
     queue = new DatabaseQueue({ db, container: new Application() })
   })
@@ -224,6 +230,57 @@ describe.skipIf(!PG_AVAILABLE)('integration: @strav/queue DatabaseQueue smoke', 
 
     // Clean up so subsequent tests start fresh.
     await db.execute(`DELETE FROM "strav_jobs" WHERE id = $1`, [jobId])
+  })
+
+  test('Worker terminal failure atomically moves the row to strav_failed_jobs', async () => {
+    class AlwaysFailingIntegrationJob extends Job<{ note: string }> {
+      static override readonly jobName = 'integration.always-failing'
+      static override readonly maxAttempts = 1
+      async handle(): Promise<void> {
+        throw new Error('always fails — terminal')
+      }
+    }
+    const jobId = await queue.dispatch(AlwaysFailingIntegrationJob, { note: 'goodbye' })
+
+    const registry = new JobRegistry().register(AlwaysFailingIntegrationJob)
+    const worker = new Worker({
+      db,
+      registry,
+      container: new Application(),
+      queues: ['default'],
+    })
+    const result = await worker.processOne()
+    expect(result?.status).toBe('failed')
+
+    // Original row is gone.
+    const jobRow = await db.queryOne(`SELECT id FROM "strav_jobs" WHERE id = $1`, [jobId])
+    expect(jobRow).toBeNull()
+
+    // New failed_jobs row exists with the captured fields.
+    const failed = await db.queryOne<{
+      queue: string
+      job_name: string
+      payload: { note: string }
+      exception: string
+      attempts: number
+      failed_at: Date
+    }>(
+      `SELECT queue, job_name, payload, exception, attempts, failed_at
+       FROM "strav_failed_jobs"
+       WHERE job_name = $1`,
+      ['integration.always-failing'],
+    )
+    expect(failed).not.toBeNull()
+    expect(failed?.queue).toBe('default')
+    expect(failed?.payload).toEqual({ note: 'goodbye' })
+    expect(failed?.exception).toContain('always fails')
+    expect(Number(failed?.attempts)).toBe(1)
+    expect(failed?.failed_at.getTime()).toBeLessThanOrEqual(Date.now())
+
+    // Clean up.
+    await db.execute(`DELETE FROM "strav_failed_jobs" WHERE job_name = $1`, [
+      'integration.always-failing',
+    ])
   })
 
   // ───────────────────────────────────────────────────────────────────────────

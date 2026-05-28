@@ -2,7 +2,7 @@
 
 Background-job primitives for Strav 1.0 — the `Job` base class + `JobRegistry` + `Queue` contract + two drivers (`SyncQueue` in-process + `DatabaseQueue` Postgres-backed with queue-until-commit semantics) + `Worker` (SELECT FOR UPDATE SKIP LOCKED poll loop, backoff, abort-aware shutdown) + `Scheduler` (cron + `onOneServer` advisory lock).
 
-> **Status: 1.0.0-alpha — M3 in progress.** Shipping: contract layer + `SyncQueue` + `DatabaseQueue` (queue-until-commit) + `jobSchema` + `Worker` (SKIP LOCKED + backoff) + `Scheduler` (cron + `onOneServer`) + `schedulerRunsSchema`. Failed-jobs table + retry follow.
+> **Status: 1.0.0-alpha — queue package functionally complete.** Shipping: contract layer + `SyncQueue` + `DatabaseQueue` (queue-until-commit) + `jobSchema` + `Worker` (SKIP LOCKED + backoff + atomic-move-to-failed) + `Scheduler` (cron + `onOneServer`) + `schedulerRunsSchema` + `failedJobsSchema`. Only `queue:retry` / `queue:flush` console commands remain — they wait on `@strav/cli` (M4).
 
 ## Install
 
@@ -39,6 +39,7 @@ Peer dep: `@strav/kernel`.
 | `Scheduler` | Recurring dispatch on a cron cadence. `.schedule({ job, cron, oneServer? })` registers; `.tick()` processes one boundary; `.run(signal)` is the minute-loop. `oneServer` uses `TenantManager.withLock` + `strav_scheduler_runs` for exactly-once-per-tick |
 | `SchedulerOptions` / `ScheduleOptions` | Constructor + registration option shapes |
 | `schedulerRunsSchema` | The `strav_scheduler_runs` `Schema` — ULID PK + `name` UNIQUE + `last_run_at` for `oneServer` run-tracking |
+| `failedJobsSchema` | The `strav_failed_jobs` dead-letter `Schema` — terminal failures land here atomically (INSERT + DELETE in one tx). Carries the original queue / job_name / payload + the captured exception + attempts + failed_at |
 
 ## Documentation
 
@@ -47,6 +48,4 @@ Peer dep: `@strav/kernel`.
 
 ## What's NOT here yet
 
-Each is its own M3 slice:
-
-- **Failed-jobs** — `failed_jobs` table + `queue:retry` / `queue:flush` console commands (need `@strav/cli`, M4).
+- **`queue:retry` / `queue:flush` console commands** — operate on the `strav_failed_jobs` table for bulk re-enqueue / drop. Waits on `@strav/cli` in M4. Until then, apps that need to retry SELECT the failed row, INSERT into `strav_jobs` with the same payload, DELETE from `strav_failed_jobs` by hand.

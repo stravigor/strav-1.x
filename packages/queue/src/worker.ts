@@ -17,8 +17,11 @@
  *   4. On success: DELETE the row.
  *   5. On failure: if `attempts < max_attempts`, schedule a retry —
  *      `UPDATE` sets `available_at = now() + backoff` + clears
- *      `reserved_at`. Otherwise terminal — DELETE + log. (The
- *      `failed_jobs` dead-letter table lands with a follow-up slice.)
+ *      `reserved_at`. Otherwise terminal — INSERT into
+ *      `strav_failed_jobs` + DELETE from `strav_jobs`, both in a
+ *      single transaction so the move is atomic. The `queue:retry` /
+ *      `queue:flush` console commands that act on the failed-jobs
+ *      table land with `@strav/cli` in M4.
  *
  * Backoff: default exponential with ±25% jitter, capped at 300s. Per-
  * job override via `static backoff(attempt)`; per-Worker override
@@ -31,7 +34,7 @@
  */
 
 import type { Database } from '@strav/database'
-import type { Container, Logger } from '@strav/kernel'
+import { type Container, type Logger, ulid } from '@strav/kernel'
 import type { JobContext, JobFailedContext } from './job.ts'
 import type { JobRegistry } from './job_registry.ts'
 
@@ -166,16 +169,17 @@ export class Worker {
 
       const maxAttempts = jobClass.maxAttempts ?? row.max_attempts ?? this.defaultAttempts
       if (row.attempts >= maxAttempts) {
-        // Terminal — DELETE for now. The `failed_jobs` dead-letter
-        // table lands with a follow-up slice; apps that need it today
-        // wire a custom `failed()` hook that writes to their own
-        // dead-letter store.
+        // Terminal — atomically move the row to `strav_failed_jobs`
+        // so apps can triage what blew up. INSERT into the dead-letter
+        // table + DELETE from strav_jobs share one transaction so we
+        // can't end up with a row in both (or neither) on a Postgres
+        // wobble mid-move.
         this.logger.error('Worker: job terminal failure', {
           jobId: row.id,
           jobName: row.job_name,
           attempts: row.attempts,
         })
-        await this.deleteRow(row.id)
+        await this.moveToFailed(row, error)
         return {
           status: 'failed',
           jobId: row.id,
@@ -260,6 +264,27 @@ export class Worker {
 
   private async deleteRow(id: string): Promise<void> {
     await this.db.execute(`DELETE FROM "strav_jobs" WHERE id = $1`, [id])
+  }
+
+  /**
+   * Atomically move a terminal-failure row to `strav_failed_jobs`.
+   * INSERT + DELETE in one transaction so we can't half-move on a
+   * Postgres wobble. The `exception` column stores
+   * `error.stack ?? String(error)` — full stack when available, the
+   * stringified value otherwise (some libraries throw plain strings).
+   */
+  private async moveToFailed(row: JobRow, error: unknown): Promise<void> {
+    const exception =
+      error instanceof Error ? (error.stack ?? `${error.name}: ${error.message}`) : String(error)
+    await this.db.transaction(async (tx) => {
+      await tx.execute(
+        `INSERT INTO "strav_failed_jobs"
+           (id, queue, job_name, payload, exception, attempts, failed_at, created_at, updated_at)
+         VALUES ($1, $2, $3, $4::jsonb, $5, $6, now(), now(), now())`,
+        [ulid(), row.queue, row.job_name, JSON.stringify(row.payload), exception, row.attempts],
+      )
+      await tx.execute(`DELETE FROM "strav_jobs" WHERE id = $1`, [row.id])
+    })
   }
 
   private async scheduleRetry(id: string, delaySeconds: number): Promise<void> {

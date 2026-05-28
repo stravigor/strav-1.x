@@ -1,6 +1,6 @@
 # @strav/queue — API Reference
 
-> **Status:** V1 contract + two drivers + Worker + Scheduler shipped — `Job` + `JobContext` + `JobClass` + `PayloadOf` + `JobRegistry` + `isJobClass` + `Queue` + `SyncQueue` + `DatabaseQueue` + `jobSchema` + `Worker` + `CronExpression` + `Scheduler` + `schedulerRunsSchema`. `failed_jobs` table + retry land in a follow-up cut.
+> **Status:** Queue package functionally complete — `Job` + `JobContext` + `JobClass` + `PayloadOf` + `JobRegistry` + `isJobClass` + `Queue` + `SyncQueue` + `DatabaseQueue` + `jobSchema` + `Worker` + `CronExpression` + `Scheduler` + `schedulerRunsSchema` + `failedJobsSchema`. Only `queue:retry` / `queue:flush` console commands remain — they wait on `@strav/cli` (M4).
 
 ## `Job<TPayload>`
 
@@ -366,3 +366,30 @@ export const schedulerRunsSchema: Schema
 The `strav_scheduler_runs` table — ULID PK + `name` (varchar(128), UNIQUE) + `last_run_at` (timestamptz) + `created_at` / `updated_at`. Apps register it alongside `jobSchema` and `generateMigration` picks it up.
 
 The ULID PK is dead weight from the framework constraint (PK kinds are `id` / `uuid` / `bigSerial` / `tenantedBigSerial` — none text). The logical key is `name`; UPSERTs target it via `ON CONFLICT (name) DO UPDATE`.
+
+## `failedJobsSchema`
+
+```ts
+export const failedJobsSchema: Schema
+```
+
+The `strav_failed_jobs` dead-letter table. When `Worker.processOne()` exhausts a job's `max_attempts`, the row moves here atomically (INSERT into `strav_failed_jobs` + DELETE from `strav_jobs`, single transaction).
+
+Columns (in declaration order):
+
+- `id` (char(26), ULID PK) — fresh per failure, not the original `strav_jobs.id`.
+- `queue` (varchar(64)) — copied from the original row.
+- `job_name` (varchar(128)) — copied from the original row.
+- `payload` (jsonb) — copied verbatim so apps can retry by reinserting into `strav_jobs`.
+- `exception` (text) — `error.stack ?? String(error)` of whatever `handle()` threw. Long; not indexed.
+- `attempts` (integer) — total attempts the job got before terminal failure.
+- `failed_at` (timestamptz) — wall-clock time of the move.
+- `created_at` / `updated_at` — provided by `t.timestamps()`.
+
+Apps register it alongside `jobSchema` + `schedulerRunsSchema`:
+
+```ts
+registry.registerAll([userSchema, jobSchema, schedulerRunsSchema, failedJobsSchema])
+```
+
+The `queue:retry` / `queue:flush` console commands (re-enqueue / drop bulk failed rows) ship with `@strav/cli` in M4. Until then, apps that need to retry write the migration by hand: SELECT the failed row, INSERT into `strav_jobs` with the same payload, DELETE from `strav_failed_jobs`.

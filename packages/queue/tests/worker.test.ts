@@ -245,7 +245,7 @@ describe('Worker — processOne (failure with retry)', () => {
     expect((rec.failures[0]?.ctx.error as Error).message).toBe('always fails')
   })
 
-  test('terminates after maxAttempts — DELETE + status:failed', async () => {
+  test('terminates after maxAttempts — moves to strav_failed_jobs + status:failed', async () => {
     const db = new FakeDb()
     // Row already at attempts=2 (the previous attempts). Worker increments
     // to 3, runs handle, fails. attempts=3 >= maxAttempts=3 → terminal.
@@ -254,8 +254,39 @@ describe('Worker — processOne (failure with retry)', () => {
     const result = await makeWorker(db, registry).processOne()
     expect(result?.status).toBe('failed')
     expect(result?.attempts).toBe(3)
-    const deletes = db.calls.filter((c) => c.sql.startsWith('DELETE FROM "strav_jobs"'))
-    expect(deletes).toHaveLength(1)
+
+    // INSERT into strav_failed_jobs + DELETE from strav_jobs, both inside
+    // the same transaction. The InsertedCall + DeletedCall must be marked
+    // inTransaction:true (atomic move semantic).
+    const insertFailed = db.calls.find((c) => c.sql.includes('INSERT INTO "strav_failed_jobs"'))
+    const deleteJob = db.calls.find((c) => c.sql.startsWith('DELETE FROM "strav_jobs"'))
+    expect(insertFailed?.inTransaction).toBe(true)
+    expect(deleteJob?.inTransaction).toBe(true)
+  })
+
+  test('the failed_jobs row captures queue / job_name / payload / attempts / exception', async () => {
+    const db = new FakeDb()
+    db.scriptedRows = [
+      row({
+        job_name: 'test.always-failing',
+        queue: 'priority',
+        payload: { note: 'broken' },
+        attempts: 2,
+      }),
+    ]
+    const registry = new JobRegistry().register(AlwaysFailingJob)
+    await makeWorker(db, registry).processOne()
+    const insert = db.calls.find((c) => c.sql.includes('INSERT INTO "strav_failed_jobs"'))
+    expect(insert).toBeDefined()
+    // Params positional order: id, queue, job_name, payload, exception, attempts
+    const params = insert?.params as readonly unknown[]
+    expect(typeof params[0]).toBe('string') // ULID
+    expect(params[1]).toBe('priority')
+    expect(params[2]).toBe('test.always-failing')
+    expect(params[3]).toBe(JSON.stringify({ note: 'broken' }))
+    // exception is the Error.stack (which contains the message somewhere in it).
+    expect(String(params[4])).toContain('always fails')
+    expect(params[5]).toBe(3)
   })
 
   test('failed() hook throwing does not change the retry decision', async () => {
