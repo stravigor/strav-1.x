@@ -249,9 +249,10 @@ Full Postgres integration tests need an actual database — those land with CI s
 ```ts
 class Model {
   static readonly schema: Schema | undefined   // subclasses MUST set
+  toJSON(): Record<string, unknown>            // omits @hidden fields
 }
 
-interface ModelClass<T extends Model = Model> {
+interface ModelClass<T extends object = Model> {
   schema: Schema
   new (): T
 }
@@ -262,7 +263,23 @@ function isModelClass(value: unknown): value is ModelClass
 
 Subclasses declare `static schema = userSchema` and add typed fields. `hydrateRow` copies schema-declared columns from a DB row onto a fresh instance; the `Repository` calls it internally on every find/create/update.
 
-Decorators (`@encrypt` / `@hidden` / `@cast` / `@ulid`) land with the encryption + serialization slice. For now, the Model is a pure data holder.
+### `@hidden` — omit from `toJSON()`
+
+```ts
+import { hidden, Model } from '@strav/database'
+
+class User extends Model {
+  static schema = userSchema
+  email!: string
+  @hidden password_hash!: string
+}
+
+JSON.stringify(new User())   // ← never includes `password_hash`
+```
+
+Subclasses inherit `@hidden` fields. Subclasses adding their own `@hidden` get their own metadata set (parent's set stays untouched). `hiddenFieldsOf(ModelClass)` returns the readonly Set for runtime inspection. See [`guides/model_decorators.md`](./guides/model_decorators.md).
+
+`@encrypt` / `@cast` / `@ulid` land in follow-up slices on the same metadata pattern.
 
 ## `Repository<TModel>`
 

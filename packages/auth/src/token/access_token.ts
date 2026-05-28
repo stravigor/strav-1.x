@@ -6,7 +6,7 @@
  * `AccessTokenRepository.createToken()`.
  */
 
-import { Model } from '@strav/database'
+import { hidden, Model } from '@strav/database'
 import { accessTokenSchema } from './access_token_schema.ts'
 
 export class AccessToken extends Model {
@@ -15,7 +15,13 @@ export class AccessToken extends Model {
   id!: string
   user_id!: string
   name!: string
-  hash!: string
+  /**
+   * SHA-256 of the secret half of the token. Marked `@hidden` so
+   * `JSON.stringify(token)` doesn't leak it — API responses returning a
+   * token row (e.g. token-list endpoints) would otherwise reveal the
+   * stored hash, which is a credential.
+   */
+  @hidden hash!: string
   expires_at!: Date | null
   created_at!: Date
   updated_at!: Date

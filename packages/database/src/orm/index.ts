@@ -1,5 +1,6 @@
 // ORM subsystem — Model, Repository, QueryBuilder, SQL emitter.
 
+export { HIDDEN_FIELDS, hidden, hiddenFieldsOf } from './decorators.ts'
 export { hydrateRow, isModelClass, Model, type ModelClass } from './model.ts'
 export {
   type BuiltQuery,

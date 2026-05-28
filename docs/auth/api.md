@@ -239,7 +239,7 @@ class AccessToken extends Model {
   id: string
   user_id: string
   name: string
-  hash: string                  // SHA-256 hex of the secret half
+  @hidden hash: string          // SHA-256 hex of the secret half — omitted from toJSON
   expires_at: Date | null       // null = never expires
   created_at: Date
   updated_at: Date
@@ -247,6 +247,8 @@ class AccessToken extends Model {
   isValid(now?: Date): boolean  // `expires_at === null || expires_at > now`
 }
 ```
+
+`hash` is marked `@hidden` so `JSON.stringify(token)` excludes it — token-list API responses can return the row directly without leaking the stored hash. See [`@strav/database`'s `@hidden` decorator](../database/guides/model_decorators.md).
 
 ### `accessTokenSchema`
 

@@ -216,6 +216,17 @@ describe('AccessToken.isValid', () => {
   })
 })
 
+describe('AccessToken serialization', () => {
+  test('JSON.stringify omits the hash field (@hidden)', () => {
+    const t = makeToken('tok-1', 'user-1', 'sha-hash-secret', new Date(Date.now() + 60_000))
+    const parsed = JSON.parse(JSON.stringify(t)) as Record<string, unknown>
+    expect(parsed.hash).toBeUndefined()
+    expect(parsed.id).toBe('tok-1')
+    expect(parsed.user_id).toBe('user-1')
+    expect(parsed.name).toBe('test token')
+  })
+})
+
 // ─────────────────────────────────────────────────────────────────────────────
 // AccessTokenRepository
 // ─────────────────────────────────────────────────────────────────────────────

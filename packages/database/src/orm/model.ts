@@ -9,21 +9,20 @@
  * Apps subclass `Model` and assign `static schema = userSchema` so the
  * Repository knows which schema to map rows against.
  *
- * Decorators (`@encrypt`, `@hidden`, `@cast`, `@ulid`) land with the
- * encryption + serialization slice; this foundation slice keeps the class
- * minimal — Repository hydrates by copying schema-declared columns onto a
- * fresh instance.
+ * Decorators ship incrementally — `@hidden` is here today (omits the
+ * decorated field from `toJSON()`). `@encrypt`, `@cast`, `@ulid` are
+ * follow-up slices that layer on the same metadata pattern.
  */
 
 import type { Schema } from '../schema/types.ts'
+import { hiddenFieldsOf } from './decorators.ts'
 
-export interface ModelClass<T extends Model = Model> {
+export interface ModelClass<T extends object = Model> {
   /** Required — the schema this Model maps to. Set by the subclass. */
   schema: Schema
   new (): T
 }
 
-// biome-ignore lint/complexity/noStaticOnlyClass: Model is the subclass-extension base — the static `schema` is a Schema-link contract every concrete Model fulfills, not a namespace for static helpers.
 export class Model {
   /**
    * Set by every concrete subclass. Read by the Repository to know the
@@ -31,6 +30,24 @@ export class Model {
    * can supply the literal schema without TS structural-mismatch noise.
    */
   static readonly schema: Schema | undefined
+
+  /**
+   * Default `toJSON()` — JSON.stringify uses this. Walks own enumerable
+   * properties on the instance, omits any marked `@hidden` on the class
+   * (or any ancestor class). Subclasses that need custom serialization
+   * override this method; the override loses the auto-omission unless it
+   * calls `super.toJSON()` first.
+   */
+  toJSON(): Record<string, unknown> {
+    const hidden = hiddenFieldsOf(this.constructor as object)
+    const out: Record<string, unknown> = {}
+    for (const key of Object.keys(this)) {
+      if (!hidden.has(key)) {
+        out[key] = (this as unknown as Record<string, unknown>)[key]
+      }
+    }
+    return out
+  }
 }
 
 /**
