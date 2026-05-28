@@ -52,6 +52,9 @@ function renderCtx(overrides: Partial<RenderContext> = {}): RenderContext {
     async component() {
       return ''
     },
+    async island(name, props) {
+      return `<island:${name}:${JSON.stringify(props)}>`
+    },
     ...overrides,
   }
 }
@@ -336,8 +339,9 @@ describe('compile — error paths', () => {
     expect(r.html).toBe('@nope hello@example.com')
   })
 
-  test('@island is reserved for the next slice', () => {
-    expect(() => compile(tokenize("@island('Foo')"))).toThrow(/not implemented yet/)
+  test("@island('Name', { props }) compiles to a ctx.island call", async () => {
+    const r = await compileRender("@island('LeadKanban', { initial: 42 })")
+    expect(r.html).toBe('<island:LeadKanban:{"initial":42}>')
   })
 
   test('directive missing args throws', () => {

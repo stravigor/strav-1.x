@@ -32,6 +32,12 @@ export type {
 } from './compiler.ts'
 export { compile } from './compiler.ts'
 export { escapeHtml } from './escape.ts'
+export {
+  type BuildIslandsOptions,
+  type BuildIslandsResult,
+  buildIslands,
+} from './islands/build_islands.ts'
+export { vueSfcPlugin } from './islands/vue_plugin.ts'
 export { TemplateError } from './template_error.ts'
 export type { Token, TokenType } from './tokenizer.ts'
 export { tokenize } from './tokenizer.ts'

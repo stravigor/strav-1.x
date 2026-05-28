@@ -1,8 +1,8 @@
 # @strav/view
 
-The `.strav` template engine for Strav 1.0. Slice 1 ships the engine core: tokenizer + compiler + `ViewEngine` + `ViewProvider` + the full frozen directive set MINUS `@island`.
+The `.strav` template engine for Strav 1.0. Full frozen directive set + Vue 3 hydration islands via `@island`. Tokenizer + compiler + `ViewEngine` + `ViewProvider` + programmatic `buildIslands` bundler.
 
-> **Status:** 1.0.0-alpha — engine core shipped. `@island` + Vue bundler + client runtime + pages auto-router + `view:cache` / `view:build` console commands land in subsequent slices.
+> **Status:** 1.0.0-alpha — engine + islands shipped. Pages auto-router + `view:cache` / `view:build` console commands land in subsequent slices.
 
 ## Install
 
@@ -58,11 +58,31 @@ Render:
 const html = await view.render('pages.dashboard', { user, items })
 ```
 
+## Islands
+
+```bash
+bun add vue @vue/compiler-sfc    # optional peer deps
+```
+
+```strav
+@island('LeadKanban', { initial: leads })
+```
+
+```ts
+import { buildIslands } from '@strav/view'
+
+await buildIslands({
+  inputDir: 'resources/ts/islands',
+  outputDir: 'public/assets/islands',
+})
+```
+
+Each `.vue` file becomes a self-mounting `<Name>.js`. See `docs/view/api.md` for the bundler contract.
+
 ## What's NOT here yet
 
-- `@island` directive + Vue bundler + client hydration runtime.
 - Pages auto-routing (`resources/views/pages/**/*.strav` → routes).
-- Disk cache + `view:cache` / `view:build` commands (wait on `@strav/cli`).
+- Disk cache + `view:cache` / `view:build` console commands (programmatic `buildIslands` ships today; CLI wrappers wait on `@strav/cli`).
 - Real `@csrf` / `@route` / `@asset` wiring (stubs today).
 
 Full reference: [`docs/view/api.md`](../../docs/view/api.md).

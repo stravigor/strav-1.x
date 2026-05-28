@@ -1,6 +1,6 @@
 # @strav/view — API Reference
 
-> **Status:** Slice 1 — engine core. Frozen directive set implemented EXCEPT `@island`. Pages auto-router + Vue bundler + `view:cache` / `view:build` console commands deferred.
+> **Status:** Engine + islands shipped. The frozen directive set is implemented in full (including `@island`); a Vue SFC bundler (`buildIslands`) compiles each island into a self-mounting browser bundle. Pages auto-router + `view:cache` / `view:build` console commands deferred (the latter wait on `@strav/cli` in M4).
 
 ## `Token` / `TokenType`
 
@@ -98,6 +98,7 @@ interface ViewConfig {
   directory?: string                                // default 'resources/views'
   cache?: boolean                                   // default true
   globals?: Record<string, unknown>                 // merged into every render's data
+  islandsUrl?: string                               // default '/assets/islands' — base URL @island uses for <script src>
 }
 
 interface ViewEngineOptions {
@@ -287,16 +288,103 @@ Render a `resources/views/components/<name>.strav` template with the given props
 
 Components have no script / style — they are pure server templates. For client interactivity, use `@island` (coming in the next slice).
 
-### `@island('Name', { ...props })` *(reserved)*
+### `@island('Name', { ...props })`
 
-The compiler currently throws `TemplateError('@island is not implemented yet — it lands in the next view slice...')`. The directive form is locked in spec but the runtime (Vue bundler + client hydration) ships separately.
+Emit a Vue island — a small interactive UI mounted into an otherwise server-rendered page.
+
+```strav
+@island('LeadKanban', { initial: leadsForKanban })
+```
+
+Compiles to:
+
+```html
+<div data-island="LeadKanban" data-props="{...escaped JSON...}"></div>
+<script type="module" src="/assets/islands/LeadKanban.js" defer></script>
+```
+
+The per-island `<script type="module">` bundle is produced by `buildIslands` (or by an app's own bundler — see "Bundler contract" below). When loaded, the bundle finds every `[data-island="LeadKanban"]` in the DOM, parses `data-props`, and mounts a Vue 3 app onto the element.
+
+**Props serialisation.** Props are JSON-stringified then HTML-attr-escaped. Anything that survives `JSON.stringify` round-trips cleanly (`Date` becomes a string, `undefined` is dropped, etc.). For non-serialisable state, fetch it client-side from inside the Vue component.
+
+**Custom `islandsUrl`.** Set `config.view.islandsUrl` to override the script `src` base — e.g. `'https://cdn.example.com/islands'` for CDN-hosted bundles.
+
+**Loading semantics.** The `defer` attribute on the module script makes it execute after HTML parsing finishes; combined with `type="module"`, browsers fetch + parse in parallel and run in order. The bundle's self-mounting code calls `document.querySelectorAll` so each `<script>` mounts its own islands — page reloads work naturally.
+
+## `buildIslands(opts)`
+
+```ts
+function buildIslands(opts: BuildIslandsOptions): Promise<BuildIslandsResult>
+
+interface BuildIslandsOptions {
+  inputDir: string                       // resources/ts/islands
+  outputDir: string                      // public/assets/islands
+  minify?: boolean                       // default true
+  sourcemap?: boolean                    // default false (inline when true)
+  external?: string[]                    // e.g. ['vue'] to load Vue from CDN
+}
+
+interface BuildIslandsResult {
+  outputs: string[]                      // absolute paths of <Name>.js files
+  islands: string[]                      // island names that were bundled
+}
+```
+
+Discovers every `*.vue` file under `inputDir` (recursively), generates a self-mounting entry per island, and bundles each with `Bun.build` + the bundled `vueSfcPlugin()`. Output: one `<Name>.js` per island in `outputDir`.
+
+**Island naming.** `resources/ts/islands/LeadKanban.vue` → island name `LeadKanban`. Nested files use a dotted form: `resources/ts/islands/charts/Bar.vue` → `charts.Bar`. The `@island('charts.Bar', { ... })` directive then references the nested bundle. Duplicates throw `TemplateError`.
+
+**Optional peer deps.** `vue` + `@vue/compiler-sfc` are declared as `peerDependenciesMeta.optional` on `@strav/view`. Apps that don't use islands never install them; apps that do, install both alongside `@strav/view`.
+
+**`external`.** Pass `external: ['vue']` to keep Vue out of every per-island bundle — useful when serving Vue from a CDN. The default inlines Vue into each bundle (every island bundle ships its own copy ~50KB compressed; trade-off vs. one Vue request per page).
+
+**Self-mounting contract** — what each `<Name>.js` does at runtime:
+
+```js
+import { createApp } from 'vue'
+import Component from './<Name>.vue'
+
+function hydrate() {
+  for (const el of document.querySelectorAll('[data-island="<Name>"]')) {
+    const raw = el.getAttribute('data-props')
+    const props = raw === null ? {} : (() => { try { return JSON.parse(raw) } catch { return {} } })()
+    createApp(Component, props).mount(el)
+  }
+}
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', hydrate, { once: true })
+} else {
+  hydrate()
+}
+```
+
+Apps that prefer a different bundler (vite, esbuild, custom Bun plugin) skip `buildIslands` and bring their own — as long as each `<outputDir>/<Name>.js` matches this contract.
+
+## `vueSfcPlugin()`
+
+```ts
+function vueSfcPlugin(): BunPlugin
+```
+
+The Bun plugin used by `buildIslands`. Compiles `.vue` files via `@vue/compiler-sfc`. Exposed for apps that want to call `Bun.build` themselves with the plugin (e.g. to bundle a non-island Vue tree).
+
+Supports:
+- `<script setup>` (inline-template path).
+- Options API (`<script>` + `<template>`).
+- Scoped + unscoped `<style>` blocks.
+
+Doesn't support:
+- HMR (build-time only).
+- CSS Modules.
+- Custom SFC blocks (`<docs>`, `<i18n>`, …).
 
 ## What this doesn't ship yet
 
-Slice 1 is the engine core. Still to land:
+The engine + islands cover server-rendered templates with client-hydratable Vue pockets. Still to land:
 
-- **`@island` directive** + Vue islands bundler + client hydration runtime. Closes the M3 "`@island` hydrates in the browser" exit-checklist item.
 - **Pages auto-router** — `resources/views/pages/**/*.strav` → file-based `GET` routes, with `[slug]` + `[...rest]` segments, leading-underscore exclusion, and static-beats-dynamic precedence.
 - **Disk cache + `view:cache` console command** — precompiles every template at deploy time for one-disk-read production boot.
-- **`view:build` command** + asset versioning — real `asset()` URLs with content-hash query strings.
+- **`view:build` command** — same as `buildIslands` but driven by `@strav/cli`. Programmatic API exists today.
+- **Asset versioning** — real `asset()` URLs with content-hash query strings.
 - **Real `@csrf` / `@method` / `@route` wiring** — currently stubs; wires when `@strav/http`'s session middleware + named-route map are accessible to the engine.

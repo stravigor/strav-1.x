@@ -78,6 +78,7 @@ export interface RenderContext {
   route: (name: string, params?: Record<string, unknown>) => string
   asset: (path: string) => string
   component: (name: string, props: Record<string, unknown>, slot: string) => Promise<string>
+  island: (name: string, props: Record<string, unknown>) => Promise<string>
 }
 
 export function compile(tokens: readonly Token[]): CompilationResult {
@@ -311,12 +312,13 @@ export function compile(tokens: readonly Token[]): CompilationResult {
         break
       }
 
-      // ─── @island (deferred) ──────────────────────────────────────────
-      case 'island':
-        throw compileError(
-          '@island is not implemented yet — it lands in the next view slice along with the bundler + client runtime.',
-          line,
-        )
+      // ─── @island ─────────────────────────────────────────────────────
+      case 'island': {
+        requireArgs(name, args, line)
+        const { name: islandName, props: islandProps } = splitIslandArgs(args ?? '', line)
+        out.line(`__out += await __ctx.island(${JSON.stringify(islandName)}, ${islandProps})`)
+        break
+      }
 
       default:
         throw compileError(`Unknown directive @${name}.`, line)
@@ -458,6 +460,17 @@ function splitComponentArgs(args: string, line: number): { name: string; props: 
     return { name: evalStringLiteral(args, line, '@component'), props: '({})' }
   }
   const name = evalStringLiteral(args.slice(0, comma), line, '@component')
+  const props = args.slice(comma + 1).trim()
+  return { name, props: props === '' ? '({})' : `(${props})` }
+}
+
+/** `@island('Name', { ...props })` — name literal, props expression. */
+function splitIslandArgs(args: string, line: number): { name: string; props: string } {
+  const comma = findTopLevelComma(args)
+  if (comma === -1) {
+    return { name: evalStringLiteral(args, line, '@island'), props: '({})' }
+  }
+  const name = evalStringLiteral(args.slice(0, comma), line, '@island')
   const props = args.slice(comma + 1).trim()
   return { name, props: props === '' ? '({})' : `(${props})` }
 }

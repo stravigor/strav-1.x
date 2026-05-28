@@ -65,6 +65,13 @@ export interface ViewConfig {
   cache?: boolean
   /** Optional global locals added to every render's data. */
   globals?: Record<string, unknown>
+  /**
+   * Base URL the `@island(...)` directive uses for the per-island
+   * `<script type="module">` tag. Defaults to `/assets/islands`. Apps
+   * change this when they ship islands behind a CDN or under a
+   * non-default static path.
+   */
+  islandsUrl?: string
 }
 
 export interface ViewEngineOptions {
@@ -77,6 +84,7 @@ export class ViewEngine {
   private readonly directory: string
   private readonly cacheEnabled: boolean
   private readonly globals: Record<string, unknown>
+  private readonly islandsUrl: string
   private readonly read: (path: string) => Promise<string>
   private readonly cache = new Map<string, CompilationResult>()
 
@@ -85,6 +93,7 @@ export class ViewEngine {
     this.directory = isAbsolute(dir) ? dir : resolve(process.cwd(), dir)
     this.cacheEnabled = opts.config.cache ?? true
     this.globals = opts.config.globals ?? {}
+    this.islandsUrl = stripTrailingSlash(opts.config.islandsUrl ?? '/assets/islands')
     this.read = opts.read ?? ((path) => readFile(path, 'utf8'))
   }
 
@@ -256,6 +265,43 @@ export class ViewEngine {
           depth + 1,
         )
       },
+      async island(islandName, props) {
+        // Emit a hydration marker + a per-island ES-module script tag.
+        // The bundler-emitted `<name>.js` self-mounts on every
+        // `[data-island="<name>"]` it finds, reading `data-props` for
+        // the constructor props.
+        //
+        // Why `defer` on the script: ensures the module fetches in
+        // parallel but executes after parsing is done — the
+        // `[data-island]` element is in the DOM by the time the
+        // module runs.
+        const safeName = escapeHtmlAttr(String(islandName))
+        const propsJson = escapeHtmlAttr(JSON.stringify(props ?? {}))
+        const src = `${self.islandsUrl}/${encodeURIComponent(String(islandName))}.js`
+        return (
+          `<div data-island="${safeName}" data-props="${propsJson}"></div>` +
+          `<script type="module" src="${escapeHtmlAttr(src)}" defer></script>`
+        )
+      },
     }
   }
+}
+
+function stripTrailingSlash(s: string): string {
+  return s.endsWith('/') ? s.slice(0, -1) : s
+}
+
+/**
+ * Escape for safe embedding inside an HTML double-quoted attribute.
+ * Differs from `escapeHtml` only in that ASCII single quotes pass
+ * through (they're not significant inside `"..."`). Used for the
+ * `data-props` payload — JSON commonly contains `'` characters that
+ * we don't want to encode.
+ */
+function escapeHtmlAttr(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
 }
