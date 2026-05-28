@@ -2,8 +2,7 @@
  * Model decorators — change in-memory shape, serialization, or write-path
  * behavior without altering the underlying schema/DDL.
  *
- * V1 ships `@hidden`, `@cast`, and `@ulid`. `@encrypt` lands in a
- * follow-up slice (it needs a Cipher service wired through DI).
+ * V1 ships `@hidden`, `@cast`, `@ulid`, and `@encrypt`.
  *
  * Mechanism: each decorator stashes a Set or Map of field names on the
  * class constructor (under a Symbol). The Model base class (or

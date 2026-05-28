@@ -1,6 +1,6 @@
 # @strav/database — API Reference
 
-> **Status:** Reflects what's implemented as of M2 (foundation + ORM + DDL + diff + tenancy + Repository hooks + unit-of-work) — Database wrapper, DatabaseProvider, Schema DSL, SchemaRegistry, MigrationRunner, Model, Repository<T> (with lifecycle events + `{ tx? }` opt-in / ALS auto-routing), QueryBuilder, SQL emitter, DDL emitters, schema-diff generator, multi-tenancy (DDL + TenantManager built on UoW), `UnitOfWork.run(fn)` with queue-until-commit lifecycle events. Decorators, soft-delete integration, relationships + eager loading, pagination, joins/CTEs, migration builder DSL, destructive diff, `tenantedBigSerial` per-tenant sequencing, two-role connection config all land in follow-up cuts.
+> **Status:** Reflects what's implemented as of M2 — Database wrapper, DatabaseProvider, Schema DSL (including `t.softDeletes()` / `t.hasMany()` / `t.belongsTo()` / `t.encrypted()`), SchemaRegistry, MigrationRunner, Model with `@hidden` / `@cast` / `@ulid` / `@encrypt` decorators, Repository<T> (lifecycle events + `{ tx? }` opt-in / ALS auto-routing + soft-delete + restore/forceDelete), QueryBuilder (`.with(...)` eager loading + soft-delete scopes + `.paginate({ page, perPage })`), SQL emitter, DDL emitters (including indexes + renames), schema-diff generator (additive + destructive with `allowDrop` + `renames`), multi-tenancy (DDL + TenantManager.withTenant / withoutTenant / withTenantLock / withLock built on UoW), `UnitOfWork.run(fn)` with queue-until-commit lifecycle events, boot-time `validateTenantRegistry` + `emitTenantIdFunction`, Cipher + EncryptionProvider. Explicit `.join()` / `tenantedBigSerial` per-tenant sequencing / two-role connection config / migration builder DSL / `generateMigration` type-change detection / SchemaRegistry auto-discovery all land in follow-up cuts.
 
 ## `Database` / `PostgresDatabase`
 
@@ -119,7 +119,7 @@ Immutable. `fields` preserves declaration order so generated SQL is auditable.
 | `'timestamp'` | `withTimezone: boolean` (default true) |
 | `'enum'` | `values: readonly string[]` |
 | `'reference'` | `references: string` (target table name), `onDelete: 'cascade' \| 'set null' \| 'restrict' \| 'no action'` |
-| `'encrypted'` | (encrypted at rest via the encryption subsystem — encryption integration lands later) |
+| `'encrypted'` | `bytea` in Postgres; declare a Model `@encrypt` field of type `string` to round-trip via the Cipher. |
 
 Every field also has `nullable: boolean`, `unique: boolean`, `hasDefault: boolean`, `default: unknown`, `order: number`.
 
@@ -437,7 +437,7 @@ Payload types are exported from `@strav/database` as `RepositoryCreatingEvent<T>
 
 ### What's NOT automatic
 
-See [`guides/repositories.md`](./guides/repositories.md) — soft-delete integration, relationships + eager loading, pagination, queue-until-commit semantics, and the `tx?` parameter all land in follow-up slices.
+Explicit `.join()` / `.leftJoin()` is the only remaining QueryBuilder follow-up — see [`guides/repositories.md`](./guides/repositories.md). Everything else (soft-delete, relations + eager loading, offset + cursor pagination, `.chunk()`, CTEs + `WITH RECURSIVE` + `UNION` / `UNION ALL` + `.from(cte_name)`, queue-until-commit, `{ tx? }` routing) is wired.
 
 ## `QueryBuilder<TModel>`
 
@@ -522,7 +522,34 @@ const result = await users.query().orderBy('created_at', 'desc').paginate({ page
 // { data: User[], total, page, perPage, totalPages }
 ```
 
-Cursor pagination (`.cursorPaginate(...)`) is a follow-up — needs an explicit sort-key contract. For tables under ~10k page-deep rows, offset is fine.
+### Cursor pagination + `.chunk()`
+
+```ts
+.cursorPaginate(opts: { perPage: number, after?: string, before?: string }): Promise<CursorPaginatedResult<TModel>>
+.chunk(perPage: number, fn: (rows: TModel[]) => void | false | Promise<void | false>): Promise<number>
+```
+
+- `cursorPaginate` requires exactly one prior `.orderBy(col, dir)` to anchor the cursor. PK is the auto-tiebreaker. Returns `{ data, hasMore, nextCursor, prevCursor }`. Cursors are opaque base64url-encoded `{ v: sortValue, i: pkValue }`. `Date` sort values encode as ISO strings + roundtrip.
+- `after` / `before` are mutually exclusive — pass the cursor you got back from a prior call. `before` reverses the direction internally and re-reverses the result so the caller still sees natural order.
+- Detection: fetches `perPage + 1` rows; if it got that many, `hasMore` is `true` and the extra is dropped.
+- `chunk(N, fn)` walks every page (cursor-paginated). `fn` returning `false` stops cleanly; throws propagate.
+- **V1 boundaries**: cursor pagination throws if `.cte()` / `.union()` are set. Multi-column sort keys not supported (use offset). See [`guides/relationships.md`](./guides/relationships.md#cursor-pagination---cursorpaginate-perpage-after-before).
+
+### CTEs + UNION
+
+```ts
+.cte(name: string, body: QueryBuilder | { sql, params }): QueryBuilder<TModel>
+.cteRecursive(name: string, body: QueryBuilder | { sql, params }): QueryBuilder<TModel>
+.from(tableOrCte: string): QueryBuilder<TModel>
+.union(other: QueryBuilder | { sql, params }): QueryBuilder<TModel>
+.unionAll(other: QueryBuilder | { sql, params }): QueryBuilder<TModel>
+```
+
+- `.cte(name, body)` / `.cteRecursive(name, body)` prepend a `WITH [RECURSIVE] name AS (...)` clause. Multiple `.cte()` calls compose into one comma-separated WITH list; `RECURSIVE` emits at the WITH-clause level if any one CTE is recursive.
+- `.from(name)` overrides the FROM clause — use after `.cte()` to read from the CTE. SELECT columns still come from the bound schema; the CTE body must return matching column shapes for `.get()` hydration.
+- `.union(other)` / `.unionAll(other)` append `UNION [ALL] (other)` to the main SELECT. Each branch is parenthesized.
+- All sub-bodies (typed `QueryBuilder` OR raw `{ sql, params }`) compile into the same params accumulator — `$N` placeholders renumber automatically.
+- **V1 boundaries**: outer `ORDER BY` / `LIMIT` on a union is not supported (modifiers apply to the left branch); `count()` / `exists()` / `pluck()` / `paginate()` ignore the WITH clause and unions. See [`guides/ctes_and_unions.md`](./guides/ctes_and_unions.md).
 
 ## SQL emitter
 

@@ -18,8 +18,6 @@
  *   - `close({ timeout? })` — graceful shutdown; the provider calls this.
  *   - `raw()` — escape hatch returning the underlying `Bun.SQL` for cases
  *     (CTEs, vendor-specific features) the wrapper doesn't cover yet.
- *
- * Query builder, repository pattern, RLS scoping ship in follow-up cuts.
  */
 
 import { SQL } from 'bun'

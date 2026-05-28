@@ -1,10 +1,12 @@
 /**
  * `QueryBuilder<TModel>` — fluent SELECT for one schema's table.
  *
- * Foundation slice: WHERE / ORDER BY / LIMIT / OFFSET / SELECT — and the
- * terminal methods `get` / `first` / `firstOrFail` / `count` / `exists` /
- * `pluck`. Joins, eager loading, CTEs, soft-delete integration,
- * pagination helpers all land in follow-up cuts.
+ * Modifiers: WHERE / ORDER BY / LIMIT / OFFSET / SELECT / `.with(...)`
+ * (eager loading via batched SELECTs) / soft-delete scope helpers
+ * (`.withTrashed()` / `.onlyTrashed()`). Terminals: `get` / `first` /
+ * `firstOrFail` / `count` / `exists` / `pluck` / `paginate({ page,
+ * perPage })` / `cursorPaginate({ perPage, after?, before? })` /
+ * `chunk(perPage, fn)`.
  *
  * The builder is **immutable per chain**: every modifier returns a fresh
  * QueryBuilder so apps can branch off without mutating shared state.
@@ -12,10 +14,26 @@
  * SQL is emitted in `toSql()`; terminal methods compose `toSql()` + the
  * `Database.query/queryOne/execute` call. Tests assert the emitted SQL
  * shape; integration tests against real Postgres are CI's responsibility.
+ *
+ * CTEs (`.cte` / `.cteRecursive` / `.from(name)`) and union composition
+ * (`.union` / `.unionAll`) ship alongside the row-fetching surface;
+ * placeholders renumber automatically across sub-bodies. Aggregation
+ * terminals (`count` / `exists` / `pluck` / `paginate`) run against
+ * the main builder only — they do not include the WITH clause or
+ * unions.
+ *
+ * Cursor pagination + chunk are read-only by design — they require
+ * exactly one `.orderBy(col, dir)` to anchor the cursor (the PK is the
+ * auto-tiebreaker) and don't compose with `.cte()` / `.union()`.
+ *
+ * Still deferred:
+ *   - Explicit `.join()` / `.leftJoin()` — `.with(...)` covers the
+ *     N+1-prevention use case via separate batched SELECTs.
  */
 
 import { type Cipher, NotFoundError } from '@strav/kernel'
 import type { DatabaseExecutor } from '../database.ts'
+import { findPrimaryKey } from '../ddl/sql_type.ts'
 import type { Schema } from '../schema/types.ts'
 import type { SchemaRegistry } from '../schema_registry.ts'
 import { hydrateRow, type ModelClass } from './model.ts'
@@ -36,6 +54,58 @@ export interface PaginatedResult<TModel> {
   perPage: number
   /** `Math.ceil(total / perPage)`. */
   totalPages: number
+}
+
+/** Options for cursor pagination. `after` and `before` are mutually exclusive. */
+export interface CursorPaginateOptions {
+  /** Rows per page. Must be a positive integer. */
+  perPage: number
+  /** Forward cursor — fetch the page AFTER this point. */
+  after?: string
+  /** Backward cursor — fetch the page BEFORE this point. */
+  before?: string
+}
+
+/** Result of a cursor-paginated query. */
+export interface CursorPaginatedResult<TModel> {
+  /** The rows for this page (already eager-loaded if `.with(...)` was used). */
+  data: TModel[]
+  /** Cursor for the next page; `null` when there's no page after this one. */
+  nextCursor: string | null
+  /** Cursor for the previous page; `null` when there's no page before this one. */
+  prevCursor: string | null
+  /** True iff another page exists in the direction the caller requested. */
+  hasMore: boolean
+}
+
+/** Payload encoded into an opaque cursor string. */
+interface CursorPayload {
+  /** Sort-key value of the row at the page boundary. */
+  v: unknown
+  /** Primary-key value — tiebreaker so equal sort values still sort deterministically. */
+  i: unknown
+}
+
+/** Encode `(sortValue, pkValue)` into an opaque base64url cursor string. */
+function encodeCursor(payload: CursorPayload): string {
+  const v = payload.v instanceof Date ? payload.v.toISOString() : payload.v
+  return Buffer.from(JSON.stringify({ v, i: payload.i }), 'utf8').toString('base64url')
+}
+
+/** Decode a cursor string. Throws a descriptive Error on malformed input. */
+function decodeCursor(cursor: string): CursorPayload {
+  try {
+    const json = Buffer.from(cursor, 'base64url').toString('utf8')
+    const parsed = JSON.parse(json) as unknown
+    if (parsed === null || typeof parsed !== 'object' || !('v' in parsed) || !('i' in parsed)) {
+      throw new Error('cursor payload missing "v" or "i" key')
+    }
+    return parsed as CursorPayload
+  } catch (err) {
+    throw new Error(
+      `QueryBuilder.cursorPaginate: malformed cursor "${cursor}" — ${(err as Error).message}.`,
+    )
+  }
 }
 
 export type WhereOperator =
@@ -68,6 +138,41 @@ export interface BuiltQuery {
   params: unknown[]
 }
 
+/** Raw SQL body — escape hatch for CTE / union sources that the typed builder can't express. */
+export interface RawSqlBody {
+  sql: string
+  params: readonly unknown[]
+}
+
+/** Sub-builder shape accepted by `.cte`, `.cteRecursive`, `.union`, `.unionAll`. */
+type SubBuilderBody = QueryBuilder<object> | RawSqlBody
+
+interface WithClause {
+  name: string
+  recursive: boolean
+  body: SubBuilderBody
+}
+
+interface UnionClause {
+  all: boolean
+  body: SubBuilderBody
+}
+
+/**
+ * Compile a CTE / union body into the shared `params` array. For a
+ * `QueryBuilder`, delegate to its `_compile`. For a raw `{ sql, params
+ * }`, renumber `$N` placeholders by the current offset so they line up
+ * with the accumulator.
+ */
+function compileSubBody(body: SubBuilderBody, params: unknown[]): string {
+  if (body instanceof QueryBuilder) {
+    return body._compile(params)
+  }
+  const offset = params.length
+  for (const p of body.params) params.push(p)
+  return body.sql.replace(/\$(\d+)/g, (_, n) => `$${Number(n) + offset}`)
+}
+
 export class QueryBuilder<TModel extends object = Record<string, unknown>> {
   private readonly wheres: WhereClause[] = []
   private readonly orders: OrderClause[] = []
@@ -84,6 +189,12 @@ export class QueryBuilder<TModel extends object = Record<string, unknown>> {
   private trashedScope: TrashedScope = 'exclude'
   /** Relation names requested via `.with(...)` — loaded after the main query. */
   private readonly eagerLoads: string[] = []
+  /** CTE definitions (`.cte` / `.cteRecursive`) — prepended to .get() / .first() / .toSql(). */
+  private readonly withs: WithClause[] = []
+  /** Union / Union ALL bodies appended after the main SELECT. */
+  private readonly unions: UnionClause[] = []
+  /** Override for the FROM clause — e.g. `.from('cte_name')` when reading from a CTE. */
+  private fromOverride: string | undefined
 
   constructor(
     private readonly schema: Schema,
@@ -222,23 +333,143 @@ export class QueryBuilder<TModel extends object = Record<string, unknown>> {
     return next
   }
 
+  /**
+   * Override the FROM clause — useful when reading from a CTE you just
+   * defined with `.cte(...)`. The SELECT column list still comes from
+   * the bound schema, so the CTE body must return rows shaped like the
+   * schema (same column names + types) for `.get()` hydration to land
+   * correctly. Apps that want to project arbitrary shapes drop to raw
+   * `db.query()`.
+   *
+   * ```ts
+   * userRepo.query()
+   *   .cte('active', userRepo.query().where('is_active', true))
+   *   .from('active')          // SELECT from the CTE, not from "user"
+   *   .orderBy('created_at')
+   *   .get()
+   * ```
+   */
+  from(tableOrCte: string): QueryBuilder<TModel> {
+    const next = this.clone()
+    next.fromOverride = tableOrCte
+    return next
+  }
+
+  /**
+   * Attach a Common Table Expression to this query. The CTE body is
+   * compiled into the same params accumulator as the main SELECT —
+   * placeholders renumber automatically across the WITH + main + union
+   * clauses, so apps don't have to manage `$N` ordering manually.
+   *
+   * Pass either another `QueryBuilder` (typed) or a raw `{ sql, params
+   * }` (escape hatch for shapes the builder can't express — e.g.
+   * recursive terms that need a JOIN against the CTE itself).
+   *
+   * Multiple `.cte(...)` calls compose into one comma-separated WITH
+   * clause. To read from the CTE in the main query, pair with
+   * `.from(name)`.
+   *
+   * ```ts
+   * userRepo.query()
+   *   .cte('recent_posts',
+   *     postRepo.query().orderBy('created_at', 'desc').limit(100)
+   *   )
+   *   // … then either select from "user" with a manual reference,
+   *   // or `.from('recent_posts')` to read from the CTE itself.
+   * ```
+   */
+  cte(name: string, body: SubBuilderBody): QueryBuilder<TModel> {
+    if (!name) throw new Error('QueryBuilder.cte: name must be a non-empty string.')
+    const next = this.clone()
+    next.withs.push({ name, recursive: false, body })
+    return next
+  }
+
+  /**
+   * `cte()` with the `RECURSIVE` keyword. The body is typically a UNION
+   * ALL of an anchor term + a self-referencing recursive term — for
+   * the latter, the typed builder can't express the join back to the
+   * CTE, so apps pass a raw `{ sql, params }` for that branch (or for
+   * the whole body):
+   *
+   * ```ts
+   * userRepo.query().cteRecursive('tree', {
+   *   sql: `SELECT id, parent_id, name FROM "category" WHERE parent_id IS NULL
+   *         UNION ALL
+   *         SELECT c.id, c.parent_id, c.name
+   *         FROM "category" c JOIN "tree" t ON c.parent_id = t.id`,
+   *   params: [],
+   * }).from('tree').get()
+   * ```
+   *
+   * A WITH clause that contains AT LEAST ONE recursive CTE emits the
+   * `RECURSIVE` keyword at the WITH-clause level (Postgres semantics —
+   * the keyword applies to the whole list).
+   */
+  cteRecursive(name: string, body: SubBuilderBody): QueryBuilder<TModel> {
+    if (!name) throw new Error('QueryBuilder.cteRecursive: name must be a non-empty string.')
+    const next = this.clone()
+    next.withs.push({ name, recursive: true, body })
+    return next
+  }
+
+  /**
+   * UNION the result of `other` after this builder's SELECT. Both
+   * branches are wrapped in parentheses so each side's own ORDER BY /
+   * LIMIT applies inside the union, as the SQL spec requires. Multiple
+   * `.union(...)` calls compose into a chain (`a UNION b UNION c`).
+   *
+   * Outer ORDER BY / LIMIT after a union is NOT supported in V1 —
+   * modifiers on `this` builder apply to its own SELECT (before the
+   * union). To order the combined result, wrap with `.cte('all', a.union(b))
+   * .from('all').orderBy(...)`.
+   *
+   * `count()` / `exists()` / `pluck()` / `paginate()` run against the
+   * main builder only and ignore unions.
+   */
+  union(other: QueryBuilder<object> | RawSqlBody): QueryBuilder<TModel> {
+    const next = this.clone()
+    next.unions.push({ all: false, body: other })
+    return next
+  }
+
+  /** UNION ALL form of {@link union}. */
+  unionAll(other: QueryBuilder<object> | RawSqlBody): QueryBuilder<TModel> {
+    const next = this.clone()
+    next.unions.push({ all: true, body: other })
+    return next
+  }
+
   // ─── Build ─────────────────────────────────────────────────────────────────
 
-  /** Compile to `{ sql, params }`. Used by every terminal method. */
+  /** Compile to `{ sql, params }`. Used by every terminal method that returns rows. */
   toSql(): BuiltQuery {
+    const params: unknown[] = []
+    const sql = this._compile(params)
+    return { sql, params }
+  }
+
+  /**
+   * Internal: compile this builder into `params` and return the SQL
+   * string. Cross-instance access — sub-builders passed to `.cte()` /
+   * `.union()` call into this on their own instance, sharing the same
+   * `params` accumulator so `$N` placeholders renumber across the
+   * whole composition.
+   */
+  _compile(params: unknown[]): string {
+    const withClause = this.compileWithClause(params)
     const cols = this.selectColumns
       ? this.selectColumns.map(quoteIdent).join(', ')
       : selectColumnList(this.schema)
-    const params: unknown[] = []
+    const fromName = this.fromOverride ?? this.schema.name
     const where = this.compileWhere(params)
     const order = this.compileOrder()
     const tail = `${where}${order}${this.limitN !== undefined ? ` LIMIT ${this.limitN}` : ''}${
       this.offsetN !== undefined ? ` OFFSET ${this.offsetN}` : ''
     }`
-    return {
-      sql: `SELECT ${cols} FROM ${quoteIdent(this.schema.name)}${tail}`,
-      params,
-    }
+    const main = `SELECT ${cols} FROM ${quoteIdent(fromName)}${tail}`
+    const unions = this.compileUnions(params)
+    return `${withClause}${main}${unions}`
   }
 
   // ─── Terminals ─────────────────────────────────────────────────────────────
@@ -310,6 +541,184 @@ export class QueryBuilder<TModel extends object = Record<string, unknown>> {
       perPage,
       totalPages: total === 0 ? 0 : Math.ceil(total / perPage),
     }
+  }
+
+  /**
+   * Cursor pagination — fast at any depth (uses the index, doesn't
+   * scan + discard `OFFSET` rows) and stable under inserts/deletes
+   * (each row's cursor is intrinsic, not positional).
+   *
+   * Reads the sort key from a prior `.orderBy(col, dir)` on this builder
+   * — exactly one `.orderBy(...)` call is required. The PK is appended
+   * as a tiebreaker so two rows sharing the same sort value still
+   * order deterministically. Combine with `.where(...)` / soft-delete
+   * scope / `.with(...)` as usual.
+   *
+   * The cursor is an opaque base64url string encoding `(sortValue,
+   * pkValue)`. Pass it back as `after` (forward page) or `before`
+   * (backward page); the two are mutually exclusive. `nextCursor` /
+   * `prevCursor` come back populated when more rows exist in that
+   * direction.
+   *
+   * Detection: we fetch `perPage + 1` rows. If we got that many,
+   * `hasMore` is `true` and the extra row is dropped from `data`.
+   *
+   * ```ts
+   * const first = await postRepo.query()
+   *   .where('published', true)
+   *   .orderBy('created_at', 'desc')
+   *   .cursorPaginate({ perPage: 20 })
+   *
+   * const next = await postRepo.query()
+   *   .where('published', true)
+   *   .orderBy('created_at', 'desc')
+   *   .cursorPaginate({ perPage: 20, after: first.nextCursor! })
+   * ```
+   *
+   * V1 boundaries: cursor pagination does NOT compose with `.cte(...)`
+   * / `.union(...)` — throws if either is set. Use offset pagination
+   * (`.paginate(...)`) for those cases.
+   */
+  async cursorPaginate(opts: CursorPaginateOptions): Promise<CursorPaginatedResult<TModel>> {
+    const { perPage, after, before } = opts
+    if (!Number.isInteger(perPage) || perPage < 1) {
+      throw new Error(
+        `QueryBuilder.cursorPaginate: perPage must be a positive integer, got ${perPage}.`,
+      )
+    }
+    if (after !== undefined && before !== undefined) {
+      throw new Error('QueryBuilder.cursorPaginate: pass `after` OR `before`, not both.')
+    }
+    if (this.withs.length > 0 || this.unions.length > 0) {
+      throw new Error(
+        'QueryBuilder.cursorPaginate: cursor pagination does not compose with `.cte()` / `.union()` in V1. Use `.paginate({ page, perPage })` instead.',
+      )
+    }
+    if (this.orders.length !== 1) {
+      throw new Error(
+        `QueryBuilder.cursorPaginate: requires exactly one .orderBy(col, dir) call — got ${this.orders.length}.`,
+      )
+    }
+    const order = this.orders[0] as OrderClause
+    const sortCol = order.column
+    const direction = order.direction
+    const pkName = findPrimaryKey(this.schema).name
+
+    // Backward pagination reverses the comparison + the ORDER BY. We
+    // run the underlying query in reversed order, then re-reverse the
+    // result so the caller still sees the natural sort order.
+    const reversed = before !== undefined
+    const cursor = after ?? before
+    const decoded = cursor !== undefined ? decodeCursor(cursor) : null
+    // Tuple comparison: forward+desc → `<`, forward+asc → `>`,
+    // backward+desc → `>`, backward+asc → `<`.
+    const cmpOp = (() => {
+      if (decoded === null) return null
+      const forward = !reversed
+      const desc = direction === 'desc'
+      if (forward) return desc ? '<' : '>'
+      return desc ? '>' : '<'
+    })()
+
+    const params: unknown[] = []
+    const baseWhere = this.compileWhere(params)
+    let where = baseWhere
+    if (decoded !== null && cmpOp !== null) {
+      params.push(decoded.v)
+      params.push(decoded.i)
+      const tupleFrag = `(${quoteIdent(sortCol)}, ${quoteIdent(pkName)}) ${cmpOp} ($${params.length - 1}, $${params.length})`
+      where = baseWhere === '' ? ` WHERE ${tupleFrag}` : `${baseWhere} AND ${tupleFrag}`
+    }
+    const effectiveDir = reversed
+      ? direction === 'desc'
+        ? 'ASC'
+        : 'DESC'
+      : direction.toUpperCase()
+    const orderSql = ` ORDER BY ${quoteIdent(sortCol)} ${effectiveDir}, ${quoteIdent(pkName)} ${effectiveDir}`
+    const cols = this.selectColumns
+      ? this.selectColumns.map(quoteIdent).join(', ')
+      : selectColumnList(this.schema)
+    const sql = `SELECT ${cols} FROM ${quoteIdent(this.schema.name)}${where}${orderSql} LIMIT ${perPage + 1}`
+
+    const rows = await this.db.query<Record<string, unknown>>(sql, params)
+    const hasMore = rows.length > perPage
+    const page = hasMore ? rows.slice(0, perPage) : rows
+    if (reversed) page.reverse()
+
+    const models = page.map((row) => this.hydrate(row))
+    if (this.eagerLoads.length > 0) await this.loadEager(models)
+
+    // Cursor at the page boundary: for forward pages, nextCursor = last
+    // row; prevCursor = first row. Reversed: nextCursor = last row in
+    // restored natural order; prevCursor = first row.
+    const first = page[0]
+    const last = page[page.length - 1]
+    const cursorOf = (row: Record<string, unknown> | undefined) =>
+      row === undefined ? null : encodeCursor({ v: row[sortCol], i: row[pkName] })
+
+    return {
+      data: models,
+      // Forward: hasMore tells us if there's another page in the
+      // forward direction. Backward: hasMore tells us if there's
+      // another page going backward — i.e. there's a PREV cursor.
+      hasMore,
+      nextCursor:
+        !reversed && hasMore
+          ? cursorOf(last)
+          : reversed && first !== undefined
+            ? cursorOf(first)
+            : null,
+      prevCursor:
+        reversed && hasMore
+          ? cursorOf(first)
+          : !reversed && first !== undefined && decoded !== null
+            ? cursorOf(first)
+            : null,
+    }
+  }
+
+  /**
+   * Walk the entire result set in pages of `perPage`, calling `fn` for
+   * each page. Cursor-paginated under the hood — safe on tables of any
+   * size; no `OFFSET` scan + discard, stable under concurrent
+   * inserts.
+   *
+   * `fn` receives each page's rows. If it returns `false`, iteration
+   * stops cleanly. Throws propagate (the chunk doesn't catch).
+   * Returns the total number of rows processed.
+   *
+   * Requires exactly one `.orderBy(col, dir)` for the cursor — same
+   * contract as `.cursorPaginate`.
+   *
+   * ```ts
+   * await postRepo.query()
+   *   .where('archived', false)
+   *   .orderBy('id')
+   *   .chunk(500, async (posts) => {
+   *     for (const post of posts) await reindex(post)
+   *   })
+   * ```
+   */
+  async chunk(
+    perPage: number,
+    // biome-ignore lint/suspicious/noConfusingVoidType: `void | false` is the intended sugar — return false to stop, anything else (including no return) continues.
+    fn: (rows: TModel[]) => void | false | Promise<void | false>,
+  ): Promise<number> {
+    let cursor: string | undefined
+    let total = 0
+    for (;;) {
+      const page: CursorPaginatedResult<TModel> = await this.cursorPaginate({
+        perPage,
+        after: cursor,
+      })
+      if (page.data.length === 0) break
+      const result = await fn(page.data)
+      total += page.data.length
+      if (result === false) break
+      if (!page.hasMore || page.nextCursor === null) break
+      cursor = page.nextCursor
+    }
+    return total
   }
 
   /** Aggregate row count for the matched set (ignores LIMIT / OFFSET / SELECT). */
@@ -448,7 +857,39 @@ export class QueryBuilder<TModel extends object = Record<string, unknown>> {
     next.offsetN = this.offsetN
     next.trashedScope = this.trashedScope
     next.eagerLoads.push(...this.eagerLoads)
+    next.withs.push(...this.withs)
+    next.unions.push(...this.unions)
+    next.fromOverride = this.fromOverride
     return next
+  }
+
+  /**
+   * Build the `WITH [RECURSIVE] a AS (...), b AS (...)` prefix.
+   * Compiles each CTE body into the shared `params` array. Emits
+   * `RECURSIVE` at the WITH level if any CTE in the list is recursive
+   * (Postgres treats the keyword as list-scoped).
+   */
+  private compileWithClause(params: unknown[]): string {
+    if (this.withs.length === 0) return ''
+    const parts = this.withs.map((w) => {
+      const body = compileSubBody(w.body, params)
+      return `${quoteIdent(w.name)} AS (${body})`
+    })
+    const recursive = this.withs.some((w) => w.recursive) ? 'RECURSIVE ' : ''
+    return `WITH ${recursive}${parts.join(', ')} `
+  }
+
+  /**
+   * Append `UNION [ALL] (other)` for each recorded union. Each branch
+   * is parenthesized so its own ORDER BY / LIMIT applies inside the
+   * branch (required by Postgres when the branches carry their own
+   * sort/limit).
+   */
+  private compileUnions(params: unknown[]): string {
+    if (this.unions.length === 0) return ''
+    return this.unions
+      .map((u) => ` ${u.all ? 'UNION ALL' : 'UNION'} (${compileSubBody(u.body, params)})`)
+      .join('')
   }
 
   private compileWhere(params: unknown[]): string {

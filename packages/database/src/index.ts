@@ -1,12 +1,24 @@
 // Public API of @strav/database.
 //
-// Foundation + ORM + DDL emission + schema-diff generator: connection pool
-// (Bun.SQL), schema DSL, schema registry, migration runner, Model class,
-// Repository<T>, QueryBuilder, schema → DDL emitters, and a diff engine
-// that produces additive migrations from registry vs live-DB state.
-// RLS scoping, eager loading, encryption-at-rest, repository hooks,
-// pagination helpers, soft-delete integration, destructive-diff handling
-// (drops / type changes / renames) land in follow-up cuts.
+// Connection pool (Bun.SQL), schema DSL + registry, migration runner,
+// Model class with @hidden / @cast / @ulid / @encrypt decorators,
+// Repository<T> with lifecycle events + soft-delete + eager loading,
+// QueryBuilder (where / orderBy / limit / offset / .with / .paginate),
+// schema → DDL emitters + RLS policy emission, schema-diff engine
+// (additive + destructive) producing migrations from registry vs
+// live-DB state, multi-tenancy (TenantManager.withTenant /
+// withoutTenant / withTenantLock / withLock built on UnitOfWork),
+// boot-time tenant-registry validation.
+//
+// Still deferred (each is its own follow-up cut):
+//   - QueryBuilder joins / CTEs / cursor pagination / .chunk()
+//   - tenantedBigSerial per-tenant sequence + trigger + composite PK
+//   - generateMigration type-change detection + tenancy awareness
+//   - Two-role (BYPASSRLS / NOBYPASSRLS) connection config
+//   - SchemaRegistry auto-discovery via Bun.Glob
+//   - Console commands (db:migrate, make:migration, …) — needs @strav/cli
+//   - Relations: typed children, nested loads, hasOne, belongsToMany, lazy
+//   - Encryption key rotation, blind-index helpers, per-tenant keys
 
 export {
   type Database,
@@ -69,6 +81,8 @@ export {
   applyUlidsToAttrs,
   type BuiltQuery,
   CAST_FIELDS,
+  type CursorPaginatedResult,
+  type CursorPaginateOptions,
   cast,
   castFor,
   castsFor,
@@ -95,6 +109,7 @@ export {
   type PaginatedResult,
   QueryBuilder,
   quoteIdent,
+  type RawSqlBody,
   Repository,
   type RepositoryCreatedEvent,
   type RepositoryCreatingEvent,

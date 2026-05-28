@@ -9,9 +9,10 @@
  * Apps subclass `Model` and assign `static schema = userSchema` so the
  * Repository knows which schema to map rows against.
  *
- * Decorators ship incrementally — `@hidden` is here today (omits the
- * decorated field from `toJSON()`). `@encrypt`, `@cast`, `@ulid` are
- * follow-up slices that layer on the same metadata pattern.
+ * Decorators (all shipped, all on the same `Symbol.for`-keyed
+ * metadata pattern): `@hidden` (omit from `toJSON()`), `@cast`
+ * (bidirectional DB↔Model type coercion), `@ulid` (auto-mint +
+ * validate ULID columns), `@encrypt` (encryption-at-rest via Cipher).
  */
 
 import type { Cipher } from '@strav/kernel'

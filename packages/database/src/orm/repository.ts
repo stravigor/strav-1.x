@@ -23,11 +23,15 @@
  *      provides the tx — no plumbing needed at the call site.
  *   3. Falls back to `this.db` (auto-commit per query).
  *
- * Deferred in this slice (each is its own follow-up):
- *   - Soft-delete integration (`.withTrashed()`, `delete()` writing
- *     `deleted_at` instead of dropping the row)
- *   - Relationships + eager loading (`.with('relation')`)
- *   - Pagination helpers (`.paginate` / `.cursorPaginate`)
+ * Lifecycle events fire on every mutation: `<resource>.<verb>ing`
+ * (cancelable — throw aborts the SQL) + `<resource>.<verb>ed` (post-
+ * success, throws caught + logged). Six verbs: create / update /
+ * delete / restore. Soft-delete columns (`t.softDeletes()`) flip
+ * `delete()` to UPDATE deleted_at + add `force: boolean` to the
+ * payload. The Model can declare `@hidden` / `@cast` / `@ulid` /
+ * `@encrypt` to shape JSON output + DB round-tripping; Repository runs
+ * the decorator pipeline (ulid → cast.toDb → encrypt → SQL on writes;
+ * decrypt → cast.fromDb in `hydrateRow` on reads).
  */
 
 import type { Cipher } from '@strav/kernel'

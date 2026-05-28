@@ -119,9 +119,49 @@ const perPage = Math.max(1, Math.min(100, parseInt(ctx.request.input('per_page')
 const result = await users.query().paginate({ page, perPage })
 ```
 
-### Cursor pagination is deferred
+### Cursor pagination — `.cursorPaginate({ perPage, after?, before? })`
 
-Cursor pagination (`.cursorPaginate({ after, perPage })`) is faster on large tables and stable under inserts — but it needs an explicit sort-key contract. Lands in a follow-up slice. For V1, offset is enough for most app surfaces; switch to cursor when offset starts hurting (typically past ~10k rows for page-deep queries).
+Faster than offset at any depth (uses the index, doesn't scan + discard `OFFSET` rows) and stable under concurrent inserts. Reads the sort key from a prior `.orderBy(col, dir)` on the builder — exactly one `.orderBy(...)` call is required; the PK is the auto-tiebreaker for rows sharing the same sort value.
+
+```ts
+const first = await postRepo.query()
+  .where('published', true)
+  .orderBy('created_at', 'desc')
+  .cursorPaginate({ perPage: 20 })
+
+// first.data:        Post[]      ← page 1's rows
+// first.hasMore:     boolean     ← is there another page in this direction
+// first.nextCursor:  string|null ← pass back as `after` to fetch the next page
+// first.prevCursor:  string|null ← `before` for the previous page (after navigating forward at least once)
+
+if (first.hasMore) {
+  const next = await postRepo.query()
+    .where('published', true)
+    .orderBy('created_at', 'desc')
+    .cursorPaginate({ perPage: 20, after: first.nextCursor! })
+}
+```
+
+The cursor is an opaque base64url-encoded `{ v: sortValue, i: pkValue }`. `Date` sort values encode as ISO strings + roundtrip through the WHERE params correctly. Pass `before` (mutually exclusive with `after`) for backward pagination — the builder internally reverses the ORDER BY direction and re-reverses the result so the caller still sees the natural sort order.
+
+**V1 boundaries**:
+- Cursor pagination does NOT compose with `.cte(...)` / `.union(...)` — throws if either is set. Use `.paginate({ page, perPage })` for those cases.
+- Multi-column sort keys (`.orderBy('a').orderBy('b')`) aren't supported — throws. Compose the secondary key into a single column expression or wait for the composite-cursor follow-up.
+
+### `.chunk(perPage, fn)` — stream the whole result set
+
+Cursor-paginated under the hood. Walks every page, calling `fn(rows)` for each. Returning `false` from `fn` short-circuits cleanly; throws propagate. Returns the total rows processed.
+
+```ts
+const total = await postRepo.query()
+  .where('archived', false)
+  .orderBy('id')
+  .chunk(500, async (posts) => {
+    for (const post of posts) await reindex(post)
+  })
+```
+
+Same `.orderBy(col, dir)` requirement as `.cursorPaginate`. Safe on tables of any size — no `OFFSET` scan and no risk of skipping or duplicating rows under concurrent inserts.
 
 ## What's NOT here
 
@@ -131,7 +171,7 @@ Each lands as its own follow-up:
 - **Nested eager loading** (`with('posts.comments')`). V1 is one level deep — for deeper graphs, run two queries (or wait for the syntax).
 - **`hasOne`** (one-to-one inverse) and **`belongsToMany`** (many-to-many via pivot). The pivot case needs a pivot-schema declaration; deferred.
 - **Lazy loading on Models** (`await user.posts`). Cross-package coupling — Model → Repository. Eager loading is the V1 idiom; lazy is a follow-up if there's demand.
-- **Cursor pagination** (`.cursorPaginate`). Needs the sort-key contract.
+- **Composite-cursor pagination** (multi-column sort keys). V1 takes one column from `.orderBy(...)` + the PK as tiebreaker.
 - **Relation-aware WHERE filters** (`.whereHas('posts', q => q.where('published', true))`). Subquery-style filtering on relations. Lands with the joins/subqueries slice.
 
 ## Wiring

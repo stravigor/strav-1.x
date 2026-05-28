@@ -53,7 +53,7 @@ export class User extends Model {
 
 Fields are plain class properties. `static schema = …` is the contract — Repository reads it to know which schema applies.
 
-Decorators (`@encrypt`, `@hidden`, `@cast`, `@ulid`) land with the encryption + serialization slice; for now the Model is a pure data holder and the Repository hydrates by copying schema-declared columns onto a fresh instance.
+Decorators (`@hidden`, `@cast`, `@ulid`, `@encrypt`) shape the Model — Repository runs `ulid → cast.toDb → encrypt → SQL` on writes and `decrypt → cast.fromDb` inside `hydrateRow` on reads. See [`guides/model_decorators.md`](./model_decorators.md).
 
 ### Repository
 
@@ -264,11 +264,18 @@ const users = await this.users.query()
 
 `.toSql()` returns `{ sql, params }` — useful when integrating with raw `db.query()` or for debugging.
 
-## Repository hooks (deferred)
+## Repository lifecycle events
 
-The spec describes lifecycle events the Repository emits on the application EventBus (`<resource>.creating` / `.created` / etc., with cancelable semantics on the `creating`/`updating`/`deleting`/`restoring` variants). That's a separate slice — it requires wiring the EventBus through the constructor, defining a stable event-name convention, and figuring out transactional flush semantics ("queue events until commit, flush on success, drop on rollback").
+Repository emits eight events per resource on the application EventBus — four cancelable pre-verbs (`<resource>.creating` / `.updating` / `.deleting` / `.restoring`, throw to abort the SQL) and four post-verbs (`<resource>.created` / `.updated` / `.deleted` / `.restored`, fire after success). Inside a `UnitOfWork.run(...)` (or `TenantManager.withTenant(...)`) scope, post-verbs queue and flush at commit; a throw drops the queue.
 
-For now, do side effects from the controller after the Repository call. The hooks slice will move them into a single event listener that fires consistently regardless of caller.
+Event payloads are exported as `RepositoryCreating/Created/Updating/Updated/Deleting/Deleted/Restoring/RestoredEvent<TModel>`. The Repository constructor takes `EventBus` as its second arg (auto-resolved by the container when subclasses declare it).
+
+```ts
+app.events.on('user.creating', async (event: RepositoryCreatingEvent<User>) => {
+  // Mutate attrs in flight, validate, or throw to abort the INSERT.
+  event.attrs.email = event.attrs.email?.toLowerCase()
+})
+```
 
 ## Testing repositories
 

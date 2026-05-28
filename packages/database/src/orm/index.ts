@@ -23,8 +23,11 @@ export {
 export { hydrateRow, isModelClass, Model, type ModelClass } from './model.ts'
 export {
   type BuiltQuery,
+  type CursorPaginatedResult,
+  type CursorPaginateOptions,
   type PaginatedResult,
   QueryBuilder,
+  type RawSqlBody,
   type WhereOperator,
 } from './query_builder.ts'
 export {

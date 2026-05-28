@@ -69,7 +69,7 @@ t.json<MyShape>('metadata')             // generic for downstream Model typing
 t.timestamp('paid_at').nullable()       // timestamptz by default
 t.timestamp('local_due', { withTimezone: false })
 t.enum('status', ['draft', 'paid', 'refunded'])
-t.encrypted('ssn')                      // encrypted-at-rest (encryption integration lands later)
+t.encrypted('ssn')                      // bytea column; pair with `@encrypt` on the Model side
 ```
 
 ### References
@@ -122,7 +122,7 @@ defineSchema('lead', Archetype.Entity, (t) => {
 
 `tenantRegistry` and `tenanted` are **mutually exclusive** — a registry table can't itself be scoped. `defineSchema` throws on misuse.
 
-Today the flags only tag the schema — they don't yet emit RLS policies or inject the tenant FK column. That lands with the tenancy slice (along with `withTenant(...)` transactional scoping).
+`emitCreateTable(schema, { registry })` injects the `<registry>_id` FK column right after the PK and appends `ENABLE ROW LEVEL SECURITY` + `CREATE POLICY <name>_tenant_isolation` referencing `current_setting('app.tenant_id')`. `TenantManager.withTenant(...)` binds that GUC per-transaction; see [`multi_tenancy.md`](./multi_tenancy.md).
 
 ## Registering with the SchemaRegistry
 
