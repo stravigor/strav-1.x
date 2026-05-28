@@ -1,26 +1,21 @@
-// Public API of @strav/view — slice 1: core engine.
+// Public API of @strav/view.
 //
 // Shipping:
-//   - `tokenize(source)` + `Token` — the lexer (exposed so debug
-//     tools and tests can inspect the token stream).
+//   - `tokenize(source)` + `Token` — the lexer.
 //   - `compile(tokens)` + `CompilationResult` / `RenderFunction` /
-//     `RenderContext` / `RenderResult` — produces a callable render
-//     function from a token stream. Implements every frozen
-//     directive except `@island`.
-//   - `escapeHtml(value)` — the HTML escape used by `{{ expr }}` and
-//     `@escape(value)`.
-//   - `ViewEngine` + `ViewConfig` + `ViewEngineOptions` — the public
-//     surface. Resolves template names, compiles, caches, manages
-//     layout chains and stacks.
-//   - `ViewProvider` — wires `ViewEngine` + the `'view'` alias from
-//     `config('view')`.
-//   - `TemplateError` — typed `StravError` for tokenize / compile /
-//     render failures.
+//     `RenderContext` / `RenderResult`.
+//   - `escapeHtml(value)` — the HTML escape.
+//   - `ViewEngine` + `ViewConfig` + `ViewEngineOptions` — public surface.
+//     Adds `clearCache()` / `warmCache()` / `viewDirectory` getter.
+//   - `ViewProvider` — wires `ViewEngine` from `config('view')`.
+//   - `buildIslands` + `BuildIslandsOptions` / `BuildIslandsResult`.
+//   - `TemplateError` — typed `StravError`.
+//   - `ViewConsoleProvider` + `ViewCache` / `ViewClear` / `ViewBuild`
+//     console commands (backed by `@strav/cli`).
 //
-// Still to land in later view slices:
-//   - `@island` directive + Vue bundler + client hydration runtime.
+// Still to land:
 //   - Pages auto-router (`resources/views/pages/**/*.strav` → routes).
-//   - Disk cache + `view:cache` / `view:build` console commands.
+//   - Disk cache (persist compiled templates across process restarts).
 //   - Asset versioning (real implementation; stub returns the input
 //     path verbatim today).
 
@@ -31,6 +26,7 @@ export type {
   RenderResult,
 } from './compiler.ts'
 export { compile } from './compiler.ts'
+export { ViewBuild, ViewCache, ViewClear, ViewConsoleProvider } from './console/index.ts'
 export { escapeHtml } from './escape.ts'
 export {
   type BuildIslandsOptions,

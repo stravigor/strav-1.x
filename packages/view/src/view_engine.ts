@@ -65,6 +65,16 @@ export interface ViewConfig {
   cache?: boolean
   /** Optional global locals added to every render's data. */
   globals?: Record<string, unknown>
+  /**
+   * Directory containing `*.vue` island components. Used by `view:build`.
+   * Defaults to `resources/islands`.
+   */
+  islandsDir?: string
+  /**
+   * Output directory for the compiled `islands.js` bundle. Used by `view:build`.
+   * Defaults to `public/assets/islands`.
+   */
+  islandsOut?: string
 }
 
 export interface ViewEngineOptions {
@@ -86,6 +96,49 @@ export class ViewEngine {
     this.cacheEnabled = opts.config.cache ?? true
     this.globals = opts.config.globals ?? {}
     this.read = opts.read ?? ((path) => readFile(path, 'utf8'))
+  }
+
+  /** The root directory this engine reads `.strav` files from. */
+  get viewDirectory(): string {
+    return this.directory
+  }
+
+  /**
+   * Clear the in-memory compilation cache. The next `render()` call
+   * for each template will re-read + re-compile from disk. Useful for
+   * `view:clear` and during `bun --hot` sessions.
+   */
+  clearCache(): void {
+    this.cache.clear()
+  }
+
+  /**
+   * Walk `directory` for every `*.strav` file and compile + cache each
+   * one. Returns the names of templates that were pre-compiled.
+   *
+   * Used by `view:cache` to warm the engine ahead of the first request.
+   * Files that fail to compile are reported but don't abort the pass —
+   * the caller surfaces the errors.
+   */
+  async warmCache(): Promise<{
+    warmed: string[]
+    errors: Array<{ name: string; error: unknown }>
+  }> {
+    const warmed: string[] = []
+    const errors: Array<{ name: string; error: unknown }> = []
+    const glob = new Bun.Glob('**/*.strav')
+    for await (const rel of glob.scan({ cwd: this.directory, absolute: false })) {
+      // Convert file-system relative path → dotted template name:
+      //   layouts/app.strav → layouts.app
+      const name = rel.replace(/[/\\]/g, '.').replace(/\.strav$/, '')
+      try {
+        await this.compileTemplate(name)
+        warmed.push(name)
+      } catch (err) {
+        errors.push({ name, error: err })
+      }
+    }
+    return { warmed, errors }
   }
 
   /**

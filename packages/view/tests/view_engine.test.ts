@@ -193,3 +193,51 @@ describe('ViewEngine — standard helpers', () => {
     expect(await engine.render('asset')).toBe('css/app.css')
   })
 })
+
+// ─── clearCache + warmCache ─────────────────────────────────────────────────
+
+describe('ViewEngine — clearCache + warmCache', () => {
+  test('clearCache() drops every cached compilation', async () => {
+    let reads = 0
+    const engine = new ViewEngine({
+      config: { directory: '/views', cache: true },
+      read: async (path) => {
+        reads++
+        if (path === '/views/home.strav') return '<h1>Home</h1>'
+        throw new Error(`ENOENT: ${path}`)
+      },
+    })
+    await engine.render('home') // compiles + caches
+    await engine.render('home') // cache hit → reads still 1
+    expect(reads).toBe(1)
+
+    engine.clearCache()
+    await engine.render('home') // re-compile → reads = 2
+    expect(reads).toBe(2)
+  })
+
+  test('warmCache() pre-compiles every *.strav found by glob', async () => {
+    // Use a tmp dir with real .strav files to exercise the glob.
+    const { mkdir, rm, writeFile } = await import('node:fs/promises')
+    const { tmpdir } = await import('node:os')
+    const { join } = await import('node:path')
+
+    const tmpDir = join(tmpdir(), `view-warm-${Date.now()}`)
+    await mkdir(tmpDir)
+    await writeFile(join(tmpDir, 'layout.strav'), '<html>@yield("main")</html>')
+    await writeFile(
+      join(tmpDir, 'home.strav'),
+      '@extends("layout") @section("main") Hi @endsection',
+    )
+
+    const warmEngine = new ViewEngine({ config: { directory: tmpDir, cache: true } })
+    const { warmed, errors } = await warmEngine.warmCache()
+
+    expect(errors).toHaveLength(0)
+    const names = new Set(warmed)
+    expect(names.has('layout')).toBe(true)
+    expect(names.has('home')).toBe(true)
+
+    await rm(tmpDir, { recursive: true, force: true })
+  })
+})
