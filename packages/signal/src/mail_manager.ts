@@ -35,6 +35,8 @@ import type { MailRecipient, Message } from './message.ts'
 import type { Transport } from './transport.ts'
 import { ArrayTransport } from './transports/array_transport.ts'
 import { LogTransport } from './transports/log_transport.ts'
+import { ResendTransport } from './transports/resend_transport.ts'
+import { SendGridTransport } from './transports/sendgrid_transport.ts'
 
 /** Per-driver transport config shapes. */
 interface ArrayTransportConfig {
@@ -55,12 +57,32 @@ interface LogTransportConfig {
   includeBody?: boolean
 }
 
+interface ResendTransportConfig {
+  driver: 'resend'
+  /** Resend API key. Pull from env in `config/mail.ts`; never hard-code. */
+  apiKey: string
+  /** Override the base URL — defaults to `https://api.resend.com`. */
+  endpoint?: string
+}
+
+interface SendGridTransportConfig {
+  driver: 'sendgrid'
+  /** SendGrid API key. */
+  apiKey: string
+  /** Override the base URL — defaults to `https://api.sendgrid.com`. */
+  endpoint?: string
+}
+
 /**
  * Discriminated union — every shipping driver gets an entry. Adding a
  * new driver here + a new `case` in `buildTransport` is the contract;
  * apps configure by string name.
  */
-export type MailTransportConfig = ArrayTransportConfig | LogTransportConfig
+export type MailTransportConfig =
+  | ArrayTransportConfig
+  | LogTransportConfig
+  | ResendTransportConfig
+  | SendGridTransportConfig
 
 export interface MailConfig {
   /**
@@ -197,6 +219,10 @@ export class MailManager {
           includeBody: cfg.includeBody,
         })
       }
+      case 'resend':
+        return new ResendTransport({ apiKey: cfg.apiKey, endpoint: cfg.endpoint })
+      case 'sendgrid':
+        return new SendGridTransport({ apiKey: cfg.apiKey, endpoint: cfg.endpoint })
     }
   }
 
@@ -206,10 +232,16 @@ export class MailManager {
         `Mail: default transport "${config.default}" is not defined in transports.`,
       )
     }
+    const knownDrivers = new Set(['array', 'log', 'resend', 'sendgrid'])
     for (const [name, cfg] of Object.entries(config.transports)) {
-      if (cfg.driver !== 'array' && cfg.driver !== 'log') {
+      if (!knownDrivers.has(cfg.driver)) {
         throw new ConfigError(
           `Mail: transport "${name}" has unknown driver "${(cfg as { driver: string }).driver}".`,
+        )
+      }
+      if ((cfg.driver === 'resend' || cfg.driver === 'sendgrid') && !cfg.apiKey) {
+        throw new ConfigError(
+          `Mail: transport "${name}" (${cfg.driver}) requires a non-empty \`apiKey\`.`,
         )
       }
     }

@@ -27,5 +27,11 @@ export { MailProvider } from './mail_provider.ts'
 export { Mailable, type MailableClass, type MailablePayloadOf } from './mailable.ts'
 export type { MailAddress, MailRecipient, Message, MessageAttachment } from './message.ts'
 export type { Transport } from './transport.ts'
+export { MailTransportError } from './transport_error.ts'
 export { ArrayTransport } from './transports/array_transport.ts'
 export { LogTransport, type LogTransportOptions } from './transports/log_transport.ts'
+export { ResendTransport, type ResendTransportOptions } from './transports/resend_transport.ts'
+export {
+  SendGridTransport,
+  type SendGridTransportOptions,
+} from './transports/sendgrid_transport.ts'

@@ -1,8 +1,8 @@
 # @strav/signal
 
-Outbound communication for Strav 1.0. The mail layer is functionally complete in slice 2 — `Message` shape + `Transport` contract + `ArrayTransport` + `LogTransport` + `MailManager` + `MailProvider` + `Mailable<TPayload>` (typed `Job` for queue-dispatched email). Real transports (SMTP / Resend / SendGrid), inbound parsers, notifications, broadcast, and SSE land in subsequent slices.
+Outbound communication for Strav 1.0. The mail layer covers synchronous send + queued delivery via `Mailable` + production HTTP transports (Resend, SendGrid). SMTP transport, inbound parsers, notifications, broadcast, and SSE land in subsequent slices.
 
-> **Status: 1.0.0-alpha — mail layer functionally complete.** Shipping: `Message` types + `Transport` interface + `ArrayTransport` + `LogTransport` + `MailManager` (multi-transport with default-`from` substitution + Mailable-aware `send` overload) + `MailProvider` + `Mailable` base class (Mailables ARE Jobs — dispatch via the standard `Queue.dispatch`).
+> **Status: 1.0.0-alpha — mail layer + HTTP transports shipped.** Shipping: `Message` types + `Transport` interface + `ArrayTransport` + `LogTransport` + `ResendTransport` + `SendGridTransport` + `MailTransportError` + `MailManager` (multi-transport with default-`from` substitution + Mailable-aware `send` overload) + `MailProvider` + `Mailable` base class (Mailables ARE Jobs — dispatch via the standard `Queue.dispatch`).
 
 ## Install
 
@@ -20,6 +20,9 @@ Peer dep: `@strav/kernel`.
 | `Transport` (interface) | Per-driver contract — `send(message): Promise<void>` + optional `close()` for lifecycle cleanup |
 | `ArrayTransport` | In-memory sink for tests. `messages` exposes recorded sends; `clear()` resets between tests. Stores defensive copies so caller-side mutation after `send()` doesn't disturb history |
 | `LogTransport` / `LogTransportOptions` | Local-dev sink — writes `mail.sent` records to a `Logger` channel. Bodies excluded by default (set `includeBody: true` to opt in) |
+| `ResendTransport` / `ResendTransportOptions` | Production HTTP transport for [Resend](https://resend.com). POSTs JSON to `/emails` with Bearer auth. Throws `MailTransportError` on non-2xx |
+| `SendGridTransport` / `SendGridTransportOptions` | Production HTTP transport for SendGrid v3. POSTs to `/v3/mail/send`; expects `202 Accepted` |
+| `MailTransportError` | Typed `StravError` subclass thrown by transports on send failure. `context` carries `provider` / `status` / `retryable` / `providerError` |
 | `MailManager` | The public mail surface. Builds + caches one `Transport` per configured entry. `send(message)` routes through the default; `via(name?)` returns a named transport; `shutdown()` closes them |
 | `MailConfig` / `MailTransportConfig` | The `config.mail` shape — `{ default, from?, transports }` with `transports: Record<string, MailTransportConfig>` |
 | `MailProvider` | Reads `config('mail')`, binds `MailManager` + the `'mail'` alias, calls `shutdown()` on app teardown. Depends on `'config'` + `'logger'` |
@@ -33,12 +36,20 @@ Peer dep: `@strav/kernel`.
 ```ts
 import type { MailConfig } from '@strav/signal'
 
+function defaultTransport(): string {
+  if (process.env.NODE_ENV === 'test') return 'array'
+  if (process.env.NODE_ENV === 'production') return 'resend'
+  return 'log'
+}
+
 export default {
-  default: process.env.NODE_ENV === 'test' ? 'array' : 'log',
+  default: defaultTransport(),
   from: { email: 'noreply@acme.com', name: 'Acme' },
   transports: {
     array: { driver: 'array' },
     log: { driver: 'log', channel: 'mail' },
+    resend: { driver: 'resend', apiKey: process.env.RESEND_API_KEY ?? '' },
+    sendgrid: { driver: 'sendgrid', apiKey: process.env.SENDGRID_API_KEY ?? '' },
   },
 } satisfies MailConfig
 ```
@@ -120,7 +131,7 @@ Mailables ARE Jobs — they participate in the full job lifecycle (retries, back
 
 ## What's NOT here yet
 
-- **Real transports** — SMTP, Resend, SendGrid. Drop-in `Transport` implementations once the underlying SDKs are decided on.
+- **`SmtpTransport`** — for self-hosted / on-prem / legacy SMTP relays. The only mail transport that doesn't fit the pure-fetch model; will pull in `nodemailer` as a dep.
 - **Inbound parsers** — Postmark + Mailgun webhook bodies → normalised `InboundMessage`.
 - **Notifications** — `BaseNotification` + `Notifiable` mixin + channel drivers (mail, database, webhook, broadcast).
 - **Broadcast** — pub/sub primitive + channel auth.

@@ -6,6 +6,8 @@ import {
   type MailConfig,
   MailManager,
   type Message,
+  ResendTransport,
+  SendGridTransport,
 } from '../src/index.ts'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -267,5 +269,71 @@ describe('MailManager — shutdown', () => {
   test('shutdown() is a no-op when no transports are cached', async () => {
     const manager = new MailManager(arrayOnlyConfig(), unusedLogManager())
     await expect(manager.shutdown()).resolves.toBeUndefined()
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// HTTP transports — build path + apiKey validation
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('MailManager — resend / sendgrid build path', () => {
+  test('builds a ResendTransport from config', () => {
+    const m = new MailManager(
+      {
+        default: 'resend',
+        transports: { resend: { driver: 'resend', apiKey: 're_test' } },
+      },
+      unusedLogManager(),
+    )
+    expect(m.via('resend')).toBeInstanceOf(ResendTransport)
+  })
+
+  test('builds a SendGridTransport from config', () => {
+    const m = new MailManager(
+      {
+        default: 'sendgrid',
+        transports: { sendgrid: { driver: 'sendgrid', apiKey: 'SG.test' } },
+      },
+      unusedLogManager(),
+    )
+    expect(m.via('sendgrid')).toBeInstanceOf(SendGridTransport)
+  })
+
+  test('empty apiKey is rejected at config validation', () => {
+    expect(
+      () =>
+        new MailManager(
+          {
+            default: 'resend',
+            transports: { resend: { driver: 'resend', apiKey: '' } },
+          },
+          unusedLogManager(),
+        ),
+    ).toThrow(/requires a non-empty `apiKey`/)
+  })
+
+  test('endpoint override propagates through the manager', async () => {
+    const calls: string[] = []
+    const stub = (async (url: string | URL | Request) => {
+      calls.push(String(url))
+      return new Response('{}', { status: 200 })
+    }) as unknown as typeof fetch
+
+    const m = new MailManager(
+      {
+        default: 'resend',
+        transports: {
+          resend: { driver: 'resend', apiKey: 'k', endpoint: 'https://eu.resend.example' },
+        },
+      },
+      unusedLogManager(),
+    )
+    // Reach into the cache to swap in our fetch stub — buildTransport
+    // doesn't accept a `fetch` option, that's the unit-test entry point.
+    const t = m.via('resend') as ResendTransport
+    // biome-ignore lint/suspicious/noExplicitAny: stubbing private field for the test
+    ;(t as any).fetchFn = stub
+    await t.send({ to: 'a@x', from: 'b@x', subject: 's', text: 't' })
+    expect(calls[0]).toBe('https://eu.resend.example/emails')
   })
 })

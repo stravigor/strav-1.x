@@ -1,16 +1,18 @@
 # @strav/signal
 
-Outbound communication for Strav 1.0. Mail layer functionally complete:
+Outbound communication for Strav 1.0. Mail layer covers sync send + queued delivery + production HTTP transports:
 
 - `Message` + `MailRecipient` + `MailAddress` + `MessageAttachment` — the plain-data envelope.
 - `Transport` interface — what every backend implements (`send`, optional `close`).
 - `ArrayTransport` — in-memory recorder for tests.
 - `LogTransport` — writes `mail.sent` records to a `Logger` channel; local-dev default.
+- `ResendTransport` + `SendGridTransport` — production HTTP transports. Pure-fetch, no SDK deps.
+- `MailTransportError` — typed `StravError` raised by transports on send failure; carries `provider` / `status` / `retryable` / `providerError` in `context`.
 - `MailManager` — multi-transport orchestration with default-`from` substitution + Mailable-aware `send` overload + lazy/cached transport build.
 - `MailProvider` — wires `config.mail` into the container.
 - `Mailable<TPayload>` — typed `Job` subclass; override `build(payload)`, dispatch via `queue.dispatch(YourMailable, payload)` for async delivery with retries / dead-letter.
 
-> **Status:** 1.0.0-alpha — mail layer functionally complete.
+> **Status:** 1.0.0-alpha — mail layer + Resend + SendGrid shipped. SMTP, notifications, broadcast, SSE follow.
 
 ## Install
 
@@ -86,7 +88,7 @@ Mailables participate in the full `@strav/queue` lifecycle (retries, backoff, `s
 
 ## What's NOT here yet
 
-- Real transports: SMTP, Resend, SendGrid.
+- `SmtpTransport` — the only mail transport that doesn't fit a pure-fetch model; will pull in `nodemailer`.
 - Inbound parsers (Postmark, Mailgun).
 - Notifications + channel drivers.
 - Broadcast pub/sub + SSE handler.

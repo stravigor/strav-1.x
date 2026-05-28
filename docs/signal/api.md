@@ -1,6 +1,6 @@
 # @strav/signal — API Reference
 
-> **Status:** Mail core + `Mailable` queue-dispatch shipped. Real transports + notifications + broadcast + SSE follow in later slices.
+> **Status:** Mail core + `Mailable` queue-dispatch + production HTTP transports (Resend, SendGrid) shipped. SMTP transport + notifications + broadcast + SSE follow in later slices.
 
 ## `Message`
 
@@ -114,6 +114,107 @@ logger.info('mail.sent', {
 
 Bodies (`html` / `text`) are excluded by default — logs get noisy and bodies often contain PII. Set `includeBody: true` for local debugging only.
 
+## `ResendTransport`
+
+```ts
+class ResendTransport implements Transport {
+  constructor(opts: ResendTransportOptions)
+  send(message: Message): Promise<void>
+}
+
+interface ResendTransportOptions {
+  apiKey: string                                 // re_...
+  endpoint?: string                              // default 'https://api.resend.com'
+  fetch?: typeof fetch                           // override for tests
+}
+```
+
+Sends mail via the Resend HTTP API. POSTs JSON to `{endpoint}/emails` with `Authorization: Bearer {apiKey}`.
+
+**Recipient encoding.** Resend accepts both bare emails and RFC 5322 `"Name <email>"` strings. The transport normalises to the named form when a display name is provided, so structured recipients always render correctly:
+
+```ts
+to: { email: 'alice@x', name: 'Alice' }   →   "Alice" <alice@x>
+to: 'alice@x'                              →   alice@x
+```
+
+Display-name quotes are escaped (`A "Q" Name` → `"A \"Q\" Name"`).
+
+**Attachments.** `content` is base64-encoded before sending; `Uint8Array` and UTF-8 strings both encode; `encoding: 'base64'` strings pass through. The optional `content_type` field is filled in when `MessageAttachment.contentType` is set.
+
+**Failure.** Non-2xx responses throw `MailTransportError` with:
+
+```ts
+err.context = {
+  provider: 'resend',
+  status: 422,
+  retryable: false,             // 5xx / 408 / 429 → true, other 4xx → false
+  providerError: { name: 'validation_error', message: '...' },
+}
+```
+
+Network-layer failures (DNS / TCP / TLS) throw `MailTransportError` with `retryable: true` and the original error as `cause`.
+
+The `retryable` flag is informational — the queue Worker's retry policy lives in `Job.maxAttempts` / `Job.backoff`. Apps that want to short-circuit terminal failures inspect the flag from a `failed(ctx)` hook:
+
+```ts
+override async failed(ctx: JobFailedContext<{ name: string }>) {
+  const err = ctx.error
+  if (err instanceof MailTransportError && err.context.retryable === false) {
+    // permanent — log + give up
+  }
+}
+```
+
+## `SendGridTransport`
+
+```ts
+class SendGridTransport implements Transport {
+  constructor(opts: SendGridTransportOptions)
+  send(message: Message): Promise<void>
+}
+
+interface SendGridTransportOptions {
+  apiKey: string                                 // SG....
+  endpoint?: string                              // default 'https://api.sendgrid.com'
+  fetch?: typeof fetch                           // override for tests
+}
+```
+
+Sends mail via SendGrid v3. POSTs JSON to `{endpoint}/v3/mail/send`.
+
+**Personalizations.** SendGrid expects a `personalizations` array with structured-recipient objects. The transport puts all recipients into one personalization entry; multi-personalization (per-recipient subject overrides, etc.) isn't surfaced — apps that need it construct their own `Message` per recipient.
+
+**Content order.** SendGrid v3 requires `text/plain` before `text/html` when both are present. The transport orders them automatically.
+
+**Reply-to.** SendGrid v3 single `reply_to`. When a list is passed, the first recipient becomes `reply_to`; the rest are dropped silently (the newer `reply_to_list` field is not modelled until a real user needs it).
+
+**Attachments.** Base64-encoded `content`, `filename`, optional `type`, fixed `disposition: 'attachment'`. Inline attachments (`disposition: 'inline'` with `Content-ID`) are not surfaced — add when an app needs them.
+
+**Failure.** Same shape as `ResendTransport` — `MailTransportError` with `context.provider = 'sendgrid'` and the same `status` / `retryable` / `providerError` fields. SendGrid returns `202 Accepted` on success (empty body); anything else is a failure.
+
+## `MailTransportError`
+
+```ts
+class MailTransportError extends StravError {
+  readonly code: 'mail-transport-error'
+  readonly status: 502                                       // fixed
+  readonly context: Readonly<Record<string, unknown>>        // see below
+}
+```
+
+The typed error every HTTP transport throws on failure. `status: 502` reflects "an upstream mail provider failed" from Strav's perspective; the provider's own HTTP status (if any) lives under `context.status`.
+
+`context` shape (depends on the failure mode):
+
+| Failure | `context.provider` | `context.status` | `context.retryable` | `context.providerError` | `error.cause` |
+|---|---|---|---|---|---|
+| Non-2xx HTTP | provider name | provider's status | per heuristic | parsed JSON body or text | — |
+| Network error | provider name | — | `true` | — | original `Error` |
+| Pre-flight validation | provider name | — | `false` | — | — |
+
+Use `error instanceof MailTransportError` to discriminate; `isStravError(err)` works too.
+
 ## `MailConfig` / `MailTransportConfig`
 
 ```ts
@@ -126,7 +227,11 @@ interface MailConfig {
 type MailTransportConfig =
   | { driver: 'array' }
   | { driver: 'log'; channel?: string; level?: 'debug' | 'info'; includeBody?: boolean }
+  | { driver: 'resend'; apiKey: string; endpoint?: string }
+  | { driver: 'sendgrid'; apiKey: string; endpoint?: string }
 ```
+
+The `apiKey` field is validated at construction — an empty string throws `ConfigError` at provider boot, never at first send. Pull keys from env vars in `config/mail.ts`; never hard-code them.
 
 The shape `config/mail.ts` exports. Validated eagerly by `MailManager` at construction — bad config throws `ConfigError` at provider boot, never at first send.
 
@@ -307,15 +412,25 @@ class WelcomeEmail extends Mailable<{ name: string }> {
 // config/mail.ts
 import type { MailConfig } from '@strav/signal'
 
+function defaultTransport(): string {
+  if (process.env.NODE_ENV === 'test') return 'array'
+  if (process.env.NODE_ENV === 'production') return 'resend'
+  return 'log'
+}
+
 export default {
-  default: process.env.NODE_ENV === 'test' ? 'array' : 'log',
+  default: defaultTransport(),
   from: { email: 'noreply@acme.com', name: 'Acme' },
   transports: {
     array: { driver: 'array' },
     log: { driver: 'log', channel: 'mail' },
+    resend: { driver: 'resend', apiKey: process.env.RESEND_API_KEY ?? '' },
+    sendgrid: { driver: 'sendgrid', apiKey: process.env.SENDGRID_API_KEY ?? '' },
   },
 } satisfies MailConfig
 ```
+
+The empty-string `apiKey` fallback fails fast: if production starts without `RESEND_API_KEY`, the `MailManager` constructor throws `ConfigError` at provider boot — better than discovering the missing env var on the first send.
 
 ```ts
 // config/logger.ts
@@ -333,9 +448,9 @@ export default {
 
 ## What this doesn't ship yet
 
-The mail layer is functionally complete in slice 2 — apps can send mail synchronously, define typed `Mailable` subclasses, and queue them through `@strav/queue` for retried async delivery. Still to land in subsequent signal slices:
+The mail layer covers synchronous + queued + production HTTP delivery (Resend + SendGrid). Still to land in subsequent signal slices:
 
-- **Real transports** — `SmtpTransport` (via nodemailer or a Bun-native SMTP client), `ResendTransport`, `SendGridTransport`. Drop-in `Transport` implementations.
+- **`SmtpTransport`** — for self-hosted / on-prem / legacy SMTP relays. Will pull in `nodemailer` as a runtime dep — the only mail transport that doesn't fit cleanly into a pure-fetch model.
 - **Inbound parsers** — Postmark + Mailgun webhook bodies → normalised `InboundMessage`.
 - **Notifications** — `BaseNotification` + `Notifiable` mixin + `notifications` table + channel drivers (mail, database, webhook, broadcast).
 - **Broadcast** — pub/sub primitive + channel auth.
