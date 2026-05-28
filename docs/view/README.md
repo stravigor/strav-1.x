@@ -2,7 +2,7 @@
 
 The `.strav` template engine for Strav 1.0. The full frozen directive set is implemented: `@if` / `@for` / `@each` / `@extends` / `@section` / `@yield` / `@include` / `@push` / `@stack` / `@csrf` / `@method` / `@route` / `@asset` / `@raw` / `@escape` / `@component` — plus `@island` for Vue 3 hydration islands. A programmatic Vue SFC bundler (`buildIslands`) compiles each island into a self-mounting browser bundle.
 
-> **Status: 1.0.0-alpha — engine + islands shipped.** Pages auto-routing + the `view:cache` / `view:build` console commands are deferred (the latter wait on `@strav/cli` in M4).
+> **Status: 1.0.0-alpha.3 — engine + islands + pages auto-router + console commands shipped.** `resources/views/pages/**/*.strav` files are automatically registered as GET routes by `ViewProvider.boot()`. See `docs/view/guides/pages.md`.
 
 ## Install
 
@@ -183,7 +183,7 @@ Apps that prefer their own bundler match the [single-bundle contract](./api.md#b
 
 ## What's NOT here yet
 
-- **Pages auto-routing** — `resources/views/pages/**/*.strav` → file-based `GET` routes. Lands as a separate slice; until then, register routes explicitly.
+- **Disk cache** — persist compiled templates across process restarts (in-memory cache resets on each boot today).
 - **Disk cache + `view:cache` / `view:build` commands** — these wait on `@strav/cli` (M4). The in-memory cache (`config.view.cache`) is the only cache layer today; `buildIslands` is the programmatic equivalent of `view:build`.
 - **Real `route()` / `asset()` helpers** — stubbed; `route()` returns the route name verbatim, `asset()` passes through. Real implementations wire when `@strav/http`'s Router and asset versioning land.
 

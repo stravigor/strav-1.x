@@ -14,7 +14,6 @@
 //     console commands (backed by `@strav/cli`).
 //
 // Still to land:
-//   - Pages auto-router (`resources/views/pages/**/*.strav` → routes).
 //   - Disk cache (persist compiled templates across process restarts).
 //   - Asset versioning (real implementation; stub returns the input
 //     path verbatim today).
@@ -34,6 +33,12 @@ export {
   buildIslands,
 } from './islands/build_islands.ts'
 export { vueSfcPlugin } from './islands/vue_plugin.ts'
+export {
+  type DiscoveredPage,
+  fileToPage,
+  type PagesOptions,
+  registerPages,
+} from './pages.ts'
 export { TemplateError } from './template_error.ts'
 export type { Token, TokenType } from './tokenizer.ts'
 export { tokenize } from './tokenizer.ts'

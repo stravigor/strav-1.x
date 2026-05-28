@@ -22,12 +22,19 @@
     "@strav/cli": "workspace:*",
     "@strav/kernel": "workspace:*"
   },
+  "devDependencies": {
+    "@strav/http": "workspace:*"
+  },
   "peerDependencies": {
+    "@strav/http": "workspace:*",
     "@types/bun": ">=1.3.14",
     "vue": "^3.5.0",
     "@vue/compiler-sfc": "^3.5.0"
   },
   "peerDependenciesMeta": {
+    "@strav/http": {
+      "optional": true
+    },
     "vue": {
       "optional": true
     },

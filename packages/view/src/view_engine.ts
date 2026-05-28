@@ -75,6 +75,26 @@ export interface ViewConfig {
    * Defaults to `public/assets/islands`.
    */
   islandsOut?: string
+  /**
+   * Pages auto-router options. Omit to use defaults (autoRoute: true,
+   * pagesDir: `<directory>/pages`, no extra middleware).
+   */
+  pages?: {
+    /**
+     * Enable file-based routing for `.strav` files under `<directory>/pages/`.
+     * Default `true`. Set to `false` to opt out entirely.
+     */
+    autoRoute?: boolean
+    /**
+     * Middleware names applied to EVERY auto-routed page. Empty by default.
+     */
+    middleware?: readonly string[]
+    /**
+     * Override the pages directory (absolute or relative to CWD).
+     * Default: `<config.directory>/pages`.
+     */
+    pagesDir?: string
+  }
 }
 
 export interface ViewEngineOptions {
