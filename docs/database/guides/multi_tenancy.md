@@ -71,19 +71,28 @@ The migration must run as the `BYPASSRLS` role — otherwise the `ALTER TABLE �
 ## Runtime
 
 ```ts
-import { TenantManager, PostgresDatabase } from '@strav/database'
+import { EventBus } from '@strav/kernel'
+import { PostgresDatabase, TenantManager } from '@strav/database'
 
-const tenants = new TenantManager(app.resolve(PostgresDatabase))
+const tenants = new TenantManager(app.resolve(PostgresDatabase), app.resolve(EventBus))
 
 // In a request handler:
+await tenants.withTenant(currentUserTenantId, async () => {
+  const posts = await postRepository.all()  // ← auto-routes through the tenant tx
+  return ctx.response.ok(posts)
+})
+```
+
+Repository calls inside `withTenant` automatically use the transaction-scoped executor (via the unit-of-work slice's AsyncLocalStorage). Raw `tx.query(...)` still works for custom SQL — `tx` is the second argument to your callback:
+
+```ts
 await tenants.withTenant(currentUserTenantId, async (tx) => {
   const rows = await tx.query('SELECT id, title FROM "post" ORDER BY created_at DESC')
-  // ↑ RLS automatically filters to currentUserTenantId's posts.
   return ctx.response.ok(rows)
 })
 ```
 
-Anything inside `withTenant` — direct `tx.query`, custom SQL, joins — gets scoped. Repository<TModel> integration (so `repo.find(id)` inside the scope automatically uses `tx`) lands with the unit-of-work slice; for now, take the `tx` parameter explicitly.
+Post-events (`.created` / `.updated` / `.deleted`) queue inside `withTenant` and flush at commit — a throw inside the callback rolls back the transaction AND drops the event queue.
 
 ## `withoutTenant` — admin paths
 
@@ -148,6 +157,5 @@ Each is its own follow-up slice:
 - **Framework-managed dual-role config.** Apps wire two `DatabaseProvider`s manually today.
 - **Boot-time tenant-registry validation.** Misconfiguration surfaces as Postgres errors at first query.
 - **`generateMigration` tenancy awareness.** The diff doesn't yet add `tenant_id` + RLS to an existing table that's missing them. Apps that retrofit tenancy onto an existing table write the migration explicitly (use `emitRlsForTenanted` + a hand-written `ALTER TABLE … ADD COLUMN`).
-- **Repository<TModel> auto-routing.** `repo.find(id)` inside `withTenant` doesn't automatically use `tx`. Use the `tx` parameter directly until the unit-of-work slice ships.
 - **`current_tenant_id()` SQL helper.** A Postgres function that wraps `current_setting('app.tenant_id')` with explicit type cast + missing-OK handling. Today: write `current_setting('app.tenant_id')::char(26)` directly when you need it in raw SQL.
 - **Tenant-id rotation / impersonation.** Useful for admin tooling ("view as tenant X"). Trivial to layer on top of `withTenant`; not part of V1.

@@ -1,6 +1,6 @@
 # @strav/database — API Reference
 
-> **Status:** Reflects what's implemented as of M2 (foundation + ORM + DDL + diff + tenancy + Repository hooks) — Database wrapper, DatabaseProvider, Schema DSL, SchemaRegistry, MigrationRunner, Model, Repository<T> (with lifecycle events), QueryBuilder, SQL emitter, DDL emitters, schema-diff generator, multi-tenancy (DDL + TenantManager). Decorators, soft-delete integration, relationships + eager loading, pagination, joins/CTEs, queue-until-commit semantics, migration builder DSL, destructive diff, `tenantedSerial` per-tenant sequencing, two-role connection config, Repository tx-routing inside `withTenant` all land in follow-up cuts.
+> **Status:** Reflects what's implemented as of M2 (foundation + ORM + DDL + diff + tenancy + Repository hooks + unit-of-work) — Database wrapper, DatabaseProvider, Schema DSL, SchemaRegistry, MigrationRunner, Model, Repository<T> (with lifecycle events + `{ tx? }` opt-in / ALS auto-routing), QueryBuilder, SQL emitter, DDL emitters, schema-diff generator, multi-tenancy (DDL + TenantManager built on UoW), `UnitOfWork.run(fn)` with queue-until-commit lifecycle events. Decorators, soft-delete integration, relationships + eager loading, pagination, joins/CTEs, migration builder DSL, destructive diff, `tenantedSerial` per-tenant sequencing, two-role connection config all land in follow-up cuts.
 
 ## `Database` / `PostgresDatabase`
 
@@ -269,30 +269,42 @@ Decorators (`@encrypt` / `@hidden` / `@cast` / `@ulid`) land with the encryption
 Injectable data-access object. Subclasses declare `static schema = …` and `static model = …`; the base resolves them at construction.
 
 ```ts
+interface RepositoryScope {
+  tx?: DatabaseExecutor   // route this call through a transaction
+}
+
 abstract class Repository<TModel> {
   static readonly schema: Schema
   static readonly model: ModelClass
 
   constructor(db: PostgresDatabase, events?: EventBus)
 
-  find(id): Promise<TModel | null>
-  findOrFail(id): Promise<TModel>             // throws NotFoundError
-  findMany(ids): Promise<TModel[]>             // empty list short-circuits
-  first(): Promise<TModel | null>
-  all(): Promise<TModel[]>
+  find(id, opts?: RepositoryScope): Promise<TModel | null>
+  findOrFail(id, opts?: RepositoryScope): Promise<TModel>             // throws NotFoundError
+  findMany(ids, opts?: RepositoryScope): Promise<TModel[]>             // empty list short-circuits
+  first(opts?: RepositoryScope): Promise<TModel | null>
+  all(opts?: RepositoryScope): Promise<TModel[]>
 
-  create(attrs: Partial<TModel>): Promise<TModel>
-  update(model: TModel, changes: Partial<TModel>): Promise<TModel>
-  delete(model: TModel): Promise<void>
+  create(attrs: Partial<TModel>, opts?: RepositoryScope): Promise<TModel>
+  update(model: TModel, changes: Partial<TModel>, opts?: RepositoryScope): Promise<TModel>
+  delete(model: TModel, opts?: RepositoryScope): Promise<void>
 
-  query(): QueryBuilder<TModel>
+  query(opts?: RepositoryScope): QueryBuilder<TModel>
 
-  exists(where: Partial<TModel>): Promise<boolean>
-  count(where?: Partial<TModel>): Promise<number>
+  exists(where: Partial<TModel>, opts?: RepositoryScope): Promise<boolean>
+  count(where?: Partial<TModel>, opts?: RepositoryScope): Promise<number>
 }
 ```
 
 `@inject()`-marked subclasses get both `PostgresDatabase` and `EventBus` resolved via the container — the kernel's `Application` registers `EventBus` as a singleton in its constructor. Subclasses that don't list `EventBus` in their constructor (or test code that passes only the db) get an `events`-less repository — `create` / `update` / `delete` still work, they just don't emit lifecycle events.
+
+Every CRUD method takes an optional `{ tx? }` as its final arg. The executor is resolved in this order:
+
+1. **Explicit `opts.tx`** wins.
+2. **Ambient `UnitOfWork.run` scope** (via AsyncLocalStorage) supplies tx — call sites inside `uow.run(...)` / `withTenant(...)` get tx-routing for free.
+3. **`this.db`** — auto-commit per query.
+
+See [`guides/unit_of_work.md`](./guides/unit_of_work.md) for the full transactional flow.
 
 ### What's automatic
 
@@ -330,7 +342,7 @@ events.on('user.deleting', ({ model }: { model: User }) => {
 
 Payload types are exported from `@strav/database` as `RepositoryCreatingEvent<T>`, `RepositoryCreatedEvent<T>`, `RepositoryUpdatingEvent<T>`, etc.
 
-**Queue-until-commit semantics is deferred.** Today, `.created` listeners run as soon as the INSERT succeeds — if the surrounding (non-existent yet) transaction would later roll back, side effects already fired. Apps that need transactional event handling should hold off on side effects in `.created` until the unit-of-work slice lands with `tx?` parameter routing.
+**Queue-until-commit semantics inside `UnitOfWork.run`.** Outside a UoW scope, post-events (`.created` / `.updated` / `.deleted`) fire immediately after the SQL succeeds. Inside `uow.run(fn)` (or `tenants.withTenant(id, fn)`), they queue and flush after `fn` returns but before the transaction commits — a thrown `fn` drops the queue, so no side effects fire for a transaction that didn't commit. Cancelable `<verb>ing` events always fire immediately regardless. See [`guides/unit_of_work.md`](./guides/unit_of_work.md).
 
 ### What's NOT automatic
 
@@ -610,4 +622,24 @@ Each is its own follow-up tenancy slice:
 - **Two-role connection config.** Apps need a `NOBYPASSRLS` Postgres role for runtime + a `BYPASSRLS` role for migrations / admin. Today: wire two `DatabaseProvider`s with different config slices. Framework-managed dual roles land later.
 - **Boot-time tenant-registry validation.** The provider doesn't yet check that the tenant registry table exists in the live DB with the expected PK type. Misconfiguration surfaces as a Postgres error at first query.
 - **Schema-diff awareness.** `generateMigration` doesn't detect "this existing table is missing its tenant_id column / RLS policy." Apps adding tenancy to an existing table write the migration explicitly.
-- **Repository<TModel> auto-routing inside `withTenant`.** Today, `repo.find(id)` outside `tx` doesn't see the tenant binding. Pass `tx` explicitly via the deferred `tx?` parameter (`repo.find(id, { tx })`) — or call `tx.query(...)` directly. Auto-routing lands with the unit-of-work slice.
+## Unit of work
+
+`UnitOfWork.run(fn)` wraps a callback in one transaction + tx-routing for Repository calls + queue-until-commit for lifecycle post-events.
+
+```ts
+class UnitOfWork {
+  constructor(db: Database, events: EventBus | undefined)
+
+  run<T>(fn: (tx: DatabaseExecutor) => Promise<T>): Promise<T>
+}
+```
+
+- **One transaction per `run`.** `Database.transaction` underneath; commit on `fn` return, rollback on throw.
+- **AsyncLocalStorage propagation.** Repository CRUD methods called inside `fn` auto-route to `tx` — apps don't have to thread `tx` through every function call.
+- **Queue-until-commit post-events.** `.created` / `.updated` / `.deleted` queue in the transactional context, flush after `fn` returns but before COMMIT. If `fn` throws, the queue drops.
+- **Cancelable `<verb>ing` events fire immediately**, before each Repository SQL — queueing would defeat their abort-via-throw semantic.
+- **Nested `run` reuses the outer scope** — one transaction, one queue, no savepoint. Apps that want savepoints reach for `tx.execute('SAVEPOINT …')` directly.
+
+`TenantManager.withTenant(id, fn)` and `withoutTenant(fn)` use `UnitOfWork.run` internally; the same auto-routing + queue-until-commit applies.
+
+See [`guides/unit_of_work.md`](./guides/unit_of_work.md) for the full transactional flow, cancelable-vs-post-event semantics, and when to reach for `Database.transaction` directly instead.

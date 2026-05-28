@@ -16,22 +16,24 @@
  *   - `static schema = userSchema`
  *   - `static model = User`
  *
- * `find`, `create`, `update`, etc. read these to know which table to touch
- * and which class to hydrate rows onto.
+ * Every public method takes an optional `{ tx? }` scope as its final arg.
+ * Resolution order for the executor:
+ *   1. Explicit `opts.tx` wins.
+ *   2. Otherwise, an ambient `UnitOfWork.run` scope (via AsyncLocalStorage)
+ *      provides the tx — no plumbing needed at the call site.
+ *   3. Falls back to `this.db` (auto-commit per query).
  *
- * Deferred in this foundation slice (each is its own follow-up):
- *   - Lifecycle hooks (`<resource>.creating` / `.created` / etc. on the
- *     EventBus)
+ * Deferred in this slice (each is its own follow-up):
  *   - Soft-delete integration (`.withTrashed()`, `delete()` writing
  *     `deleted_at` instead of dropping the row)
  *   - Relationships + eager loading (`.with('relation')`)
  *   - Pagination helpers (`.paginate` / `.cursorPaginate`)
- *   - The `tx?` parameter for transaction scoping
  */
 
 import { type EventBus, NotFoundError } from '@strav/kernel'
 import type { Database, DatabaseExecutor, PostgresDatabase } from '../database.ts'
 import type { Schema } from '../schema/types.ts'
+import { transactionalStorage } from '../unit_of_work/context.ts'
 import { hydrateRow, type ModelClass } from './model.ts'
 import { QueryBuilder } from './query_builder.ts'
 import {
@@ -41,6 +43,18 @@ import {
   emitInsert,
   emitUpdateById,
 } from './sql_emitter.ts'
+
+/** Optional transaction scope for any Repository call. */
+export interface RepositoryScope {
+  /**
+   * Run the call against this executor instead of the default. Pass the
+   * `tx` argument you got from `UnitOfWork.run(fn)` (or from one of the
+   * `withTenant` / `withoutTenant` callbacks). Inside a UoW scope this
+   * is also picked up automatically via AsyncLocalStorage — explicit
+   * `tx` here just overrides.
+   */
+  tx?: DatabaseExecutor
+}
 
 /**
  * Repository lifecycle event payloads. The discriminant is the event name
@@ -119,14 +133,14 @@ export abstract class Repository<TModel extends object> {
 
   // ─── Finders ───────────────────────────────────────────────────────────────
 
-  async find(id: string | number): Promise<TModel | null> {
+  async find(id: string | number, opts?: RepositoryScope): Promise<TModel | null> {
     const { sql, params } = emitFindById(this.schema, id)
-    const row = await this.executor().queryOne<Record<string, unknown>>(sql, params)
+    const row = await this.executor(opts).queryOne<Record<string, unknown>>(sql, params)
     return row ? this.hydrate(row) : null
   }
 
-  async findOrFail(id: string | number): Promise<TModel> {
-    const found = await this.find(id)
+  async findOrFail(id: string | number, opts?: RepositoryScope): Promise<TModel> {
+    const found = await this.find(id, opts)
     if (!found) {
       throw new NotFoundError(`${this.schema.name} "${id}" not found.`, {
         code: `${this.schema.name}.not-found`,
@@ -136,30 +150,30 @@ export abstract class Repository<TModel extends object> {
     return found
   }
 
-  async findMany(ids: readonly (string | number)[]): Promise<TModel[]> {
+  async findMany(ids: readonly (string | number)[], opts?: RepositoryScope): Promise<TModel[]> {
     if (ids.length === 0) return []
     const { sql, params } = emitFindMany(this.schema, ids)
-    const rows = await this.executor().query<Record<string, unknown>>(sql, params)
+    const rows = await this.executor(opts).query<Record<string, unknown>>(sql, params)
     return rows.map((r) => this.hydrate(r))
   }
 
-  async first(): Promise<TModel | null> {
-    return this.query().first()
+  async first(opts?: RepositoryScope): Promise<TModel | null> {
+    return this.query(opts).first()
   }
 
-  async all(): Promise<TModel[]> {
-    return this.query().get()
+  async all(opts?: RepositoryScope): Promise<TModel[]> {
+    return this.query(opts).get()
   }
 
   // ─── Mutations ─────────────────────────────────────────────────────────────
 
-  async create(attrs: Partial<TModel>): Promise<TModel> {
+  async create(attrs: Partial<TModel>, opts?: RepositoryScope): Promise<TModel> {
     await this.emit<RepositoryCreatingEvent<TModel>>('creating', {
       resource: this.schema.name,
       attrs,
     })
     const { sql, params } = emitInsert(this.schema, attrs as Record<string, unknown>)
-    const row = await this.executor().queryOne<Record<string, unknown>>(sql, params)
+    const row = await this.executor(opts).queryOne<Record<string, unknown>>(sql, params)
     if (!row) {
       throw new Error(
         `Repository.create("${this.schema.name}"): RETURNING * did not produce a row.`,
@@ -173,7 +187,7 @@ export abstract class Repository<TModel extends object> {
     return model
   }
 
-  async update(model: TModel, changes: Partial<TModel>): Promise<TModel> {
+  async update(model: TModel, changes: Partial<TModel>, opts?: RepositoryScope): Promise<TModel> {
     const id = (model as Record<string, unknown>).id
     if (id === undefined) {
       throw new Error(
@@ -186,7 +200,7 @@ export abstract class Repository<TModel extends object> {
       changes,
     })
     const { sql, params } = emitUpdateById(this.schema, id, changes as Record<string, unknown>)
-    const row = await this.executor().queryOne<Record<string, unknown>>(sql, params)
+    const row = await this.executor(opts).queryOne<Record<string, unknown>>(sql, params)
     if (!row) {
       throw new NotFoundError(`${this.schema.name} "${String(id)}" no longer exists.`, {
         code: `${this.schema.name}.not-found`,
@@ -202,7 +216,7 @@ export abstract class Repository<TModel extends object> {
     return next
   }
 
-  async delete(model: TModel): Promise<void> {
+  async delete(model: TModel, opts?: RepositoryScope): Promise<void> {
     const id = (model as Record<string, unknown>).id
     if (id === undefined) {
       throw new Error(
@@ -214,7 +228,7 @@ export abstract class Repository<TModel extends object> {
       model,
     })
     const { sql, params } = emitDeleteById(this.schema, id)
-    await this.executor().execute(sql, params)
+    await this.executor(opts).execute(sql, params)
     await this.emit<RepositoryDeletedEvent<TModel>>('deleted', {
       resource: this.schema.name,
       model,
@@ -224,49 +238,66 @@ export abstract class Repository<TModel extends object> {
   // ─── Lifecycle helper ──────────────────────────────────────────────────────
 
   /**
-   * Emit `<resource>.<verb>` on the bus when one was wired. No-op when the
-   * Repository was constructed without an EventBus — keeps tests + simple
-   * scripts working without the wiring ceremony.
+   * Emit `<resource>.<verb>` on the bus when one was wired.
    *
-   * `.<verb>ing` events are cancelable; the EventBus rejects on the first
-   * listener throw, which propagates out of `create` / `update` / `delete`
-   * before any SQL runs. `.<verb>ed` events fire AFTER the SQL succeeds;
-   * listener throws are caught by the bus's default handler and logged.
+   * Cancelable (`<verb>ing`) events ALWAYS fire immediately so a throwing
+   * listener can abort the SQL — queueing would defeat the abort semantic.
+   *
+   * Post-events (`<verb>ed`) queue onto the ambient `UnitOfWork.run`
+   * transactional context when one exists, and flush after the user's
+   * callback returns (before the implicit COMMIT). On rollback, the queue
+   * drops and no side effect fires for a transaction that didn't commit.
+   *
+   * Outside a UoW scope, post-events also fire immediately — same shape
+   * as the lifecycle slice that shipped before tx-routing.
    */
   private async emit<P>(verb: string, payload: P): Promise<void> {
     if (!this.events) return
-    await this.events.emit(`${this.schema.name}.${verb}`, payload)
+    const name = `${this.schema.name}.${verb}`
+    const isPostEvent = !verb.endsWith('ing')
+    if (isPostEvent) {
+      const ctx = transactionalStorage.getStore()
+      if (ctx) {
+        ctx.queue.push({ name, payload })
+        return
+      }
+    }
+    await this.events.emit(name, payload)
   }
 
   // ─── Query ─────────────────────────────────────────────────────────────────
 
   /** Fluent query builder scoped to this repository's schema. */
-  query(): QueryBuilder<TModel> {
-    return new QueryBuilder<TModel>(this.schema, this.executor(), this.modelCtor)
+  query(opts?: RepositoryScope): QueryBuilder<TModel> {
+    return new QueryBuilder<TModel>(this.schema, this.executor(opts), this.modelCtor)
   }
 
   // ─── Aggregates ────────────────────────────────────────────────────────────
 
-  async exists(where: Partial<TModel>): Promise<boolean> {
-    return this.query()
+  async exists(where: Partial<TModel>, opts?: RepositoryScope): Promise<boolean> {
+    return this.query(opts)
       .where(where as Record<string, unknown>)
       .exists()
   }
 
-  async count(where?: Partial<TModel>): Promise<number> {
-    const q = where ? this.query().where(where as Record<string, unknown>) : this.query()
+  async count(where?: Partial<TModel>, opts?: RepositoryScope): Promise<number> {
+    const builder = this.query(opts)
+    const q = where ? builder.where(where as Record<string, unknown>) : builder
     return q.count()
   }
 
   // ─── Internals ─────────────────────────────────────────────────────────────
 
   /**
-   * The DatabaseExecutor to use for queries. PostgresDatabase implements
-   * DatabaseExecutor structurally; this seam exists so a future `tx?`
-   * parameter on the public methods can route through a transaction-scoped
-   * executor without each method handling the branch.
+   * Resolve the DatabaseExecutor for this call.
+   *   1. Explicit `opts.tx` wins.
+   *   2. Ambient `UnitOfWork.run` scope (AsyncLocalStorage) supplies tx.
+   *   3. Falls back to `this.db` (auto-commit per query).
    */
-  protected executor(): DatabaseExecutor {
+  protected executor(opts?: RepositoryScope): DatabaseExecutor {
+    if (opts?.tx) return opts.tx
+    const ambient = transactionalStorage.getStore()
+    if (ambient) return ambient.tx
     return this.db as unknown as Database
   }
 

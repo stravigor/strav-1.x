@@ -181,15 +181,35 @@ export class UserRepository extends Repository<User> {
 
 Construct a repo without events (tests, dev scripts) and the CRUD methods stay quiet — no events fire, no listeners needed.
 
-**Queue-until-commit is deferred.** Today, `.created` listeners run as soon as the INSERT succeeds. If you're inside a transaction that later rolls back, the side effect already fired. The semantics the spec calls for ("events queue in the transaction, flush on commit") land with the unit-of-work slice that also adds the `tx?` parameter to Repository methods.
+**Inside `UnitOfWork.run` (or `TenantManager.withTenant`), post-events queue.** They flush after the user's callback returns but before the transaction commits — a throw drops the queue, so `.created` only fires for transactions that committed. Cancelable `<verb>ing` events fire immediately around each Repository call regardless. See [`unit_of_work.md`](./unit_of_work.md) for the full transactional semantics.
+
+### Transaction scoping — `{ tx? }`
+
+Every CRUD method takes an optional `{ tx? }` as its final arg. Inside `UnitOfWork.run(fn)` (or `TenantManager.withTenant(...)`) you don't need to pass it — the transaction's executor flows through `AsyncLocalStorage` and Repository picks it up automatically:
+
+```ts
+await uow.run(async () => {
+  const user = await users.create({ email: 'a@b.com' })   // ← uses the tx
+  await profiles.create({ user_id: user.id, name: 'Alice' })   // ← same tx
+})
+```
+
+For paths that bypass `UnitOfWork` (raw `Database.transaction(fn)` or any custom tx flow), pass `{ tx }` explicitly:
+
+```ts
+await db.transaction(async (tx) => {
+  await users.create({ email: 'a@b.com' }, { tx })
+  await profiles.create({ user_id, name: 'Alice' }, { tx })
+})
+```
+
+Explicit `opts.tx` always wins over the ambient ALS scope. See [`unit_of_work.md`](./unit_of_work.md) for the full transactional flow.
 
 ### What's NOT automatic (yet)
 
-- **Queue-until-commit event semantics** — see above.
 - **Soft-delete integration** — `t.softDeletes()` adds the column but `delete()` still hard-deletes. `withTrashed()` / `onlyTrashed()` on the query builder land with the soft-delete slice.
 - **Relationships + eager loading** (`.with('relation')`) — the relationships slice.
 - **Pagination helpers** (`.paginate`, `.cursorPaginate`) — same slice.
-- **Transaction scoping via `tx?`** — the public methods don't yet accept an optional transaction executor. For now use `db.transaction(tx => …)` and call the repository methods inside.
 
 ## QueryBuilder
 
@@ -260,11 +280,8 @@ The package's own unit suite (`packages/database/tests/repository.test.ts`) uses
 
 ## What the spec promises but isn't here yet
 
-- **Lifecycle hooks on the EventBus** (`<resource>.creating` / `.created` / etc.) — separate slice.
 - **`.with('relation')` + relationship definitions on the schema** — the relationships slice.
 - **`.paginate(...)` + `.cursorPaginate(...)`** — same slice as relationships.
 - **`.withTrashed()` / `.onlyTrashed()` + soft-delete in `delete()`** — soft-delete slice.
 - **`.join` / `.leftJoin` / CTEs** — joins + CTEs slice.
-- **Tenant scoping** (`withTenant(...)`, RLS injection at migration time, tenant FK columns) — the tenancy slice.
 - **`@encrypt` / `@hidden` / `@cast` / `@ulid` decorators on the Model** — the serialization slice.
-- **The `tx?` parameter on every Repository method** — straightforward to add once the transaction-routing pattern is decided; for now use `db.transaction(...)` directly.

@@ -71,6 +71,13 @@ export {
   QueryBuilder,
   quoteIdent,
   Repository,
+  type RepositoryCreatedEvent,
+  type RepositoryCreatingEvent,
+  type RepositoryDeletedEvent,
+  type RepositoryDeletingEvent,
+  type RepositoryScope,
+  type RepositoryUpdatedEvent,
+  type RepositoryUpdatingEvent,
   selectColumnList,
   type WhereOperator,
 } from './orm/index.ts'
@@ -99,3 +106,9 @@ export {
 } from './schema/index.ts'
 export { SchemaRegistry } from './schema_registry.ts'
 export { TenantManager } from './tenancy/index.ts'
+export {
+  currentTransactionalContext,
+  type QueuedEvent,
+  type TransactionalContext,
+  UnitOfWork,
+} from './unit_of_work/index.ts'

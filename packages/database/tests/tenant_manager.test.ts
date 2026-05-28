@@ -99,7 +99,7 @@ describe('TenantManager.withTenant', () => {
     await expect(tm.withTenant('', async () => undefined)).rejects.toThrow(/non-empty string/)
   })
 
-  test('nested withTenant with the same id passes through', async () => {
+  test('nested withTenant with the same id passes through (single transaction)', async () => {
     const db = new FakeDb()
     const tm = new TenantManager(db)
     const seen: Array<string | null> = []
@@ -109,8 +109,9 @@ describe('TenantManager.withTenant', () => {
       })
     })
     expect(seen).toEqual(['t-1'])
-    // Each nested call still opens its own transaction (we don't dedupe).
-    expect(db.transactionsOpened).toBe(2)
+    // UoW detects the ambient scope on the nested call and reuses the
+    // outer transaction — no savepoint, no second BEGIN.
+    expect(db.transactionsOpened).toBe(1)
   })
 
   test('nested withTenant with a DIFFERENT id throws', async () => {
