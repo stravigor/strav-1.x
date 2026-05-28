@@ -142,6 +142,46 @@ export default {
 
 Two `DatabaseProvider`s, two `PostgresDatabase` instances, two `TenantManager`s. The MigrationRunner uses the admin one.
 
+## Production helpers
+
+### Boot-time validation — `validateTenantRegistry(db, registry)`
+
+Catches misconfigurations BEFORE the first query — missing registry table, wrong PK type, registry schema not declared.
+
+```ts
+import { validateTenantRegistry } from '@strav/database'
+
+await app.start()
+await validateTenantRegistry(app.resolve(PostgresDatabase), app.resolve(SchemaRegistry))
+app.resolve(HttpKernel).serve(...)
+```
+
+Opt-in (apps without tenancy skip the call; the function no-ops on registries with no tenanted schemas). Throws `ConfigError` with specific messages: "registry not declared", "registry table missing from DB", "PK type mismatch (DB has X, schema declared Y)". The PK-type check is the load-bearing one — getting it wrong leads to cryptic RLS-policy errors at query time when the cast comparison silently fails.
+
+### `current_tenant_id()` SQL function — `emitTenantIdFunction(registry)`
+
+Generates a Postgres `STABLE` function that wraps `current_setting('app.tenant_id', true)::<pk_type>`. Apps run the DDL in their tenancy migration:
+
+```ts
+async up(db) {
+  await db.execute(emitCreateTable(tenantSchema, { registry }).sql)
+  await db.execute(emitCreateTable(postSchema, { registry }).sql)
+  await db.execute(emitTenantIdFunction(registry).sql)
+}
+```
+
+After that, raw-SQL paths use the function instead of inline casting:
+
+```ts
+// Before:
+await tx.query(`SELECT * FROM "post" WHERE "tenant_id" = current_setting('app.tenant_id', true)::char(26)`)
+
+// After:
+await tx.query('SELECT * FROM "post" WHERE "tenant_id" = current_tenant_id()')
+```
+
+Outside `withTenant`, `current_tenant_id()` returns `NULL` (the `true` second arg to `current_setting` makes it missing-OK) — so the `WHERE` predicate matches nothing, same defensive failure as the RLS policy semantic.
+
 ## Common pitfalls
 
 - **Forgetting `withTenant` in a non-tenanted code path.** RLS policies will reject every SELECT/INSERT/UPDATE/DELETE with "permission denied" — Postgres treats no policy match as a deny. Wrap the right scope: typically a middleware that calls `withTenant(ctx.user.tenant_id, …)` around the rest of the request.
@@ -155,7 +195,6 @@ Each is its own follow-up slice:
 
 - **Composite `(tenant_id, id)` PK for `t.tenantedSerial()`.** Today's tenanted schemas use `t.id()` (ULID), which is globally unique by construction. Per-tenant auto-incrementing sequences (the `tenantedSerial` case) need the per-tenant sequence + trigger plumbing.
 - **Framework-managed dual-role config.** Apps wire two `DatabaseProvider`s manually today.
-- **Boot-time tenant-registry validation.** Misconfiguration surfaces as Postgres errors at first query.
 - **`generateMigration` tenancy awareness.** The diff doesn't yet add `tenant_id` + RLS to an existing table that's missing them. Apps that retrofit tenancy onto an existing table write the migration explicitly (use `emitRlsForTenanted` + a hand-written `ALTER TABLE … ADD COLUMN`).
-- **`current_tenant_id()` SQL helper.** A Postgres function that wraps `current_setting('app.tenant_id')` with explicit type cast + missing-OK handling. Today: write `current_setting('app.tenant_id')::char(26)` directly when you need it in raw SQL.
+- **Tenant-id rotation / impersonation.** Useful for admin tooling ("view as tenant X"). Trivial to layer on top of `withTenant`; not part of V1.
 - **Tenant-id rotation / impersonation.** Useful for admin tooling ("view as tenant X"). Trivial to layer on top of `withTenant`; not part of V1.

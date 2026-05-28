@@ -128,7 +128,7 @@ export {
   type UuidField,
 } from './schema/index.ts'
 export { SchemaRegistry } from './schema_registry.ts'
-export { TenantManager } from './tenancy/index.ts'
+export { emitTenantIdFunction, TenantManager, validateTenantRegistry } from './tenancy/index.ts'
 export {
   currentTransactionalContext,
   type QueuedEvent,

@@ -756,6 +756,25 @@ function emitRlsForTenanted(schema: Schema, registry: SchemaRegistry): string //
 
 Use these directly when writing a custom migration that needs the RLS plumbing without going through `emitCreateTable` (e.g., bringing an existing table into tenancy).
 
+### Production helpers
+
+```ts
+function validateTenantRegistry(db: DatabaseExecutor, registry: SchemaRegistry): Promise<void>
+function emitTenantIdFunction(registry: SchemaRegistry | undefined): EmittedDdl
+```
+
+`validateTenantRegistry` checks the live DB at app boot: (1) registry schema is declared if any tenanted schemas are; (2) the registry table exists; (3) its PK column type matches what the schema declared. Throws `ConfigError` with specific messages. No-op when no tenanted schemas are registered. Opt-in — apps call it from their start path.
+
+`emitTenantIdFunction` returns the DDL for a Postgres `STABLE` function:
+
+```sql
+CREATE OR REPLACE FUNCTION current_tenant_id() RETURNS <pk_type> AS $$
+  SELECT current_setting('app.tenant_id', true)::<pk_type>
+$$ LANGUAGE sql STABLE
+```
+
+Apps include it in their initial tenancy migration. After that, raw-SQL paths can use `current_tenant_id()` instead of the inline `current_setting(...)::<type>` cast. Returns NULL outside `withTenant` (same defensive failure as RLS policies).
+
 ### What's NOT here
 
 Each is its own follow-up tenancy slice:

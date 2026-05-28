@@ -137,6 +137,7 @@ The console commands (`bun strav db:migrate` / `db:rollback` / `db:status`) land
 | `TenantManager` | `withTenant(id, fn)` / `withoutTenant(fn)` — runs callbacks inside RLS-scoped transactions (built on UnitOfWork) |
 | `UnitOfWork` | `run(fn)` — one transaction + ALS-based tx-routing for Repository calls + queue-until-commit for post-events |
 | `tenantRegistrySchema` / `tenantIdColumnName` / `emitRlsForTenanted` | Tenancy DDL helpers — used by `emitCreateTable` for `tenanted: true` schemas, exposed for raw SQL paths |
+| `validateTenantRegistry` / `emitTenantIdFunction` | Production tenancy helpers — boot-time live-DB validation + Postgres `current_tenant_id()` STABLE function |
 
 ## Documentation
 
