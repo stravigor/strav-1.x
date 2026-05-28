@@ -17,14 +17,15 @@ docs/
 
 ## Status
 
-The framework is in **M2 (HTTP + Database)** implementation. Documentation lands package-by-package as packages ship:
+M1 + M2 shipped to npm as `1.0.0-alpha.2`. M3 (Queue + Signal + View) is in progress. Documentation lands package-by-package as packages ship:
 
 | Package | Doc status |
 |---|---|
-| `@strav/kernel` | M1 complete + M2 `Logger` shipped; see `docs/kernel/` |
-| `@strav/http` | M2 — Router, HttpContext, HttpKernel, middleware, ExceptionHandler, built-in middleware, FormRequest + `rule.*`; see `docs/http/` |
-| `@strav/auth` | M2 foundation — Hasher, Authenticatable, Guard/AuthManager/AuthContext, MemoryGuard, auth/guest middleware; see `docs/auth/` |
-| `@strav/database` | M2 foundation — Bun.SQL Database, defineSchema + Archetype + t.* builders, SchemaRegistry, MigrationRunner; see `docs/database/` |
+| `@strav/kernel` | M1 + M2 shipped (`1.0.0-alpha.2`); see `docs/kernel/` |
+| `@strav/http` | M2 shipped (`1.0.0-alpha.2`); see `docs/http/` |
+| `@strav/auth` | M2 shipped (`1.0.0-alpha.2`); see `docs/auth/` |
+| `@strav/database` | M2 shipped (`1.0.0-alpha.2`); see `docs/database/` |
+| `@strav/queue` | M3 in progress — contract layer (`Job` + `JobRegistry` + `Queue` + `SyncQueue`) shipped; `DatabaseQueue` / `Worker` / `Scheduler` to follow. See `docs/queue/` |
 | Others | Pending — land with their respective milestones (see `spec/implementation-plan.md`) |
 
 ## How to read
