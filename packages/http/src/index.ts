@@ -10,6 +10,7 @@ export {
   type SecurityHeadersOptions,
   securityHeadersMiddleware,
 } from './built_in/index.ts'
+export { All, Console, HttpConsoleProvider, RouteList, Serve } from './console/index.ts'
 export {
   type AppContextState,
   type BuildServerInfoOptions,

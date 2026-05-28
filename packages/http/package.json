@@ -22,6 +22,7 @@
     "access": "public"
   },
   "dependencies": {
+    "@strav/cli": "workspace:*",
     "@strav/kernel": "workspace:*",
     "zod": "^4.4.3"
   },

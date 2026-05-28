@@ -49,6 +49,7 @@
       "name": "@strav/http",
       "version": "1.0.0-alpha.3",
       "dependencies": {
+        "@strav/cli": "workspace:*",
         "@strav/kernel": "workspace:*",
         "zod": "^4.4.3",
       },

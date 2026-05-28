@@ -177,11 +177,11 @@ process.exit(exit)
 | `@strav/database` (`DatabaseConsoleProvider`) | `migrate` · `migrate:rollback` · `migrate:status` · `migrate:fresh` · `migrate:generate` — see `docs/database/guides/migrations.md` |
 | `@strav/queue` (`QueueConsoleProvider`) | `queue:work` · `queue:retry` · `queue:flush` · `queue:failed` · `scheduler:work` · `scheduler:list` · `scheduler:run` — see `docs/queue/guides/console.md` |
 | `@strav/view` (`ViewConsoleProvider`) | `view:cache` · `view:clear` · `view:build` |
+| `@strav/http` (`HttpConsoleProvider`) | `serve` · `all` · `route:list` · `console` |
 
 ## What's coming
 
 | Slice | Contents |
 |---|---|
-| 5 | Server (`serve` / `all` / `console` / `route:list`) |
 | 6 | Scaffolding (`make:*` family + `model_generator`) |
 | 7 | Key / cache / db / tenant / plugin commands |

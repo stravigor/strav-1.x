@@ -27,8 +27,8 @@ M1 + M2 + M3 shipped to npm as `1.0.0-alpha.3` (2026-05-28). M4 (`@strav/cli`) i
 | `@strav/database` | M2 shipped (`1.0.0-alpha.3`) + `generateMigration` alter-column drift detection landed in alpha.3; see `docs/database/` |
 | `@strav/queue` | M3 shipped (`1.0.0-alpha.3`); `Job` + `JobRegistry` + `Queue` + `SyncQueue` + `DatabaseQueue` + `Worker` + `Scheduler` + `failedJobsSchema` all landed. Only `queue:retry` / `queue:flush` console commands remain (wait on `@strav/cli` in M4). See `docs/queue/` |
 | `@strav/signal` | M3 shipped (`1.0.0-alpha.3`); mail layer + HTTP transport trio (`Message` + `Transport` + `Array` / `Log` / `Resend` / `SendGrid` / `Mailgun` transports + `MailTransportError` + `MailManager` + `MailProvider` + `Mailable`). All pure-fetch, no `nodemailer`. Inbound parsers, notifications, broadcast, SSE still to come. See `docs/signal/` |
-| `@strav/view` | M3 shipped (`1.0.0-alpha.3`); engine + islands (full frozen directive set including `@island`, plus programmatic `buildIslands` Vue SFC bundler with shared-state via setup.ts + single Vue app + `<Teleport>`). Pages auto-router + `view:cache` / `view:build` console commands still to come. See `docs/view/` |
-| `@strav/cli` | M4 slices 1-4 in workspace: foundation + database migrate + queue/scheduler + view (`view:cache` / `view:clear` / `view:build`). Slices 5-7 ahead (server / make / scaffolding / key+plugin). See `docs/cli/` |
+| `@strav/view` | M3 shipped (`1.0.0-alpha.3`); engine + islands (full frozen directive set including `@island`, plus `buildIslands` Vue SFC bundler). Console commands (`view:cache` / `view:clear` / `view:build`) landed in M4 slice 4. Pages auto-router still to come. See `docs/view/` |
+| `@strav/cli` | M4 slices 1-5 in workspace: foundation + database migrate + queue/scheduler + view + HTTP server (`serve` / `all` / `route:list` / `console`). Slices 6-7 ahead (make/scaffolding / key+plugin). See `docs/cli/` |
 | Others | Pending — land with their respective milestones (see `spec/implementation-plan.md`) |
 
 ## How to read
