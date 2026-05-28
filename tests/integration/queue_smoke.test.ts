@@ -20,7 +20,15 @@ import {
   UnitOfWork,
 } from '../../packages/database/src/index.ts'
 import { Application, EventBus } from '../../packages/kernel/src/index.ts'
-import { DatabaseQueue, Job, type JobContext, jobSchema } from '../../packages/queue/src/index.ts'
+import {
+  DatabaseQueue,
+  Job,
+  type JobContext,
+  type JobFailedContext,
+  JobRegistry,
+  jobSchema,
+  Worker,
+} from '../../packages/queue/src/index.ts'
 import {
   createTestDatabase,
   isPostgresAvailable,
@@ -135,6 +143,82 @@ describe.skipIf(!PG_AVAILABLE)('integration: @strav/queue DatabaseQueue smoke', 
     // The row never committed — selecting from outside the tx finds nothing.
     const row = await db.queryOne<JobRow>(`SELECT id FROM "strav_jobs" WHERE id = $1`, [jobId])
     expect(row).toBeNull()
+  })
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // Worker — claim + run + DELETE / retry round-trip
+  // ───────────────────────────────────────────────────────────────────────────
+
+  test('Worker.processOne claims via SKIP LOCKED, runs handle, DELETEs on success', async () => {
+    const runs: Array<{ note: string; attempt: number }> = []
+    class SuccessfulJob extends Job<{ note: string }> {
+      static override readonly jobName = 'integration.worker-success'
+      async handle(ctx: JobContext<{ note: string }>): Promise<void> {
+        runs.push({ note: ctx.payload.note, attempt: ctx.attempt })
+      }
+    }
+
+    const jobId = await queue.dispatch(SuccessfulJob, { note: 'worker-claim' })
+
+    const registry = new JobRegistry().register(SuccessfulJob)
+    const worker = new Worker({
+      db,
+      registry,
+      container: new Application(),
+      queues: ['default'],
+    })
+
+    const result = await worker.processOne()
+    expect(result?.status).toBe('completed')
+    expect(result?.jobId).toBe(jobId)
+    expect(runs).toEqual([{ note: 'worker-claim', attempt: 1 }])
+
+    // Row should be gone after a successful claim+run+delete cycle.
+    const row = await db.queryOne(`SELECT id FROM "strav_jobs" WHERE id = $1`, [jobId])
+    expect(row).toBeNull()
+  })
+
+  test('Worker.processOne on a failing job reschedules with backoff', async () => {
+    const failures: Array<{ attempt: number; error: string }> = []
+    class TransientJob extends Job<unknown> {
+      static override readonly jobName = 'integration.worker-transient'
+      static override readonly maxAttempts = 3
+      static override readonly backoff = (_attempt: number) => 30
+      async handle(): Promise<void> {
+        throw new Error('transient flake')
+      }
+      override async failed(ctx: JobFailedContext<unknown>): Promise<void> {
+        failures.push({ attempt: ctx.attempt, error: (ctx.error as Error).message })
+      }
+    }
+
+    const jobId = await queue.dispatch(TransientJob, {})
+
+    const registry = new JobRegistry().register(TransientJob)
+    const worker = new Worker({
+      db,
+      registry,
+      container: new Application(),
+      queues: ['default'],
+    })
+
+    const result = await worker.processOne()
+    expect(result?.status).toBe('retried')
+    expect(failures).toEqual([{ attempt: 1, error: 'transient flake' }])
+
+    // Row still present + rescheduled into the future.
+    const row = await db.queryOne<{
+      attempts: number
+      reserved_at: Date | null
+      available_at: Date
+    }>(`SELECT attempts, reserved_at, available_at FROM "strav_jobs" WHERE id = $1`, [jobId])
+    expect(row).not.toBeNull()
+    expect(Number(row?.attempts)).toBe(1)
+    expect(row?.reserved_at).toBeNull()
+    expect(row?.available_at.getTime()).toBeGreaterThan(Date.now())
+
+    // Clean up so subsequent tests start fresh.
+    await db.execute(`DELETE FROM "strav_jobs" WHERE id = $1`, [jobId])
   })
 })
 

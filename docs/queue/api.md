@@ -1,6 +1,6 @@
 # @strav/queue — API Reference
 
-> **Status:** V1 contract layer + two drivers shipped — `Job` + `JobContext` + `JobClass` + `PayloadOf` + `JobRegistry` + `isJobClass` + `Queue` interface + `SyncQueue` + `DatabaseQueue` + `jobSchema`. `Worker` / `Scheduler` / failed-jobs land in follow-up cuts.
+> **Status:** V1 contract + two drivers + Worker shipped — `Job` + `JobContext` + `JobClass` + `PayloadOf` + `JobRegistry` + `isJobClass` + `Queue` + `SyncQueue` + `DatabaseQueue` + `jobSchema` + `Worker`. `Scheduler` / failed-jobs land in follow-up cuts.
 
 ## `Job<TPayload>`
 
@@ -188,3 +188,95 @@ await generateMigration({ registry, db })
 Columns (in declaration order): `id` (ULID PK), `queue` (varchar(64), default `'default'`), `job_name` (varchar(128)), `payload` (jsonb), `attempts` (integer, default 0), `max_attempts` (integer, default 3), `available_at` (timestamptz), `reserved_at` (timestamptz, nullable), `created_at` / `updated_at` (timestamptz, via `t.timestamps()`).
 
 Not `tenanted: true` — the queue is system-level. Apps that want per-tenant queues can clone the schema with a `tenant_id` FK + RLS (follow-up).
+
+## `Worker`
+
+The consumer side. Polls `strav_jobs`, claims via `SELECT FOR UPDATE SKIP LOCKED` (concurrency-safe — multiple Worker instances can poll the same queue without picking the same row), runs `handle()`, deletes on success or retries with backoff on failure.
+
+```ts
+class Worker {
+  constructor(opts: WorkerOptions)
+  processOne(): Promise<JobResult | null>
+  run(signal: AbortSignal): Promise<void>
+}
+
+interface WorkerOptions {
+  db: Database
+  registry: JobRegistry
+  container: Container
+  logger?: Logger
+  queues?: readonly string[]                          // default ['default']
+  pollInterval?: number                               // ms; default 1000
+  timeoutSeconds?: number                             // per-attempt; default 60
+  defaultAttempts?: number                            // default 3
+  defaultBackoff?: (attempt: number) => number        // default: exp + jitter, capped 300s
+}
+
+type JobResult =
+  | { status: 'completed'; jobId; jobName; attempts }
+  | { status: 'retried';   jobId; jobName; attempts; nextAt: Date }
+  | { status: 'failed';    jobId; jobName; attempts; error: unknown }
+```
+
+### `processOne()`
+
+One claim+run cycle. Returns `null` when the queue has nothing to claim. Otherwise:
+
+1. **Claim** — single transaction: `SELECT … FOR UPDATE SKIP LOCKED` picks one row with `available_at <= now() AND reserved_at IS NULL`, then `UPDATE` sets `reserved_at = now()` and increments `attempts`. COMMIT — the claim is durable.
+2. **Construct + run** — `container.make(JobClass)` builds the Job; `handle(ctx)` runs with a per-attempt timeout (`AbortSignal.timeout(...)`).
+3. **Outcome**:
+   - Success → `DELETE` the row, return `status: 'completed'`.
+   - Failure with retries left → run `failed()` hook (best-effort), `UPDATE` `available_at = now() + interval 'N seconds'` + clear `reserved_at`, return `status: 'retried'` with `nextAt`.
+   - Failure with no retries → run `failed()` hook, `DELETE` the row, return `status: 'failed'`. (The `failed_jobs` dead-letter table lands with a follow-up slice; apps that need it today wire a custom `failed()` hook.)
+4. **Unknown `job_name`** — DELETE + log + return `status: 'failed'`. A row whose class isn't registered would otherwise block the queue forever.
+
+`failed()` hook throws are logged but don't change the retry decision — it's a notification hook, not a control point.
+
+### `run(signal)`
+
+The poll loop. Each iteration calls `processOne()`; an empty poll sleeps for `pollInterval` ms. The sleep is abort-aware — `signal.abort()` exits the loop within one tick rather than waiting out the interval.
+
+Errors from the poll itself (network blip, DB restart) are caught + logged + sleep + retry — so a transient outage doesn't burn CPU.
+
+### Resolution priority
+
+For each per-job setting, the Worker checks in order:
+
+- `maxAttempts` → JobClass static → row's `max_attempts` column → `defaultAttempts` (3)
+- `timeout` (seconds) → JobClass static → `timeoutSeconds` (60)
+- `backoff(attempt)` → JobClass static → `defaultBackoff` (exponential + jitter)
+- `queue` (which queues to poll) → `queues` constructor option → `['default']`
+
+### Backoff default
+
+Exponential with ±25% jitter, capped at 300 seconds:
+
+| attempt | base | with jitter (approx) |
+|---|---|---|
+| 1 | 2s | 1.5–2.5s |
+| 2 | 4s | 3–5s |
+| 3 | 8s | 6–10s |
+| 4 | 16s | 12–20s |
+| 5 | 32s | 24–40s |
+| 9+ | 300s | 225–375s |
+
+Jitter prevents thundering-herd retries when many jobs fail at the same time (e.g. a downstream service blip). Override per-job with `static backoff(attempt)` or per-Worker with `defaultBackoff`.
+
+### Per-attempt timeout
+
+The `AbortSignal` on `JobContext.signal` aborts when the per-attempt timeout fires. Handlers that loop / stream should check `ctx.signal.aborted` periodically; a `setTimeout`-style sleep won't notice the abort unless it's wired in:
+
+```ts
+async handle(ctx: JobContext<...>): Promise<void> {
+  for (const row of rows) {
+    if (ctx.signal.aborted) throw new Error('aborted')
+    await this.process(row)
+  }
+}
+```
+
+A timed-out handler counts as a normal failure — the `failed()` hook runs, retries happen if attempts remain.
+
+### Concurrency
+
+Multiple Worker instances can poll the same queue concurrently. `SKIP LOCKED` is the load-bearing primitive — each claim transaction skips rows already locked by another Worker's claim transaction, so the same row is never handed to two Workers. Run as many Worker processes as you have CPU budget.

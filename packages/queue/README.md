@@ -2,7 +2,7 @@
 
 Background-job primitives for Strav 1.0 — the `Job` base class, the `JobRegistry`, the `Queue` contract, and a synchronous in-process driver. Postgres-backed `DatabaseQueue` + `Worker` + `Scheduler` land in follow-up M3 slices.
 
-> **Status: 1.0.0-alpha — M3 in progress (contract layer + `SyncQueue` + `DatabaseQueue` with queue-until-commit shipped; Worker / Scheduler to follow).**
+> **Status: 1.0.0-alpha — M3 in progress (contract layer + `SyncQueue` + `DatabaseQueue` (queue-until-commit) + `Worker` (SKIP LOCKED + backoff) shipped; Scheduler + failed-jobs to follow).**
 
 ## Install
 
@@ -162,10 +162,39 @@ This is the M3 spike from the spec — Postgres's transactional atomicity gives 
 
 `dispatchLater` computes delays in Postgres (`now() + interval 'N seconds'`) so the Worker reads `available_at` from the same DB clock the dispatcher wrote against — no clock-skew bugs.
 
+## Worker — the consumer side
+
+Polls `strav_jobs`, claims via `SELECT FOR UPDATE SKIP LOCKED`, runs `handle()` with a per-attempt timeout, deletes on success, retries with backoff on failure.
+
+```ts
+import { Worker } from '@strav/queue'
+
+const worker = new Worker({
+  db: app.resolve(PostgresDatabase),
+  registry: app.resolve(JobRegistry),
+  container: app,
+  logger: app.resolve(Logger),
+  queues: ['default'],
+  pollInterval: 1000,      // ms between empty polls
+  timeoutSeconds: 60,      // per-attempt timeout
+})
+
+const controller = new AbortController()
+process.on('SIGTERM', () => controller.abort())
+process.on('SIGINT',  () => controller.abort())
+
+await worker.run(controller.signal)
+```
+
+`SKIP LOCKED` is the load-bearing primitive — multiple Worker processes can poll the same queue concurrently without picking the same row. Scale horizontally by running more processes.
+
+Default backoff: exponential with ±25% jitter, capped at 300 seconds. Per-job override via `static backoff(attempt: number)`, per-Worker via `defaultBackoff`. Jitter prevents thundering-herd retries when many jobs fail simultaneously.
+
+`processOne()` (single-shot) is also exposed — useful for tests + one-off CLI invocations.
+
 ## What's NOT here yet
 
 Each is its own M3 slice:
 
-- **`Worker`** — `SELECT FOR UPDATE SKIP LOCKED` poll loop, attempt counter, exponential backoff with jitter, per-job `static backoff()` hook, graceful shutdown via `AbortSignal`.
 - **`Scheduler`** — cron parser, `daily()` / `hourly()` / `everyMinutes()` builders, `SchedulerKernel.run()` minute tick, `onOneServer()` advisory lock (built on `TenantManager.withLock` from `@strav/database`).
 - **Failed-jobs handling** — `failed_jobs` table, `queue:retry` / `queue:flush` console commands (need `@strav/cli`, lands in M4).

@@ -2,7 +2,7 @@
 
 Background-job primitives for Strav 1.0 — the `Job` base class, the `JobRegistry`, the `Queue` contract, plus two drivers (`SyncQueue` in-process + `DatabaseQueue` Postgres-backed with queue-until-commit semantics). `Worker` (SELECT FOR UPDATE SKIP LOCKED poll loop) + `Scheduler` (cron + `onOneServer` advisory lock) land in follow-up M3 slices.
 
-> **Status: 1.0.0-alpha — M3 in progress.** Shipping: contract layer + `SyncQueue` + `DatabaseQueue` (queue-until-commit) + `jobSchema`. Worker / Scheduler / failed-jobs follow.
+> **Status: 1.0.0-alpha — M3 in progress.** Shipping: contract layer + `SyncQueue` + `DatabaseQueue` (queue-until-commit) + `jobSchema` + `Worker` (SKIP LOCKED + backoff). Scheduler / failed-jobs follow.
 
 ## Install
 
@@ -31,6 +31,9 @@ Peer dep: `@strav/kernel`.
 | `DatabaseQueue` | Postgres-backed Queue driver. `dispatch` writes a `strav_jobs` row; inside `UnitOfWork.run` / `TenantManager.withTenant` the INSERT routes through the ambient tx (queue-until-commit). `dispatchSync` bypasses persistence |
 | `DatabaseQueueOptions` | `{ db: Database, container: Container, logger?: Logger, defaultAttempts?: number, defaultQueue?: string }` |
 | `jobSchema` | The `strav_jobs` `Schema` apps register + migrate. ULID PK + queue / job_name / payload / attempts / max_attempts / available_at / reserved_at / timestamps |
+| `Worker` | Consumer side. `processOne()` claims via SELECT FOR UPDATE SKIP LOCKED + runs handle + deletes/retries. `run(signal)` is the poll loop with graceful shutdown |
+| `WorkerOptions` | `{ db, registry, container, logger?, queues?, pollInterval?, timeoutSeconds?, defaultAttempts?, defaultBackoff? }` |
+| `JobResult` | `processOne()` return — `{ status: 'completed' \| 'retried' \| 'failed', ... }` |
 
 ## Documentation
 
@@ -41,6 +44,5 @@ Peer dep: `@strav/kernel`.
 
 Each is its own M3 slice on top of this contract layer:
 
-- **`Worker`** — `SELECT FOR UPDATE SKIP LOCKED` poll loop, attempt counter, exponential backoff with jitter, per-job `static backoff()` hook, graceful shutdown via `AbortSignal`.
 - **`Scheduler`** — cron parser, `daily()` / `hourly()` / `everyMinutes()` builders, `SchedulerKernel.run()` minute tick, `onOneServer()` via `TenantManager.withLock` (already shipped in `@strav/database`).
 - **Failed-jobs** — `failed_jobs` table + `queue:retry` / `queue:flush` console commands (need `@strav/cli`, M4).
