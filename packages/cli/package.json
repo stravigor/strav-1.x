@@ -1,0 +1,27 @@
+{
+  "name": "@strav/cli",
+  "version": "1.0.0-alpha.3",
+  "description": "Strav CLI layer — Command base, signature parser, ConsoleProvider, interactive prompts on top of @strav/kernel's ConsoleKernel",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "files": [
+    "src",
+    "README.md"
+  ],
+  "engines": {
+    "bun": ">=1.3.14"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "@strav/kernel": "workspace:*"
+  },
+  "peerDependencies": {
+    "@types/bun": ">=1.3.14"
+  }
+}

@@ -59,7 +59,12 @@ export class ConsoleKernel {
     private readonly output: ConsoleOutput = new ConsoleOutput(),
   ) {}
 
-  /** Register one or more commands. Throws `ConfigError` on duplicate signature. */
+  /**
+   * Register one or more commands. The dispatch key is the first whitespace-
+   * delimited token of `static signature` — so the bare name (`'migrate'`)
+   * and a richer @strav/cli signature (`'migrate {--force}'`) both register
+   * under `migrate`. Throws `ConfigError` on duplicate names.
+   */
   register(...Classes: CommandClass[]): this {
     for (const Class of Classes) {
       const signature = (Class as { signature?: unknown }).signature
@@ -68,13 +73,14 @@ export class ConsoleKernel {
           `Command ${Class.name}: missing static \`signature\` field (got ${String(signature)})`,
         )
       }
-      if (this.byName.has(signature)) {
-        const existing = this.byName.get(signature) as CommandClass
+      const name = firstToken(signature)
+      if (this.byName.has(name)) {
+        const existing = this.byName.get(name) as CommandClass
         throw new ConfigError(
-          `Command "${signature}" is registered twice (${existing.name} and ${Class.name})`,
+          `Command "${name}" is registered twice (${existing.name} and ${Class.name})`,
         )
       }
-      this.byName.set(signature, Class)
+      this.byName.set(name, Class)
     }
     return this
   }
@@ -165,4 +171,11 @@ export class ConsoleKernel {
       this.output.line(`  ${name.padEnd(max)}  ${Class.description}`)
     }
   }
+}
+
+/** Pull the command name (first whitespace-delimited token) out of a signature. */
+function firstToken(signature: string): string {
+  const trimmed = signature.trimStart()
+  const space = trimmed.search(/\s/)
+  return space === -1 ? trimmed : trimmed.slice(0, space)
 }
