@@ -1,8 +1,8 @@
 # @strav/queue
 
-Background-job primitives for Strav 1.0 — the `Job` base class, the `JobRegistry`, the `Queue` contract, and a synchronous in-process driver (`SyncQueue`). Postgres-backed `DatabaseQueue` + `Worker` (SELECT FOR UPDATE SKIP LOCKED poll loop) + `Scheduler` (cron + `onOneServer` advisory lock) land in follow-up M3 slices.
+Background-job primitives for Strav 1.0 — the `Job` base class, the `JobRegistry`, the `Queue` contract, plus two drivers (`SyncQueue` in-process + `DatabaseQueue` Postgres-backed with queue-until-commit semantics). `Worker` (SELECT FOR UPDATE SKIP LOCKED poll loop) + `Scheduler` (cron + `onOneServer` advisory lock) land in follow-up M3 slices.
 
-> **Status: 1.0.0-alpha — M3 in progress.** Shipping in this slice: contract layer + `SyncQueue` driver. Drivers / Worker / Scheduler / failed-jobs follow.
+> **Status: 1.0.0-alpha — M3 in progress.** Shipping: contract layer + `SyncQueue` + `DatabaseQueue` (queue-until-commit) + `jobSchema`. Worker / Scheduler / failed-jobs follow.
 
 ## Install
 
@@ -28,6 +28,9 @@ Peer dep: `@strav/kernel`.
 | `DispatchLaterOptions` | Same shape as `DispatchOptions` — slot reserved for future fields (`priority`, `deduplicationKey`) |
 | `SyncQueue` | Concrete in-process Queue driver. Instantiates via container + runs `handle()` synchronously. No persistence, no retries. Tests + single-process dev |
 | `SyncQueueOptions` | `{ container: Container, logger?: Logger }` |
+| `DatabaseQueue` | Postgres-backed Queue driver. `dispatch` writes a `strav_jobs` row; inside `UnitOfWork.run` / `TenantManager.withTenant` the INSERT routes through the ambient tx (queue-until-commit). `dispatchSync` bypasses persistence |
+| `DatabaseQueueOptions` | `{ db: Database, container: Container, logger?: Logger, defaultAttempts?: number, defaultQueue?: string }` |
+| `jobSchema` | The `strav_jobs` `Schema` apps register + migrate. ULID PK + queue / job_name / payload / attempts / max_attempts / available_at / reserved_at / timestamps |
 
 ## Documentation
 
@@ -38,7 +41,6 @@ Peer dep: `@strav/kernel`.
 
 Each is its own M3 slice on top of this contract layer:
 
-- **`DatabaseQueue` driver** — Postgres-backed `jobs` table; `dispatch` writes a row; `dispatchLater` honors the delay column. Integrates with `UnitOfWork`'s queue-until-commit so jobs dispatched inside a transaction enqueue at COMMIT and drop on ROLLBACK (the M3 spike from the spec).
 - **`Worker`** — `SELECT FOR UPDATE SKIP LOCKED` poll loop, attempt counter, exponential backoff with jitter, per-job `static backoff()` hook, graceful shutdown via `AbortSignal`.
 - **`Scheduler`** — cron parser, `daily()` / `hourly()` / `everyMinutes()` builders, `SchedulerKernel.run()` minute tick, `onOneServer()` via `TenantManager.withLock` (already shipped in `@strav/database`).
 - **Failed-jobs** — `failed_jobs` table + `queue:retry` / `queue:flush` console commands (need `@strav/cli`, M4).

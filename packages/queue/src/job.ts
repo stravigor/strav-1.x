@@ -107,6 +107,17 @@ export abstract class Job<TPayload = unknown> {
    */
   static readonly jobName: string = ''
 
+  // Optional static configuration. Declared on the base so subclasses
+  // can shadow with `static override readonly <field> = <value>` under
+  // `noImplicitOverride`. The Worker reads these per-attempt; omitted
+  // fields fall back to driver defaults. Mirrors the {@link JobConfig}
+  // interface — the interface drives `JobClass`'s typing, the static
+  // fields here drive the override-friendly inheritance shape.
+  static readonly maxAttempts?: number
+  static readonly backoff?: (attempt: number) => number
+  static readonly timeout?: number
+  static readonly queue?: string
+
   /** The handler. Workers call this once they've constructed the job + built the context. */
   abstract handle(context: JobContext<TPayload>): Promise<void>
 

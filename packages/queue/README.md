@@ -2,7 +2,7 @@
 
 Background-job primitives for Strav 1.0 — the `Job` base class, the `JobRegistry`, the `Queue` contract, and a synchronous in-process driver. Postgres-backed `DatabaseQueue` + `Worker` + `Scheduler` land in follow-up M3 slices.
 
-> **Status: 1.0.0-alpha — M3 in progress (contract layer shipped, drivers/worker/scheduler to follow).**
+> **Status: 1.0.0-alpha — M3 in progress (contract layer + `SyncQueue` + `DatabaseQueue` with queue-until-commit shipped; Worker / Scheduler to follow).**
 
 ## Install
 
@@ -123,11 +123,49 @@ await queue.dispatch(SendWelcomeEmail, { userId: 'u-1' })   // runs immediately
 
 `dispatchLater` under `SyncQueue` ignores the delay (still runs immediately) but validates the delay shape — so callers can't pass `-5` here and have it silently work, only to fail on `DatabaseQueue` later.
 
+## DatabaseQueue — Postgres-backed driver
+
+The production driver. `dispatch` writes a `strav_jobs` row; the Worker (next M3 slice) picks it up via `SELECT FOR UPDATE SKIP LOCKED`. Apps register `jobSchema` with their `SchemaRegistry` and migrate the table.
+
+```ts
+import { Application, EventBus } from '@strav/kernel'
+import { DatabaseProvider, PostgresDatabase, SchemaRegistry } from '@strav/database'
+import { DatabaseQueue, jobSchema } from '@strav/queue'
+
+// In SchemasProvider (or wherever you register schemas):
+registry.registerAll([jobSchema, /* … */])
+
+// In QueueProvider:
+new DatabaseQueue({
+  db: app.resolve(PostgresDatabase),
+  container: app,
+  logger: app.resolve(Logger),
+})
+```
+
+### Queue-until-commit
+
+When `dispatch` is called inside `UnitOfWork.run(...)` or `TenantManager.withTenant(...)`, the INSERT routes through the ambient transaction. Atomic with the surrounding work:
+
+```ts
+await uow.run(async () => {
+  await userRepo.create({ email })
+  await queue.dispatch(SendWelcomeEmail, { userId: '...' })
+  // If the transaction commits, both the user row AND the queue row
+  // are visible. If it rolls back, neither exists.
+})
+```
+
+This is the M3 spike from the spec — Postgres's transactional atomicity gives us the semantic for free. See [`docs/queue/api.md`](../../docs/queue/api.md#queue-until-commit-semantics) for the full mechanics.
+
+### Delay mechanics
+
+`dispatchLater` computes delays in Postgres (`now() + interval 'N seconds'`) so the Worker reads `available_at` from the same DB clock the dispatcher wrote against — no clock-skew bugs.
+
 ## What's NOT here yet
 
 Each is its own M3 slice:
 
-- **`DatabaseQueue` driver** — Postgres-backed `jobs` table, dispatch persists, `dispatchLater` honors the delay column. Integrates with `UnitOfWork`'s queue-until-commit so jobs dispatched inside a transaction enqueue on COMMIT and drop on ROLLBACK.
 - **`Worker`** — `SELECT FOR UPDATE SKIP LOCKED` poll loop, attempt counter, exponential backoff with jitter, per-job `static backoff()` hook, graceful shutdown via `AbortSignal`.
 - **`Scheduler`** — cron parser, `daily()` / `hourly()` / `everyMinutes()` builders, `SchedulerKernel.run()` minute tick, `onOneServer()` advisory lock (built on `TenantManager.withLock` from `@strav/database`).
 - **Failed-jobs handling** — `failed_jobs` table, `queue:retry` / `queue:flush` console commands (need `@strav/cli`, lands in M4).

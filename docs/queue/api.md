@@ -1,6 +1,6 @@
 # @strav/queue — API Reference
 
-> **Status:** V1 contract layer shipped — `Job` + `JobContext` + `JobClass` + `PayloadOf` + `JobRegistry` + `isJobClass` + `Queue` interface + `SyncQueue` driver. `DatabaseQueue` / `Worker` / `Scheduler` / failed-jobs land in follow-up cuts.
+> **Status:** V1 contract layer + two drivers shipped — `Job` + `JobContext` + `JobClass` + `PayloadOf` + `JobRegistry` + `isJobClass` + `Queue` interface + `SyncQueue` + `DatabaseQueue` + `jobSchema`. `Worker` / `Scheduler` / failed-jobs land in follow-up cuts.
 
 ## `Job<TPayload>`
 
@@ -131,3 +131,60 @@ Semantics specific to this driver:
 - The `JobContext.signal` is a never-aborted signal (SyncQueue completes in one tick, abort isn't a thing).
 
 Default logger is a no-op so `bun test` is silent without wiring `LoggerProvider`.
+
+## `DatabaseQueue`
+
+The production driver. Persists each `dispatch` / `dispatchLater` as a `strav_jobs` row; Workers (next M3 slice) pick rows up via `SELECT FOR UPDATE SKIP LOCKED` and run `handle()`.
+
+```ts
+class DatabaseQueue implements Queue {
+  constructor(opts: DatabaseQueueOptions)
+}
+
+interface DatabaseQueueOptions {
+  db: Database                  // primary Postgres pool
+  container: Container          // used by dispatchSync to construct jobs
+  logger?: Logger               // attached to dispatchSync JobContext.log
+  defaultAttempts?: number      // fallback when neither JobClass nor opts set it; default 3
+  defaultQueue?: string         // fallback queue name; default 'default'
+}
+```
+
+### Queue-until-commit semantics
+
+When `dispatch` / `dispatchLater` is called inside `UnitOfWork.run(...)` or `TenantManager.withTenant(...)`, the driver reads the ambient transactional context (via `currentTransactionalContext()` from `@strav/database`) and routes the INSERT through `ctx.tx` instead of `this.db`. The new row commits + rolls back atomically with the surrounding transaction:
+
+- **COMMIT** → row is visible to Workers; job runs.
+- **ROLLBACK** → row never existed; job is dropped.
+
+This is the M3 spike from the spec ("flush queue on commit; drop on rollback"). Postgres's transactional atomicity gives us the semantic for free — no deferred-callback machinery, no second event queue.
+
+Outside a transactional scope, `dispatch` writes against `db` directly (auto-commit).
+
+### `dispatchSync` semantics
+
+Identical to `SyncQueue.dispatchSync`: instantiates the Job via the container, builds a `JobContext`, runs `handle()` synchronously. No queue row, no retries. Useful for callers that want to bypass persistence even when `DatabaseQueue` is the wired driver (e.g., a test that wants to assert handler behavior without depending on a Worker).
+
+### `dispatchLater` mechanics
+
+Delays are computed in Postgres: the SQL emits `now() + interval 'N seconds'` rather than a wall-clock timestamp from the dispatcher. The Worker reads `available_at` from the same DB clock, so dispatcher-vs-worker clock skew can't cause a job to run early or late.
+
+- `dispatchLater(n: number, ...)` — `n` seconds from `now()`. Negative throws; `0` is the same as `dispatch`.
+- `dispatchLater(at: Date, ...)` — computes `(at - Date.now())` seconds; past Dates clamp to immediate (no `interval` fragment, just `now()`).
+
+## `jobSchema`
+
+```ts
+export const jobSchema: Schema
+```
+
+The `strav_jobs` table definition (`defineSchema('strav_jobs', Archetype.Entity, ...)`). Apps register it with their `SchemaRegistry` and `generateMigration` picks it up:
+
+```ts
+registry.registerAll([userSchema, jobSchema, /* … */])
+await generateMigration({ registry, db })
+```
+
+Columns (in declaration order): `id` (ULID PK), `queue` (varchar(64), default `'default'`), `job_name` (varchar(128)), `payload` (jsonb), `attempts` (integer, default 0), `max_attempts` (integer, default 3), `available_at` (timestamptz), `reserved_at` (timestamptz, nullable), `created_at` / `updated_at` (timestamptz, via `t.timestamps()`).
+
+Not `tenanted: true` — the queue is system-level. Apps that want per-tenant queues can clone the schema with a `tenant_id` FK + RLS (follow-up).
