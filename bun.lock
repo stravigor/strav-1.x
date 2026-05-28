@@ -65,6 +65,16 @@
         "@types/bun": ">=1.3.14",
       },
     },
+    "packages/signal": {
+      "name": "@strav/signal",
+      "version": "1.0.0-alpha.2",
+      "dependencies": {
+        "@strav/kernel": "workspace:*",
+      },
+      "peerDependencies": {
+        "@types/bun": ">=1.3.14",
+      },
+    },
     "tests/e2e/m1-boot": {
       "name": "@strav-tests/m1-boot",
       "version": "0.0.0",
@@ -116,6 +126,8 @@
     "@strav/kernel": ["@strav/kernel@workspace:packages/kernel"],
 
     "@strav/queue": ["@strav/queue@workspace:packages/queue"],
+
+    "@strav/signal": ["@strav/signal@workspace:packages/signal"],
 
     "@types/bun": ["@types/bun@1.3.14", "", { "dependencies": { "bun-types": "1.3.14" } }, "sha512-h1hFqFVcvAvD9j9K7ZW7vd82aSA+rTdznZa+5bwvCwqSB1jmmfLcbIWhOLx1/+boy/xmjgCs/OMUL8hRJSmnPw=="],
 
