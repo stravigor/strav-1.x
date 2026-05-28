@@ -25,6 +25,16 @@
 //     failed rows in bulk).
 
 export {
+  QueueConsoleProvider,
+  QueueFailed,
+  QueueFlush,
+  QueueRetry,
+  QueueWork,
+  SchedulerList,
+  SchedulerRun,
+  SchedulerWork,
+} from './console/index.ts'
+export {
   CronExpression,
   cron,
   daily,

@@ -19,6 +19,7 @@
     "access": "public"
   },
   "dependencies": {
+    "@strav/cli": "workspace:*",
     "@strav/database": "workspace:*",
     "@strav/kernel": "workspace:*"
   },

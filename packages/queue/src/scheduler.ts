@@ -112,6 +112,35 @@ export class Scheduler {
   }
 
   /**
+   * Force-dispatch one named entry once, regardless of its cron expression.
+   * Useful for `bun strav scheduler:run <name>` — run an entry on demand
+   * without waiting for the next tick boundary.
+   *
+   * Honors `oneServer`: when set, the lock + run-tracking row still apply,
+   * so two `scheduler:run` invocations against the same name from
+   * different machines don't double-dispatch. The "tick boundary" used
+   * for run-tracking is `now` floored to the minute, the same convention
+   * `tick()` uses.
+   *
+   * Throws when `name` doesn't match any registered entry — silent failure
+   * here would be a footgun in a deploy script.
+   */
+  async runEntry(name: string, now: Date = new Date()): Promise<void> {
+    const entry = this.entries.find((e) => e.name === name)
+    if (!entry) {
+      throw new Error(
+        `Scheduler.runEntry("${name}"): no schedule with that name registered. ` +
+          `Known names: ${this.entries.map((e) => e.name).join(', ') || '(none)'}`,
+      )
+    }
+    if (entry.oneServer) {
+      await this.dispatchOneServer(entry, floorToMinute(now))
+    } else {
+      await this.queue.dispatch(entry.job, entry.payload as never)
+    }
+  }
+
+  /**
    * Process every entry against `now`. The tick boundary is `now`
    * floored to the start of its minute (seconds + millis cleared) —
    * cron matches against that, and `oneServer` run-tracking writes

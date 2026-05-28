@@ -285,3 +285,33 @@ describe('Scheduler — run (minute loop)', () => {
     expect(elapsed).toBeLessThan(500)
   })
 })
+
+// ─────────────────────────────────────────────────────────────────────────────
+// runEntry — force-run one entry on demand
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('Scheduler — runEntry', () => {
+  test('dispatches the named entry once, bypassing cron', async () => {
+    const { scheduler, queue } = makeScheduler()
+    scheduler.schedule({ job: FixtureJob, cron: cron('0 0 * * *') }) // never matches "now"
+    await scheduler.runEntry('scheduler.fixture')
+    expect(queue.dispatches).toHaveLength(1)
+    expect(queue.dispatches[0]?.jobName).toBe('scheduler.fixture')
+  })
+
+  test('throws on unknown name', async () => {
+    const { scheduler } = makeScheduler()
+    await expect(scheduler.runEntry('does-not-exist')).rejects.toThrow(/no schedule with that name/)
+  })
+
+  test('honors oneServer: routes through withLock', async () => {
+    const { scheduler, tenants } = makeScheduler()
+    scheduler.schedule({
+      job: SecondJob,
+      cron: cron('0 0 * * *'),
+      oneServer: true,
+    })
+    await scheduler.runEntry('scheduler.second')
+    expect(tenants.lockKeys).toContain('scheduler:scheduler.second')
+  })
+})

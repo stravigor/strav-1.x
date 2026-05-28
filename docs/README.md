@@ -28,7 +28,7 @@ M1 + M2 + M3 shipped to npm as `1.0.0-alpha.3` (2026-05-28). M4 (`@strav/cli`) i
 | `@strav/queue` | M3 shipped (`1.0.0-alpha.3`); `Job` + `JobRegistry` + `Queue` + `SyncQueue` + `DatabaseQueue` + `Worker` + `Scheduler` + `failedJobsSchema` all landed. Only `queue:retry` / `queue:flush` console commands remain (wait on `@strav/cli` in M4). See `docs/queue/` |
 | `@strav/signal` | M3 shipped (`1.0.0-alpha.3`); mail layer + HTTP transport trio (`Message` + `Transport` + `Array` / `Log` / `Resend` / `SendGrid` / `Mailgun` transports + `MailTransportError` + `MailManager` + `MailProvider` + `Mailable`). All pure-fetch, no `nodemailer`. Inbound parsers, notifications, broadcast, SSE still to come. See `docs/signal/` |
 | `@strav/view` | M3 shipped (`1.0.0-alpha.3`); engine + islands (full frozen directive set including `@island`, plus programmatic `buildIslands` Vue SFC bundler with shared-state via setup.ts + single Vue app + `<Teleport>`). Pages auto-router + `view:cache` / `view:build` console commands still to come. See `docs/view/` |
-| `@strav/cli` | M4 slice 1 in workspace (foundation: `Command` + signature DSL + `ConsoleProvider` + subset boot + prompts + exit codes). Built-in commands (`migrate`, `queue:work`, `view:cache`, `serve`, `make:*`) land in slices 2–7. See `docs/cli/` |
+| `@strav/cli` | M4 slices 1-3 in workspace: foundation + `@strav/database` migrate commands + `@strav/queue` queue/scheduler commands (`queue:work` / `queue:retry` / `queue:flush` / `queue:failed` / `scheduler:work` / `scheduler:list` / `scheduler:run`). Slices 4-7 ahead (view / server / make / scaffolding / key+plugin). See `docs/cli/` |
 | Others | Pending — land with their respective milestones (see `spec/implementation-plan.md`) |
 
 ## How to read

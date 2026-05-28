@@ -170,12 +170,17 @@ process.exit(exit)
 
 `runCli` walks `defaultProviders` once: any `ConsoleProvider` subclass contributes its `commands` array. Apps don't have to wire commands a second time.
 
+## Built-in command sets shipped so far
+
+| Package | Commands |
+|---|---|
+| `@strav/database` (`DatabaseConsoleProvider`) | `migrate` · `migrate:rollback` · `migrate:status` · `migrate:fresh` · `migrate:generate` — see `docs/database/guides/migrations.md` |
+| `@strav/queue` (`QueueConsoleProvider`) | `queue:work` · `queue:retry` · `queue:flush` · `queue:failed` · `scheduler:work` · `scheduler:list` · `scheduler:run` — see `docs/queue/guides/console.md` |
+
 ## What's coming
 
 | Slice | Contents |
 |---|---|
-| 2 | Migration commands (`migrate` / `migrate:rollback` / `migrate:fresh` / `migrate:status` / `migrate:generate`) |
-| 3 | Queue + scheduler (`queue:work` / `queue:retry` / `queue:flush` / `queue:failed` / `scheduler:*`) |
 | 4 | View (`view:cache` / `view:clear` / `view:build`) |
 | 5 | Server (`serve` / `all` / `console` / `route:list`) |
 | 6 | Scaffolding (`make:*` family + `model_generator`) |
