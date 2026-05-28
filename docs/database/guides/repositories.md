@@ -205,9 +205,20 @@ await db.transaction(async (tx) => {
 
 Explicit `opts.tx` always wins over the ambient ALS scope. See [`unit_of_work.md`](./unit_of_work.md) for the full transactional flow.
 
+### Soft delete
+
+Schemas declared with `t.softDeletes()` get full soft-delete behavior automatically:
+
+- `repo.delete(model)` runs `UPDATE … SET deleted_at = now()` instead of `DELETE`.
+- `repo.forceDelete(model)` still hard-deletes.
+- `repo.restore(model)` clears `deleted_at`. Fires cancelable `<resource>.restoring` + post `<resource>.restored`.
+- `repo.query()`, `repo.find()`, `repo.findMany()`, `repo.all()`, etc. all exclude trashed rows by default.
+- `repo.query().withTrashed()` includes them; `.onlyTrashed()` returns only trashed.
+
+See [`soft_delete.md`](./soft_delete.md) for the full pattern + tradeoffs.
+
 ### What's NOT automatic (yet)
 
-- **Soft-delete integration** — `t.softDeletes()` adds the column but `delete()` still hard-deletes. `withTrashed()` / `onlyTrashed()` on the query builder land with the soft-delete slice.
 - **Relationships + eager loading** (`.with('relation')`) — the relationships slice.
 - **Pagination helpers** (`.paginate`, `.cursorPaginate`) — same slice.
 
@@ -282,6 +293,5 @@ The package's own unit suite (`packages/database/tests/repository.test.ts`) uses
 
 - **`.with('relation')` + relationship definitions on the schema** — the relationships slice.
 - **`.paginate(...)` + `.cursorPaginate(...)`** — same slice as relationships.
-- **`.withTrashed()` / `.onlyTrashed()` + soft-delete in `delete()`** — soft-delete slice.
 - **`.join` / `.leftJoin` / CTEs** — joins + CTEs slice.
 - **`@encrypt` / `@hidden` / `@cast` / `@ulid` decorators on the Model** — the serialization slice.

@@ -18,7 +18,10 @@ import { NotFoundError } from '@strav/kernel'
 import type { DatabaseExecutor } from '../database.ts'
 import type { Schema } from '../schema/types.ts'
 import { hydrateRow, type ModelClass } from './model.ts'
-import { quoteIdent, selectColumnList } from './sql_emitter.ts'
+import { quoteIdent, schemaHasSoftDelete, selectColumnList } from './sql_emitter.ts'
+
+/** Soft-delete scope applied to the WHERE clause. */
+type TrashedScope = 'exclude' | 'include' | 'only'
 
 export type WhereOperator =
   | '='
@@ -56,6 +59,14 @@ export class QueryBuilder<TModel extends object = Record<string, unknown>> {
   private selectColumns: readonly string[] | undefined
   private limitN: number | undefined
   private offsetN: number | undefined
+  /**
+   * How the builder treats soft-deleted rows. Default `exclude` — when the
+   * schema declared `t.softDeletes()`, every WHERE auto-appends
+   * `"deleted_at" IS NULL`. `include` (via `.withTrashed()`) skips that
+   * predicate; `only` (via `.onlyTrashed()`) flips it to `IS NOT NULL`.
+   * No-op on schemas without a `deleted_at` column.
+   */
+  private trashedScope: TrashedScope = 'exclude'
 
   constructor(
     private readonly schema: Schema,
@@ -142,6 +153,32 @@ export class QueryBuilder<TModel extends object = Record<string, unknown>> {
   offset(n: number): QueryBuilder<TModel> {
     const next = this.clone()
     next.offsetN = n
+    return next
+  }
+
+  /**
+   * Include soft-deleted rows in the result (rows where `deleted_at` is
+   * non-null). No-op on schemas without `t.softDeletes()`.
+   */
+  withTrashed(): QueryBuilder<TModel> {
+    const next = this.clone()
+    next.trashedScope = 'include'
+    return next
+  }
+
+  /**
+   * Return ONLY soft-deleted rows. Useful for "trash bin" UIs and
+   * cleanup queries. Throws if called on a schema without `t.softDeletes()`
+   * — the query would always be empty.
+   */
+  onlyTrashed(): QueryBuilder<TModel> {
+    if (!schemaHasSoftDelete(this.schema)) {
+      throw new Error(
+        `QueryBuilder.onlyTrashed: schema "${this.schema.name}" doesn't declare t.softDeletes() — there's no deleted_at column to filter on.`,
+      )
+    }
+    const next = this.clone()
+    next.trashedScope = 'only'
     return next
   }
 
@@ -239,12 +276,21 @@ export class QueryBuilder<TModel extends object = Record<string, unknown>> {
     next.selectColumns = this.selectColumns
     next.limitN = this.limitN
     next.offsetN = this.offsetN
+    next.trashedScope = this.trashedScope
     return next
   }
 
   private compileWhere(params: unknown[]): string {
-    if (this.wheres.length === 0) return ''
     const fragments: string[] = []
+
+    // Soft-delete default scope: schemas declared with t.softDeletes() get
+    // an automatic `deleted_at IS NULL` predicate unless the caller
+    // requested `withTrashed()` (include) or `onlyTrashed()` (only).
+    if (this.trashedScope !== 'include' && schemaHasSoftDelete(this.schema)) {
+      const op = this.trashedScope === 'only' ? 'IS NOT NULL' : 'IS NULL'
+      fragments.push(`${quoteIdent('deleted_at')} ${op}`)
+    }
+
     for (const clause of this.wheres) {
       const ident = quoteIdent(clause.column)
       switch (clause.op) {
@@ -277,6 +323,8 @@ export class QueryBuilder<TModel extends object = Record<string, unknown>> {
         }
       }
     }
+
+    if (fragments.length === 0) return ''
     return ` WHERE ${fragments.join(' AND ')}`
   }
 

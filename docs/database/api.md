@@ -287,7 +287,12 @@ abstract class Repository<TModel> {
 
   create(attrs: Partial<TModel>, opts?: RepositoryScope): Promise<TModel>
   update(model: TModel, changes: Partial<TModel>, opts?: RepositoryScope): Promise<TModel>
-  delete(model: TModel, opts?: RepositoryScope): Promise<void>
+  /** Soft-deletes on `t.softDeletes()` schemas (returns the trashed Model); hard-deletes otherwise. */
+  delete(model: TModel, opts?: RepositoryScope): Promise<TModel | undefined>
+  /** Always hard-deletes, even on soft-deletes schemas. Event payload carries `force: true`. */
+  forceDelete(model: TModel, opts?: RepositoryScope): Promise<void>
+  /** Clears `deleted_at`. Throws on schemas without `t.softDeletes()`. Fires `.restoring` / `.restored`. */
+  restore(model: TModel, opts?: RepositoryScope): Promise<TModel>
 
   query(opts?: RepositoryScope): QueryBuilder<TModel>
 
@@ -323,8 +328,10 @@ Every `create` / `update` / `delete` fires a pair of events on the wired `EventB
 | `<resource>.created` | — | `{ resource, model }` |
 | `<resource>.updating` | ✓ | `{ resource, model, changes }` |
 | `<resource>.updated` | — | `{ resource, model, changes }` |
-| `<resource>.deleting` | ✓ | `{ resource, model }` |
-| `<resource>.deleted` | — | `{ resource, model }` |
+| `<resource>.deleting` | ✓ | `{ resource, model, force }` |
+| `<resource>.deleted` | — | `{ resource, model, force }` |
+| `<resource>.restoring` | ✓ | `{ resource, model }` |
+| `<resource>.restored` | — | `{ resource, model }` |
 
 `<resource>` is the schema name (snake_case, singular). `.<verb>ing` events run before the SQL — a throwing listener aborts the operation and the SQL never runs. `.<verb>ed` events run after the SQL succeeds; listener throws are caught and logged by the bus's default error handler.
 
@@ -365,6 +372,10 @@ class QueryBuilder<TModel> {
   orderBy(col, dir?: 'asc' | 'desc'): QueryBuilder<TModel>
   limit(n): QueryBuilder<TModel>
   offset(n): QueryBuilder<TModel>
+  /** Include soft-deleted rows. Default behavior excludes them on schemas with `t.softDeletes()`. */
+  withTrashed(): QueryBuilder<TModel>
+  /** Return only soft-deleted rows. Throws on schemas without `t.softDeletes()`. */
+  onlyTrashed(): QueryBuilder<TModel>
 
   toSql(): { sql: string; params: unknown[] }
 
@@ -385,6 +396,15 @@ type WhereOperator =
 
 Empty `whereIn`/`whereNotIn` arrays emit `FALSE`/`TRUE` so the query stays valid SQL.
 
+### Soft-delete default scope
+
+When the schema declared `t.softDeletes()`, `QueryBuilder` automatically appends `"deleted_at" IS NULL` to the WHERE clause. Apps don't see soft-deleted rows by accident — `Repository.find(id)` returns `null` for trashed rows, `repo.all()` excludes them, `repo.query().get()` excludes them.
+
+- `withTrashed()` — drop the predicate; query returns all rows including trashed.
+- `onlyTrashed()` — flip the predicate to `IS NOT NULL`; query returns only trashed rows. Throws on schemas without `t.softDeletes()`.
+
+The default scope applies to every terminal — `get`, `first`, `firstOrFail`, `count`, `exists`, `pluck` — because they all share `compileWhere`. See [`guides/soft_delete.md`](./guides/soft_delete.md) for the full pattern.
+
 ## SQL emitter
 
 Lower-level helpers the Repository + QueryBuilder compose. Exposed publicly for apps that need raw SQL emission with the same conventions (ULID auto-gen, identifier quoting, parameter binding, RETURNING).
@@ -395,9 +415,12 @@ function selectColumnList(schema: Schema): string
 function emitInsert(schema, attrs): { sql, params }
 function emitUpdateById(schema, id, changes): { sql, params }   // throws on empty changes
 function emitDeleteById(schema, id): { sql, params }
+function emitSoftDeleteById(schema, id): { sql, params }        // UPDATE … SET deleted_at = now()
+function emitRestoreById(schema, id): { sql, params }           // UPDATE … SET deleted_at = NULL
 function emitFindById(schema, id): { sql, params }
 function emitFindMany(schema, ids): { sql, params }
 function hasField(schema, name, kind?): boolean
+function schemaHasSoftDelete(schema: Schema): boolean
 ```
 
 `emitInsert` mints a fresh ULID/UUID when the schema declares an `id` field and the caller didn't supply one. `emitUpdateById` auto-appends `updated_at = now()` when the schema declared `t.timestamps()` and the caller didn't supply a value — and throws when there's nothing to update (an "update" with no caller-supplied changes is a programmer error).

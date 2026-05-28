@@ -138,6 +138,34 @@ export function emitDeleteById(schema: Schema, id: unknown): EmittedSql {
   }
 }
 
+/**
+ * Soft-delete by id. Emits `UPDATE … SET deleted_at = now() WHERE id = $1
+ * RETURNING *`. Used by `Repository.delete` when the schema declared
+ * `t.softDeletes()`; falls through to `emitDeleteById` otherwise.
+ */
+export function emitSoftDeleteById(schema: Schema, id: unknown): EmittedSql {
+  return {
+    sql: `UPDATE ${quoteIdent(schema.name)} SET ${quoteIdent('deleted_at')} = now() WHERE ${quoteIdent('id')} = $1 RETURNING *`,
+    params: [id],
+  }
+}
+
+/**
+ * Restore a soft-deleted row by id. Emits `UPDATE … SET deleted_at = NULL
+ * WHERE id = $1 RETURNING *`. Used by `Repository.restore`.
+ */
+export function emitRestoreById(schema: Schema, id: unknown): EmittedSql {
+  return {
+    sql: `UPDATE ${quoteIdent(schema.name)} SET ${quoteIdent('deleted_at')} = NULL WHERE ${quoteIdent('id')} = $1 RETURNING *`,
+    params: [id],
+  }
+}
+
+/** True when the schema declared `t.softDeletes()` (i.e., has a `deleted_at` timestamp column). */
+export function schemaHasSoftDelete(schema: Schema): boolean {
+  return schema.fields.some((f) => f.name === 'deleted_at' && f.kind === 'timestamp')
+}
+
 /** SELECT one row by id. */
 export function emitFindById(schema: Schema, id: unknown): EmittedSql {
   return {

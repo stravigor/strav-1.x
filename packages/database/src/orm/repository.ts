@@ -38,10 +38,11 @@ import { hydrateRow, type ModelClass } from './model.ts'
 import { QueryBuilder } from './query_builder.ts'
 import {
   emitDeleteById,
-  emitFindById,
-  emitFindMany,
   emitInsert,
+  emitRestoreById,
+  emitSoftDeleteById,
   emitUpdateById,
+  schemaHasSoftDelete,
 } from './sql_emitter.ts'
 
 /** Optional transaction scope for any Repository call. */
@@ -87,8 +88,19 @@ export interface RepositoryUpdatedEvent<TModel> {
 export interface RepositoryDeletingEvent<TModel> {
   resource: string
   model: TModel
+  /** True for `forceDelete()` on a soft-deletes schema, false for the soft-delete path. */
+  force: boolean
 }
 export interface RepositoryDeletedEvent<TModel> {
+  resource: string
+  model: TModel
+  force: boolean
+}
+export interface RepositoryRestoringEvent<TModel> {
+  resource: string
+  model: TModel
+}
+export interface RepositoryRestoredEvent<TModel> {
   resource: string
   model: TModel
 }
@@ -134,9 +146,10 @@ export abstract class Repository<TModel extends object> {
   // ─── Finders ───────────────────────────────────────────────────────────────
 
   async find(id: string | number, opts?: RepositoryScope): Promise<TModel | null> {
-    const { sql, params } = emitFindById(this.schema, id)
-    const row = await this.executor(opts).queryOne<Record<string, unknown>>(sql, params)
-    return row ? this.hydrate(row) : null
+    // Routed through QueryBuilder so the default soft-delete scope applies —
+    // `find(id)` returns null for trashed rows by default. Callers that want
+    // to read soft-deleted rows reach for `.query().withTrashed()...`.
+    return this.query(opts).where('id', id).first()
   }
 
   async findOrFail(id: string | number, opts?: RepositoryScope): Promise<TModel> {
@@ -152,9 +165,7 @@ export abstract class Repository<TModel extends object> {
 
   async findMany(ids: readonly (string | number)[], opts?: RepositoryScope): Promise<TModel[]> {
     if (ids.length === 0) return []
-    const { sql, params } = emitFindMany(this.schema, ids)
-    const rows = await this.executor(opts).query<Record<string, unknown>>(sql, params)
-    return rows.map((r) => this.hydrate(r))
+    return this.query(opts).whereIn('id', ids).get()
   }
 
   async first(opts?: RepositoryScope): Promise<TModel | null> {
@@ -216,23 +227,113 @@ export abstract class Repository<TModel extends object> {
     return next
   }
 
-  async delete(model: TModel, opts?: RepositoryScope): Promise<void> {
+  /**
+   * Delete a row. For schemas that declared `t.softDeletes()`, runs
+   * `UPDATE … SET deleted_at = now()` so the row stays in the DB but
+   * is excluded from default-scoped queries. For schemas without the
+   * column, runs a hard `DELETE`. Apps that want a hard delete on a
+   * soft-deletes schema reach for `forceDelete(model)`.
+   */
+  async delete(model: TModel, opts?: RepositoryScope): Promise<TModel | undefined> {
     const id = (model as Record<string, unknown>).id
     if (id === undefined) {
       throw new Error(
         `Repository.delete("${this.schema.name}"): the model has no \`id\` to delete by.`,
       )
     }
+    const soft = schemaHasSoftDelete(this.schema)
     await this.emit<RepositoryDeletingEvent<TModel>>('deleting', {
       resource: this.schema.name,
       model,
+      force: false,
+    })
+    if (soft) {
+      const { sql, params } = emitSoftDeleteById(this.schema, id)
+      const row = await this.executor(opts).queryOne<Record<string, unknown>>(sql, params)
+      if (!row) {
+        throw new NotFoundError(`${this.schema.name} "${String(id)}" no longer exists.`, {
+          code: `${this.schema.name}.not-found`,
+          context: { id },
+        })
+      }
+      const trashed = this.hydrate(row)
+      await this.emit<RepositoryDeletedEvent<TModel>>('deleted', {
+        resource: this.schema.name,
+        model: trashed,
+        force: false,
+      })
+      return trashed
+    }
+    const { sql, params } = emitDeleteById(this.schema, id)
+    await this.executor(opts).execute(sql, params)
+    await this.emit<RepositoryDeletedEvent<TModel>>('deleted', {
+      resource: this.schema.name,
+      model,
+      force: false,
+    })
+  }
+
+  /**
+   * Always hard-delete, even on soft-deletes schemas. Fires the same
+   * `.deleting` / `.deleted` events with `force: true` so listeners can
+   * distinguish the two paths.
+   */
+  async forceDelete(model: TModel, opts?: RepositoryScope): Promise<void> {
+    const id = (model as Record<string, unknown>).id
+    if (id === undefined) {
+      throw new Error(
+        `Repository.forceDelete("${this.schema.name}"): the model has no \`id\` to delete by.`,
+      )
+    }
+    await this.emit<RepositoryDeletingEvent<TModel>>('deleting', {
+      resource: this.schema.name,
+      model,
+      force: true,
     })
     const { sql, params } = emitDeleteById(this.schema, id)
     await this.executor(opts).execute(sql, params)
     await this.emit<RepositoryDeletedEvent<TModel>>('deleted', {
       resource: this.schema.name,
       model,
+      force: true,
     })
+  }
+
+  /**
+   * Restore a soft-deleted row — `UPDATE … SET deleted_at = NULL`. Fires
+   * cancelable `<resource>.restoring` + post `<resource>.restored`.
+   * Throws on schemas without `t.softDeletes()`.
+   */
+  async restore(model: TModel, opts?: RepositoryScope): Promise<TModel> {
+    if (!schemaHasSoftDelete(this.schema)) {
+      throw new Error(
+        `Repository.restore("${this.schema.name}"): schema doesn't declare t.softDeletes() — nothing to restore.`,
+      )
+    }
+    const id = (model as Record<string, unknown>).id
+    if (id === undefined) {
+      throw new Error(
+        `Repository.restore("${this.schema.name}"): the model has no \`id\` to restore by.`,
+      )
+    }
+    await this.emit<RepositoryRestoringEvent<TModel>>('restoring', {
+      resource: this.schema.name,
+      model,
+    })
+    const { sql, params } = emitRestoreById(this.schema, id)
+    const row = await this.executor(opts).queryOne<Record<string, unknown>>(sql, params)
+    if (!row) {
+      throw new NotFoundError(`${this.schema.name} "${String(id)}" no longer exists.`, {
+        code: `${this.schema.name}.not-found`,
+        context: { id },
+      })
+    }
+    const restored = this.hydrate(row)
+    await this.emit<RepositoryRestoredEvent<TModel>>('restored', {
+      resource: this.schema.name,
+      model: restored,
+    })
+    return restored
   }
 
   // ─── Lifecycle helper ──────────────────────────────────────────────────────
