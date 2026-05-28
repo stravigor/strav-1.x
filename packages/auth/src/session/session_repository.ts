@@ -14,7 +14,8 @@
 
 // biome-ignore lint/style/useImportType: PostgresDatabase needs to be a value import — the @inject() decorator below resolves the constructor param via reflect-metadata, which requires the runtime class reference. `import type` erases it; the container then resolves the param to `Object` and the wiring silently breaks.
 import { PostgresDatabase, quoteIdent, Repository } from '@strav/database'
-import { inject } from '@strav/kernel'
+// biome-ignore lint/style/useImportType: EventBus has the same constraint as PostgresDatabase — reflect-metadata needs the runtime class for @inject() param resolution.
+import { EventBus, inject } from '@strav/kernel'
 import { Session } from './session.ts'
 import { sessionSchema } from './session_schema.ts'
 
@@ -23,9 +24,9 @@ export class SessionRepository extends Repository<Session> {
   static override readonly schema = sessionSchema
   static override readonly model = Session
 
-  // biome-ignore lint/complexity/noUselessConstructor: explicit constructor forces TypeScript to emit `design:paramtypes` metadata on the subclass for the @inject() decorator above — without it the container resolves the inherited constructor to no params and the repo never gets a PostgresDatabase.
-  constructor(db: PostgresDatabase) {
-    super(db)
+  // biome-ignore lint/complexity/noUselessConstructor: explicit constructor forces TypeScript to emit `design:paramtypes` metadata on the subclass for the @inject() decorator above — without it the container resolves the inherited constructor to no params and the repo never gets its dependencies.
+  constructor(db: PostgresDatabase, events: EventBus) {
+    super(db, events)
   }
 
   /** Find a session by id only if it's still valid (expires_at > now()). */

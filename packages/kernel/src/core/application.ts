@@ -43,6 +43,15 @@ export class Application extends Container {
     resolver: <T>(Class: Constructor<T>): T => this.make(Class),
   })
 
+  constructor() {
+    super()
+    // Expose the EventBus on the container so `@inject()`-marked classes
+    // can resolve it as a constructor param — Repository lifecycle hooks
+    // depend on this. The singleton resolver returns the same instance
+    // attached to `this.events`, so apps can also still reach it directly.
+    this.singleton(EventBus, () => this.events)
+  }
+
   private _providers: ServiceProvider[] = []
   private _bootedProviders: ServiceProvider[] = []
   private _booted = false

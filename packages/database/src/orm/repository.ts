@@ -29,7 +29,7 @@
  *   - The `tx?` parameter for transaction scoping
  */
 
-import { NotFoundError } from '@strav/kernel'
+import { type EventBus, NotFoundError } from '@strav/kernel'
 import type { Database, DatabaseExecutor, PostgresDatabase } from '../database.ts'
 import type { Schema } from '../schema/types.ts'
 import { hydrateRow, type ModelClass } from './model.ts'
@@ -42,6 +42,43 @@ import {
   emitUpdateById,
 } from './sql_emitter.ts'
 
+/**
+ * Repository lifecycle event payloads. The discriminant is the event name
+ * itself (`<resource>.creating` / `.created` / etc.); the payload carries
+ * the resource name + the model / changes.
+ *
+ * `.<verb>ing` events are cancelable — a throwing listener aborts the
+ * SQL. `.<verb>ed` events fire AFTER the SQL succeeds; listener throws
+ * are logged but don't roll back (and won't, until the queue-until-
+ * commit slice ships alongside Repository tx-routing).
+ */
+export interface RepositoryCreatingEvent<TModel> {
+  resource: string
+  attrs: Partial<TModel>
+}
+export interface RepositoryCreatedEvent<TModel> {
+  resource: string
+  model: TModel
+}
+export interface RepositoryUpdatingEvent<TModel> {
+  resource: string
+  model: TModel
+  changes: Partial<TModel>
+}
+export interface RepositoryUpdatedEvent<TModel> {
+  resource: string
+  model: TModel
+  changes: Partial<TModel>
+}
+export interface RepositoryDeletingEvent<TModel> {
+  resource: string
+  model: TModel
+}
+export interface RepositoryDeletedEvent<TModel> {
+  resource: string
+  model: TModel
+}
+
 export abstract class Repository<TModel extends object> {
   /** The schema this Repository operates on. Subclasses MUST set this. */
   static readonly schema: Schema
@@ -51,7 +88,17 @@ export abstract class Repository<TModel extends object> {
   protected readonly schema: Schema
   protected readonly modelCtor: ModelClass<TModel & { constructor: ModelClass<TModel> }>
 
-  constructor(protected readonly db: PostgresDatabase) {
+  /**
+   * `events` is optional so subclasses that don't need lifecycle hooks can
+   * stay as-is (and so apps under test can construct a Repository without
+   * wiring a bus). When the param IS bound (which the @inject() flow does
+   * automatically in real apps), `create` / `update` / `delete` fire the
+   * canonical `<resource>.<verb>ing` / `.<verb>ed` events.
+   */
+  constructor(
+    protected readonly db: PostgresDatabase,
+    protected readonly events?: EventBus,
+  ) {
     const Ctor = this.constructor as unknown as {
       schema?: Schema
       model?: ModelClass<TModel & { constructor: ModelClass<TModel> }>
@@ -107,6 +154,10 @@ export abstract class Repository<TModel extends object> {
   // ─── Mutations ─────────────────────────────────────────────────────────────
 
   async create(attrs: Partial<TModel>): Promise<TModel> {
+    await this.emit<RepositoryCreatingEvent<TModel>>('creating', {
+      resource: this.schema.name,
+      attrs,
+    })
     const { sql, params } = emitInsert(this.schema, attrs as Record<string, unknown>)
     const row = await this.executor().queryOne<Record<string, unknown>>(sql, params)
     if (!row) {
@@ -114,7 +165,12 @@ export abstract class Repository<TModel extends object> {
         `Repository.create("${this.schema.name}"): RETURNING * did not produce a row.`,
       )
     }
-    return this.hydrate(row)
+    const model = this.hydrate(row)
+    await this.emit<RepositoryCreatedEvent<TModel>>('created', {
+      resource: this.schema.name,
+      model,
+    })
+    return model
   }
 
   async update(model: TModel, changes: Partial<TModel>): Promise<TModel> {
@@ -124,6 +180,11 @@ export abstract class Repository<TModel extends object> {
         `Repository.update("${this.schema.name}"): the model has no \`id\` to update by.`,
       )
     }
+    await this.emit<RepositoryUpdatingEvent<TModel>>('updating', {
+      resource: this.schema.name,
+      model,
+      changes,
+    })
     const { sql, params } = emitUpdateById(this.schema, id, changes as Record<string, unknown>)
     const row = await this.executor().queryOne<Record<string, unknown>>(sql, params)
     if (!row) {
@@ -132,7 +193,13 @@ export abstract class Repository<TModel extends object> {
         context: { id },
       })
     }
-    return this.hydrate(row)
+    const next = this.hydrate(row)
+    await this.emit<RepositoryUpdatedEvent<TModel>>('updated', {
+      resource: this.schema.name,
+      model: next,
+      changes,
+    })
+    return next
   }
 
   async delete(model: TModel): Promise<void> {
@@ -142,8 +209,33 @@ export abstract class Repository<TModel extends object> {
         `Repository.delete("${this.schema.name}"): the model has no \`id\` to delete by.`,
       )
     }
+    await this.emit<RepositoryDeletingEvent<TModel>>('deleting', {
+      resource: this.schema.name,
+      model,
+    })
     const { sql, params } = emitDeleteById(this.schema, id)
     await this.executor().execute(sql, params)
+    await this.emit<RepositoryDeletedEvent<TModel>>('deleted', {
+      resource: this.schema.name,
+      model,
+    })
+  }
+
+  // ─── Lifecycle helper ──────────────────────────────────────────────────────
+
+  /**
+   * Emit `<resource>.<verb>` on the bus when one was wired. No-op when the
+   * Repository was constructed without an EventBus — keeps tests + simple
+   * scripts working without the wiring ceremony.
+   *
+   * `.<verb>ing` events are cancelable; the EventBus rejects on the first
+   * listener throw, which propagates out of `create` / `update` / `delete`
+   * before any SQL runs. `.<verb>ed` events fire AFTER the SQL succeeds;
+   * listener throws are caught by the bus's default handler and logged.
+   */
+  private async emit<P>(verb: string, payload: P): Promise<void> {
+    if (!this.events) return
+    await this.events.emit(`${this.schema.name}.${verb}`, payload)
   }
 
   // ─── Query ─────────────────────────────────────────────────────────────────

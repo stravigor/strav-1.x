@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { DatabaseExecutor, PostgresDatabase } from '@strav/database'
 import { HttpProvider } from '@strav/http'
-import { Application, ConfigProvider, LoggerProvider } from '@strav/kernel'
+import { Application, ConfigProvider, EventBus, LoggerProvider } from '@strav/kernel'
 import { AuthProvider } from '../src/auth_provider.ts'
 import type { Authenticatable } from '../src/authenticatable.ts'
 import { Session } from '../src/session/session.ts'
@@ -278,7 +278,7 @@ class SpyDb {
 describe('SessionRepository.findValid', () => {
   test('emits a SELECT with id = $1 AND expires_at > $2 LIMIT 1', async () => {
     const db = new SpyDb()
-    const repo = new SessionRepository(db as unknown as PostgresDatabase)
+    const repo = new SessionRepository(db as unknown as PostgresDatabase, new EventBus())
     const now = new Date('2026-05-28T12:00:00Z')
     await repo.findValid('sess-x', now)
     const lastSelect = nonNull(db.queries.find((q) => q.sql.startsWith('SELECT')))
@@ -294,7 +294,7 @@ describe('SessionRepository.deleteExpired', () => {
   test('emits DELETE WHERE expires_at <= $1, returns affected count', async () => {
     const db = new SpyDb()
     db.scriptedExecute = 3
-    const repo = new SessionRepository(db as unknown as PostgresDatabase)
+    const repo = new SessionRepository(db as unknown as PostgresDatabase, new EventBus())
     const cutoff = new Date('2026-05-28T12:00:00Z')
     const removed = await repo.deleteExpired(cutoff)
     expect(removed).toBe(3)

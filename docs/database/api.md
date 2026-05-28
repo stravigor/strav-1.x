@@ -1,6 +1,6 @@
 # @strav/database — API Reference
 
-> **Status:** Reflects what's implemented as of M2 (foundation + ORM + DDL slice) — Database wrapper, DatabaseProvider, Schema DSL, SchemaRegistry, MigrationRunner, Model, Repository<T>, QueryBuilder, SQL emitter, DDL emitters. RLS scoping, decorators, repository hooks, soft-delete integration, relationships + eager loading, pagination, joins/CTEs, schema-diff migration generator, migration builder DSL land in follow-up cuts.
+> **Status:** Reflects what's implemented as of M2 (foundation + ORM + DDL + diff + tenancy + Repository hooks) — Database wrapper, DatabaseProvider, Schema DSL, SchemaRegistry, MigrationRunner, Model, Repository<T> (with lifecycle events), QueryBuilder, SQL emitter, DDL emitters, schema-diff generator, multi-tenancy (DDL + TenantManager). Decorators, soft-delete integration, relationships + eager loading, pagination, joins/CTEs, queue-until-commit semantics, migration builder DSL, destructive diff, `tenantedSerial` per-tenant sequencing, two-role connection config, Repository tx-routing inside `withTenant` all land in follow-up cuts.
 
 ## `Database` / `PostgresDatabase`
 
@@ -273,7 +273,7 @@ abstract class Repository<TModel> {
   static readonly schema: Schema
   static readonly model: ModelClass
 
-  constructor(db: PostgresDatabase)
+  constructor(db: PostgresDatabase, events?: EventBus)
 
   find(id): Promise<TModel | null>
   findOrFail(id): Promise<TModel>             // throws NotFoundError
@@ -292,6 +292,8 @@ abstract class Repository<TModel> {
 }
 ```
 
+`@inject()`-marked subclasses get both `PostgresDatabase` and `EventBus` resolved via the container — the kernel's `Application` registers `EventBus` as a singleton in its constructor. Subclasses that don't list `EventBus` in their constructor (or test code that passes only the db) get an `events`-less repository — `create` / `update` / `delete` still work, they just don't emit lifecycle events.
+
 ### What's automatic
 
 - **ULID on `create`** when the schema declared `t.id()` and the caller didn't supply `attrs.id`. UUID schemas (`t.uuid()`) get `crypto.randomUUID()`.
@@ -299,9 +301,40 @@ abstract class Repository<TModel> {
 - **`created_at` / `updated_at` on `create`** — not bound at all when absent from attrs; the schema's `DEFAULT now()` fires. One source of time truth (the DB).
 - **`RETURNING *` on `create` / `update`** — Repository hydrates the canonical post-write row.
 
+### Lifecycle events
+
+Every `create` / `update` / `delete` fires a pair of events on the wired `EventBus`:
+
+| Event | Cancelable | Payload |
+|---|---|---|
+| `<resource>.creating` | ✓ | `{ resource, attrs }` |
+| `<resource>.created` | — | `{ resource, model }` |
+| `<resource>.updating` | ✓ | `{ resource, model, changes }` |
+| `<resource>.updated` | — | `{ resource, model, changes }` |
+| `<resource>.deleting` | ✓ | `{ resource, model }` |
+| `<resource>.deleted` | — | `{ resource, model }` |
+
+`<resource>` is the schema name (snake_case, singular). `.<verb>ing` events run before the SQL — a throwing listener aborts the operation and the SQL never runs. `.<verb>ed` events run after the SQL succeeds; listener throws are caught and logged by the bus's default error handler.
+
+Wildcards work: `events.on('user.*', …)` fires for every user lifecycle event; `events.on('*.created', …)` fires for every resource's create event.
+
+```ts
+events.on('user.created', ({ model }: { model: User }) => {
+  searchIndex.add(model)
+})
+
+events.on('user.deleting', ({ model }: { model: User }) => {
+  if (model.is_protected) throw new Error('Cannot delete protected users')
+})
+```
+
+Payload types are exported from `@strav/database` as `RepositoryCreatingEvent<T>`, `RepositoryCreatedEvent<T>`, `RepositoryUpdatingEvent<T>`, etc.
+
+**Queue-until-commit semantics is deferred.** Today, `.created` listeners run as soon as the INSERT succeeds — if the surrounding (non-existent yet) transaction would later roll back, side effects already fired. Apps that need transactional event handling should hold off on side effects in `.created` until the unit-of-work slice lands with `tx?` parameter routing.
+
 ### What's NOT automatic
 
-See [`guides/repositories.md`](./guides/repositories.md) — lifecycle hooks, soft-delete integration, relationships + eager loading, pagination, and the `tx?` parameter all land in follow-up slices.
+See [`guides/repositories.md`](./guides/repositories.md) — soft-delete integration, relationships + eager loading, pagination, queue-until-commit semantics, and the `tx?` parameter all land in follow-up slices.
 
 ## `QueryBuilder<TModel>`
 

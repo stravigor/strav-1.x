@@ -132,9 +132,60 @@ class Repository<TModel> {
 - **`created_at` / `updated_at` on create.** Not bound at all when absent from attrs — the schema's `DEFAULT now()` fires. One source of time truth (the DB), no clock skew between app and DB.
 - **`RETURNING *` on `create` / `update`.** The Repository hydrates the returned row, so callers get back the canonical state (including any DB-defaulted columns) without a second `find()`.
 
+### Lifecycle events
+
+The Repository emits six events per resource on the `EventBus`:
+
+```
+<resource>.creating  (cancelable) — fires before INSERT
+<resource>.created                — fires after INSERT succeeds
+<resource>.updating  (cancelable) — fires before UPDATE
+<resource>.updated                — fires after UPDATE succeeds
+<resource>.deleting  (cancelable) — fires before DELETE
+<resource>.deleted                — fires after DELETE succeeds
+```
+
+`<resource>` is the schema name (snake_case, singular — so `user`, `order_item`, `access_token`). The `.<verb>ing` events are cancelable: a throwing listener stops the SQL from running and the Repository method rejects with the listener's error. The `.<verb>ed` events run after the SQL succeeds; listener throws don't roll anything back (they get logged via the bus's default handler).
+
+```ts
+// In a provider's boot():
+const events = app.resolve(EventBus)
+
+events.on('user.creating', ({ attrs }: RepositoryCreatingEvent<User>) => {
+  if (BANNED_DOMAINS.some(d => (attrs.email ?? '').endsWith(d))) {
+    throw new ValidationError('email-domain-banned')
+  }
+})
+
+events.on('user.created', async ({ model }: RepositoryCreatedEvent<User>) => {
+  await searchIndex.add(model)
+})
+
+events.on('user.deleted', async ({ model }: RepositoryDeletedEvent<User>) => {
+  await searchIndex.remove(model.id)
+})
+```
+
+The `EventBus` is injected into Repository via `@inject()` — the kernel's `Application` registers it as a singleton in its constructor. Subclasses that want events declare it on their constructor:
+
+```ts
+@inject()
+export class UserRepository extends Repository<User> {
+  static schema = userSchema
+  static model = User
+  constructor(db: PostgresDatabase, events: EventBus) {
+    super(db, events)
+  }
+}
+```
+
+Construct a repo without events (tests, dev scripts) and the CRUD methods stay quiet — no events fire, no listeners needed.
+
+**Queue-until-commit is deferred.** Today, `.created` listeners run as soon as the INSERT succeeds. If you're inside a transaction that later rolls back, the side effect already fired. The semantics the spec calls for ("events queue in the transaction, flush on commit") land with the unit-of-work slice that also adds the `tx?` parameter to Repository methods.
+
 ### What's NOT automatic (yet)
 
-- **Lifecycle hooks** (`<resource>.creating` / `.created` / `.updating` / etc. on the EventBus) — follow-up slice. The Repository today is fire-and-forget.
+- **Queue-until-commit event semantics** — see above.
 - **Soft-delete integration** — `t.softDeletes()` adds the column but `delete()` still hard-deletes. `withTrashed()` / `onlyTrashed()` on the query builder land with the soft-delete slice.
 - **Relationships + eager loading** (`.with('relation')`) — the relationships slice.
 - **Pagination helpers** (`.paginate`, `.cursorPaginate`) — same slice.
