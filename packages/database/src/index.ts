@@ -22,6 +22,7 @@
 
 export {
   DatabaseConsoleProvider,
+  DbSeed,
   Migrate,
   MigrateFresh,
   MigrateGenerate,
@@ -167,6 +168,11 @@ export {
   type UuidField,
 } from './schema/index.ts'
 export { isSchema, SchemaRegistry } from './schema_registry.ts'
+export {
+  type DatabaseSeeder,
+  type DiscoveredSeeder,
+  discoverSeeders,
+} from './seeders.ts'
 export { emitTenantIdFunction, TenantManager, validateTenantRegistry } from './tenancy/index.ts'
 export {
   currentTransactionalContext,

@@ -14,6 +14,7 @@
  */
 
 import { ConsoleProvider } from '@strav/cli'
+import { DbSeed } from './db_seed.ts'
 import { Migrate } from './migrate.ts'
 import { MigrateFresh } from './migrate_fresh.ts'
 import { MigrateGenerate } from './migrate_generate.ts'
@@ -28,5 +29,6 @@ export class DatabaseConsoleProvider extends ConsoleProvider {
     MigrateStatus,
     MigrateFresh,
     MigrateGenerate,
+    DbSeed,
   ] as const
 }

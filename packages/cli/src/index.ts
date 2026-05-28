@@ -25,6 +25,7 @@ export {
 } from './command.ts'
 export { ConsoleProvider, collectCommands } from './console_provider.ts'
 export { ExitCode, type ExitCodeValue } from './exit_codes.ts'
+export { KeyGenerate } from './key_generate.ts'
 export {
   MakeCommandFile,
   MakeController,
@@ -57,3 +58,4 @@ export {
   type Signature,
 } from './signature.ts'
 export { selectProviders } from './subset_boot.ts'
+export { UtilConsoleProvider } from './util_console_provider.ts'
