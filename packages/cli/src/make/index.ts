@@ -1,0 +1,17 @@
+// make:* scaffold commands — one class per target file type.
+
+export { MakeCommandFile } from './make_command_file.ts'
+export { MakeController } from './make_controller.ts'
+export { MakeFactory } from './make_factory.ts'
+export { MakeJob } from './make_job.ts'
+export { MakeMail } from './make_mail.ts'
+export { MakeMiddleware } from './make_middleware.ts'
+export { MakeMigration } from './make_migration.ts'
+export { MakeModel } from './make_model.ts'
+export { MakeNotification } from './make_notification.ts'
+export { MakePolicy } from './make_policy.ts'
+export { MakeProvider } from './make_provider.ts'
+export { MakeRepository } from './make_repository.ts'
+export { MakeRequest } from './make_request.ts'
+export { MakeSeeder } from './make_seeder.ts'
+export { MakeTest } from './make_test.ts'

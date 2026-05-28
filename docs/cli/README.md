@@ -178,10 +178,10 @@ process.exit(exit)
 | `@strav/queue` (`QueueConsoleProvider`) | `queue:work` · `queue:retry` · `queue:flush` · `queue:failed` · `scheduler:work` · `scheduler:list` · `scheduler:run` — see `docs/queue/guides/console.md` |
 | `@strav/view` (`ViewConsoleProvider`) | `view:cache` · `view:clear` · `view:build` |
 | `@strav/http` (`HttpConsoleProvider`) | `serve` · `all` · `route:list` · `console` |
+| `@strav/cli` (`ScaffoldConsoleProvider`) | `make:controller` · `make:middleware` · `make:request` · `make:model` (model_generator) · `make:repository` · `make:migration` · `make:seeder` · `make:factory` · `make:job` · `make:mail` · `make:notification` · `make:policy` · `make:provider` · `make:command` · `make:test` |
 
 ## What's coming
 
 | Slice | Contents |
 |---|---|
-| 6 | Scaffolding (`make:*` family + `model_generator`) |
 | 7 | Key / cache / db / tenant / plugin commands |

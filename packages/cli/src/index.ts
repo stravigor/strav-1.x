@@ -25,7 +25,31 @@ export {
 } from './command.ts'
 export { ConsoleProvider, collectCommands } from './console_provider.ts'
 export { ExitCode, type ExitCodeValue } from './exit_codes.ts'
+export {
+  MakeCommandFile,
+  MakeController,
+  MakeFactory,
+  MakeJob,
+  MakeMail,
+  MakeMiddleware,
+  MakeMigration,
+  MakeModel,
+  MakeNotification,
+  MakePolicy,
+  MakeProvider,
+  MakeRepository,
+  MakeRequest,
+  MakeSeeder,
+  MakeTest,
+} from './make/index.ts'
+export {
+  camel,
+  MakeCommand as MakeCommandBase,
+  pascal,
+  snake,
+} from './make_command.ts'
 export { type RunCliOptions, runCli } from './run_cli.ts'
+export { ScaffoldConsoleProvider } from './scaffold_console_provider.ts'
 export {
   type FlagSpec,
   type PositionalArg,
