@@ -12,12 +12,21 @@
  * subclassing.
  */
 
+import type { AgentResult } from './agent_result.ts'
+import type { Tool } from './tool.ts'
 import type {
   ChatOptions,
   ChatResult,
   Message,
   StreamEvent,
 } from './types.ts'
+
+export interface RunWithToolsOptions extends ChatOptions {
+  /** Safety ceiling on tool-use round-trips. Default `10`. */
+  maxIterations?: number
+  /** Free-form context bag passed to every tool's `execute(input, ctx)`. */
+  context?: Record<string, unknown>
+}
 
 export interface Provider {
   /** Identifier — matches the `config.brain.providers` key. */
@@ -45,4 +54,21 @@ export interface Provider {
    * implementation may approximate.
    */
   countTokens?(messages: readonly Message[], options?: ChatOptions): Promise<number>
+
+  /**
+   * Agentic loop. Sends the `messages` + `tools` to the model;
+   * detects tool-use blocks in the response; runs the matching
+   * tool's `execute`; appends the result and re-asks. Loops until
+   * the model returns `stop_reason: 'end_turn'` (or its
+   * provider-specific equivalent) or `maxIterations` is hit.
+   *
+   * Optional on the interface so providers that don't (yet) support
+   * tool use can omit it; `BrainManager.runTools` throws a
+   * `BrainError` when the configured provider lacks the method.
+   */
+  runWithTools?(
+    messages: readonly Message[],
+    tools: readonly Tool[],
+    options?: RunWithToolsOptions,
+  ): Promise<AgentResult>
 }

@@ -1,6 +1,6 @@
 # @strav/brain — API Reference
 
-> **Status:** Reflects the brain foundation slice (M5.3). Anthropic provider, manager, thread, prompt caching. Tools / agents / MCP / embeddings / other providers in follow-up slices.
+> **Status:** Reflects brain foundation (M5.3) + tools / agents slice. Anthropic provider, manager, thread, prompt caching, tools, agents. MCP / embeddings / other providers / structured outputs / streaming agents in follow-up slices.
 
 ## Public exports
 
@@ -24,10 +24,23 @@ import {
   Thread,
   type ThreadOptions,
   type ThreadState,
+  // Tools + agents
+  Agent,
+  AgentRunner,
+  type AgentResolver,
+  type AgentResult,
+  defineTool,
+  type DefineToolSpec,
+  type Tool,
+  type ToolContext,
+  type RunWithToolsOptions,
+  ToolExecutionError,
   // Shapes
   type Message,
   type ContentBlock,
   type TextBlock,
+  type ToolUseBlock,
+  type ToolResultBlock,
   type SystemPrompt,
   type ChatOptions,
   type ChatResult,
@@ -354,3 +367,163 @@ class BrainError extends StravError {
 ```
 
 The framework's wrapper error. Provider-native errors (e.g. `Anthropic.RateLimitError`) propagate through `.cause` so apps can `instanceof`-check them when they need provider-specific recovery.
+
+---
+
+## Tools and agents
+
+### `Tool<TInput, TOutput>`
+
+```ts
+interface Tool<TInput = unknown, TOutput = unknown> {
+  name: string
+  description: string
+  inputSchema: Record<string, unknown>           // JSON Schema
+  execute(input: TInput, ctx: ToolContext): Promise<TOutput>
+}
+
+interface ToolContext {
+  readonly callId: string                          // matches ToolUseBlock.id
+  readonly context: Readonly<Record<string, unknown>>
+}
+```
+
+The framework-native shape. Providers translate `name`, `description`, and `inputSchema` into their wire format; `execute` runs in your process when the model calls the tool. `inputSchema` is plain JSON Schema — the framework deliberately doesn't couple to Zod so apps stay free to bring whatever validator they want.
+
+### `defineTool(spec)`
+
+```ts
+function defineTool<TInput = unknown, TOutput = unknown>(
+  spec: DefineToolSpec<TInput, TOutput>,
+): Tool<TInput, TOutput>
+```
+
+Factory that returns a `Tool`. Mirrors `defineSchema` / `defineWorkflow` / `defineMachine` / `defineDurable`. Generics are inferred from `execute`'s first arg + return type when not specified.
+
+### `RunWithToolsOptions`
+
+```ts
+interface RunWithToolsOptions extends ChatOptions {
+  maxIterations?: number                         // default 10
+  context?: Record<string, unknown>              // passed to every tool's execute(_, ctx).context
+}
+```
+
+Extends `ChatOptions`. Use `maxIterations` as a safety net; use `context` to thread per-request data (user id, tenant id, trace id) into tool execution without putting it in the prompt.
+
+### `AgentResult`
+
+```ts
+interface AgentResult {
+  text: string                                   // final assistant text
+  messages: Message[]                            // full conversation including tool_use / tool_result blocks
+  iterations: number                             // 0 when the model answered without tools
+  stopReason: string                             // 'end_turn' on success; 'max_iterations' on ceiling hit
+  usage: ChatUsage                               // summed across every model call in the loop
+}
+```
+
+What `BrainManager.runTools` and `AgentRunner.run` return. `messages` is the audit trail — render it in UIs that want to show users which tools the agent called.
+
+### `BrainManager.runTools(input, tools, options?)`
+
+```ts
+brain.runTools(
+  input: string | readonly Message[],
+  tools: readonly Tool[],
+  options?: RunWithToolsOptions,
+): Promise<AgentResult>
+```
+
+The agentic loop. Send → detect `tool_use` → execute → append `tool_result` → re-send, until the model returns `end_turn` or `maxIterations` is hit.
+
+Throws `BrainError` when the configured provider doesn't implement `runWithTools` (V1: only `AnthropicProvider`). Throws `ToolExecutionError` when a tool's `execute` throws — the loop aborts on the first failure in V1.
+
+### `Agent`
+
+```ts
+abstract class Agent {
+  abstract readonly instructions: string         // system prompt
+  readonly tools: readonly Tool[]                // default []
+  readonly provider?: string                     // overrides default provider routing
+  readonly model?: string                        // explicit model wins over tier
+  readonly tier: ModelTier                       // default 'powerful' (claude-opus-4-7)
+  readonly maxIterations: number                 // default 10
+  readonly maxTokens: number                     // default 4096
+}
+```
+
+Subclass with `@inject()` to get container DI. `BrainProvider` installs an `AgentResolver` so `brain.agent(MyAgent)` resolves through `app.resolve(MyAgent)` — i.e. constructor injection works normally.
+
+### `AgentRunner`
+
+```ts
+class AgentRunner {
+  input(text: string): this                      // required before run()
+  context(data: Record<string, unknown>): this   // accumulating; per-call > thread defaults
+  run(): Promise<AgentResult>
+}
+```
+
+Returned by `BrainManager.agent(Class)`. Designed to chain:
+
+```ts
+const result = await brain.agent(ResearchAgent)
+  .input('What is the current state of X?')
+  .context({ userId: '...', tenantId: '...' })
+  .run()
+```
+
+### `BrainManager.agent(Class, instance?)`
+
+```ts
+brain.agent<A extends Agent>(
+  AgentClass: new (...args: never[]) => A,
+  instance?: A,
+): AgentRunner
+```
+
+When `instance` is omitted, the registered `AgentResolver` builds one (typically through the container so constructor injection works). Pass `instance` when you need to construct the agent yourself with per-request state.
+
+### `BrainManager.setAgentResolver(resolver)`
+
+```ts
+type AgentResolver = <A extends Agent>(cls: new (...args: never[]) => A) => A
+
+brain.setAgentResolver(resolver: AgentResolver): void
+```
+
+`BrainProvider.register()` calls this at boot with a resolver wired to `app.resolve(cls)`. Apps building a `BrainManager` by hand (tests) can omit it — `brain.agent(Class)` will fall back to zero-arg construction.
+
+### `ToolExecutionError`
+
+```ts
+class ToolExecutionError extends StravError {
+  code = 'brain.tool-execution-failed'
+  status = 500
+  context: { tool: string; callId: string }
+  cause: unknown                                 // the tool's original throw
+}
+```
+
+Thrown by `runWithTools` when a tool's `execute` throws OR when the model calls an unregistered tool. V1 propagates this out of the loop — apps that want the model to recover gracefully catch the error, append a synthetic `tool_result` with `isError: true`, and re-call the runner.
+
+### `ToolUseBlock` / `ToolResultBlock`
+
+```ts
+interface ToolUseBlock {
+  type: 'tool_use'
+  id: string                                     // provider-assigned call id
+  name: string                                   // matches Tool.name
+  input: unknown                                 // model's parsed JSON
+}
+
+interface ToolResultBlock {
+  type: 'tool_result'
+  toolUseId: string                              // matches the ToolUseBlock.id
+  content: string | TextBlock[]
+  isError?: boolean
+}
+```
+
+Content-block variants for tool calls + results. Appear in `assistant`-role messages (tool_use) and `user`-role messages (tool_result). Translated to the provider's wire format on send.

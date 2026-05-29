@@ -19,6 +19,9 @@
  * ```
  */
 
+import type { Agent } from './agent.ts'
+import type { AgentResult } from './agent_result.ts'
+import { AgentRunner } from './agent_runner.ts'
 import { BrainError } from './brain_error.ts'
 import type { ModelTier } from './types.ts'
 import type {
@@ -27,8 +30,12 @@ import type {
   Message,
   StreamEvent,
 } from './types.ts'
-import type { Provider } from './provider.ts'
+import type { Provider, RunWithToolsOptions } from './provider.ts'
+import type { Tool } from './tool.ts'
 import { DEFAULT_TIERS } from './brain_config.ts'
+
+/** Container-aware Agent constructor resolver — `BrainProvider` installs one wired to `app.resolve(...)`. */
+export type AgentResolver = <A extends Agent>(cls: new (...args: never[]) => A) => A
 
 export interface BrainManagerOptions {
   /** Name of the default provider — must exist in `providers`. */
@@ -117,7 +124,66 @@ export class BrainManager {
     return provider.countTokens(messages, resolved)
   }
 
+  /**
+   * Run an agentic loop: send `messages` + `tools` to the model;
+   * execute any tool the model calls; loop until the model returns
+   * a terminal `stop_reason` (`'end_turn'`) or `maxIterations` is hit.
+   *
+   * Throws `BrainError` when the configured provider doesn't
+   * implement `runWithTools` (V1: OpenAI / Gemini / DeepSeek providers
+   * don't yet — only `AnthropicProvider`).
+   */
+  async runTools(
+    input: string | readonly Message[],
+    tools: readonly Tool[],
+    options: RunWithToolsOptions = {},
+  ): Promise<AgentResult> {
+    const provider = this.provider(options.provider)
+    if (!provider.runWithTools) {
+      throw new BrainError(
+        `BrainManager.runTools: provider "${provider.name}" does not implement runWithTools. Use a provider that supports tool use (V1: Anthropic).`,
+        { context: { provider: provider.name } },
+      )
+    }
+    const messages = normalizeInput(input)
+    const resolved = this.applyDefaults(options) as RunWithToolsOptions
+    return provider.runWithTools(messages, tools, resolved)
+  }
+
+  /**
+   * Resolve an `Agent` subclass from the container and return an
+   * `AgentRunner` ready to receive `input(...)` and `run()`. Apps
+   * `@inject()`-decorate their Agent subclass so constructor
+   * injection of dependencies (Repositories, services, etc.) flows
+   * through normally.
+   */
+  agent<A extends Agent>(AgentClass: new (...args: never[]) => A, instance?: A): AgentRunner {
+    const agent = instance ?? this.resolveAgent(AgentClass)
+    return new AgentRunner(this, agent)
+  }
+
   // ─── Internal ────────────────────────────────────────────────────────────
+
+  private resolveAgent<A extends Agent>(AgentClass: new (...args: never[]) => A): A {
+    if (this.agentResolver) return this.agentResolver(AgentClass)
+    // Fallback: assume the Agent class is constructible without args.
+    // Apps that need DI on the agent register a resolver via
+    // `setAgentResolver` (BrainProvider wires this to the container).
+    return new (AgentClass as unknown as new () => A)()
+  }
+
+  /**
+   * Internal — `BrainProvider` calls this at boot to plug in the
+   * container's resolution function so `brain.agent(MyAgent)` runs
+   * `app.resolve(MyAgent)` under the hood. Apps that build a
+   * `BrainManager` by hand for tests can leave this unset and pass
+   * a pre-constructed agent to `brain.agent(_, instance)`.
+   */
+  setAgentResolver(resolver: AgentResolver): void {
+    this.agentResolver = resolver
+  }
+
+  private agentResolver: AgentResolver | undefined
 
   private applyDefaults(options: ChatOptions): ChatOptions {
     const resolved: ChatOptions = { ...options }

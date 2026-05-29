@@ -38,7 +38,40 @@ export interface TextBlock {
   cache?: boolean
 }
 
-export type ContentBlock = TextBlock
+/**
+ * Provider-emitted tool-use block. Appears in `assistant`-role
+ * messages when the model decides to call a tool. `input` is the
+ * parsed JSON the model produced for the tool's `inputSchema`; apps
+ * that need to validate it (Zod, ajv, etc.) do so at the call site.
+ *
+ * The agentic loop creates a matching `ToolResultBlock` and appends
+ * it to the next `user`-role message before re-asking the model.
+ */
+export interface ToolUseBlock {
+  type: 'tool_use'
+  /** Provider-assigned call id. The matching tool_result references this verbatim. */
+  id: string
+  /** Tool name — matches a registered `Tool.name`. */
+  name: string
+  /** Parsed input the model produced. Apps validate against the tool's schema. */
+  input: unknown
+}
+
+/**
+ * Result of executing a tool. Appended to a `user`-role message and
+ * fed back to the model. `content` is either a plain string (the
+ * common case) or a list of text blocks for richer payloads. Mark
+ * `isError: true` so the model knows the tool call failed and can
+ * adjust its approach.
+ */
+export interface ToolResultBlock {
+  type: 'tool_result'
+  toolUseId: string
+  content: string | TextBlock[]
+  isError?: boolean
+}
+
+export type ContentBlock = TextBlock | ToolUseBlock | ToolResultBlock
 
 /** A single conversation turn. `content` can be a bare string or a typed block list. */
 export interface Message {

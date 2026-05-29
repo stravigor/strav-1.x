@@ -2,9 +2,9 @@
 
 The AI module for Strav 1.0 — a unified `Provider` interface, a per-app `BrainManager` facade, multi-turn `Thread`s, and built-in prompt caching. V1 ships the **Anthropic** provider backed by the official `@anthropic-ai/sdk`; OpenAI, Gemini, and DeepSeek follow in later slices.
 
-> **Status: 1.0.0-alpha.8 — M5 slice 3 (brain foundation).**
-> Shipping: **`Provider`** interface, **`AnthropicProvider`** (chat / stream / countTokens) backed by `@anthropic-ai/sdk`, **`BrainManager`** facade (provider routing, model-tier sugar, default-cache config, single-shot + streaming + token-count surfaces), **`Thread`** (multi-turn with `toJSON` / `fromJSON` persistence), **`BrainProvider`** service provider (config-driven boot, eager construction so bad config fails at boot), **prompt caching** (top-level + per-block + system-prompt cache flags translate to `cache_control: { type: 'ephemeral' }`), **adaptive thinking** + **effort** opt-ins, **typed `BrainError`** (`brain.error`).
-> Deferred: **tools / agents / MCP** (separate slice — wraps the SDK's tool runner + `agent_toolset_20260401`), **embeddings**, **vision / files / batches**, **structured outputs** (`output_config.format` + Zod), **OpenAI / Gemini / DeepSeek providers** (one slice per), **server-side compaction** (`compact-2026-01-12` beta — Thread-level integration), **`generate(schema)`** convenience over `chat`. **Managed Agents** lands as a separate sub-path (`@strav/brain/managed-agents`) when it ships.
+> **Status: 1.0.0-alpha.8 — M5 slice 3 shipped (foundation) + tools / agents slice in workspace.**
+> Shipping: **`Provider`** interface, **`AnthropicProvider`** (chat / stream / countTokens / **runWithTools**) backed by `@anthropic-ai/sdk`, **`BrainManager`** facade (provider routing, model-tier sugar, default-cache config, single-shot + streaming + token-count surfaces, **`runTools(messages, tools, options)`**, **`agent(Class)` runner**), **`Thread`** (multi-turn with `toJSON` / `fromJSON` persistence), **`BrainProvider`** service provider (config-driven boot, eager construction so bad config fails at boot, **wires the container-aware Agent resolver**), **prompt caching** (top-level + per-block + system-prompt cache flags translate to `cache_control: { type: 'ephemeral' }`), **adaptive thinking** + **effort** opt-ins, **`defineTool({ name, description, inputSchema, execute })`**, **`Agent`** declarative base class + **`AgentRunner`** fluent builder, **`ToolUseBlock`** / **`ToolResultBlock`** content types, **typed errors** (`BrainError`, **`ToolExecutionError`**).
+> Deferred: **streaming agent loops** (V1: `runWithTools` awaits the full final response), **Anthropic server-side tools** (`code_execution_*`, `web_search_*`), **MCP** sub-path, **embeddings**, **vision / files / batches**, **structured outputs** (`output_config.format` + Zod), **OpenAI / Gemini / DeepSeek providers** (one slice per), **server-side compaction** (`compact-2026-01-12` beta — Thread-level integration), **`generate(schema)`** convenience over `chat`, **graceful tool-error recovery** (V1: throws abort the loop). **Managed Agents** lands as a separate sub-path (`@strav/brain/managed-agents`) when it ships.
 
 ## Install
 
@@ -72,6 +72,11 @@ export class Greeter {
 | `StreamEvent` | Streaming union — `{ type: 'text', delta }` per delta + a terminal `{ type: 'stop', stopReason, usage }` |
 | `ModelTier` / `DEFAULT_TIERS` / `DEFAULT_MODEL` | `'fast' | 'balanced' | 'powerful'` → `claude-haiku-4-5` / `claude-sonnet-4-6` / `claude-opus-4-7`. Apps override via `config.brain.tiers` |
 | `BrainError` | Typed `StravError` (`brain.error`, status 500). Provider-native errors propagate verbatim through `.cause` |
+| `Tool` / `defineTool` / `ToolContext` | Declarative tool shape. `name`, `description`, `inputSchema` (JSON Schema), `execute(input, ctx)` |
+| `ToolUseBlock` / `ToolResultBlock` | Content-block types for tool calls and their results. Translated to the provider's wire format on send |
+| `BrainManager.runTools` / `Provider.runWithTools` / `RunWithToolsOptions` | The agentic loop. `runTools(messages, tools, options) → AgentResult` |
+| `Agent` / `AgentRunner` / `AgentResult` | Declarative agent base class + fluent `.input().context().run()` builder + result shape (`text`, `messages`, `iterations`, `stopReason`, `usage`) |
+| `ToolExecutionError` | Typed `StravError` (`brain.tool-execution-failed`). Wraps the tool's throw with `tool` + `callId` in `context` |
 
 ## Defaults
 
@@ -87,6 +92,7 @@ export class Greeter {
 - [`guides/getting-started.md`](./guides/getting-started.md) — wiring `BrainProvider`, picking models, basic chat + streaming.
 - [`guides/prompt-caching.md`](./guides/prompt-caching.md) — when to cache, where to place breakpoints, how to verify cache hits via `result.usage`.
 - [`guides/threads.md`](./guides/threads.md) — multi-turn conversations, persisting threads with `toJSON` / `fromJSON`, when NOT to use a thread.
+- [`guides/tools-and-agents.md`](./guides/tools-and-agents.md) — `defineTool` shape, `BrainManager.runTools` lower-level surface, `Agent` declarative class + `brain.agent(Class)` runner, `ctx.context` for passing per-request identity into tools, `ToolExecutionError` handling.
 
 ## When NOT to use brain
 

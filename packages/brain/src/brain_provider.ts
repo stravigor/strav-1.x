@@ -64,7 +64,16 @@ export class BrainProvider extends ServiceProvider {
       }
       if (config.tiers !== undefined) options.tiers = config.tiers
       if (config.cache?.auto !== undefined) options.defaultCache = config.cache.auto
-      return new BrainManager(options)
+      const manager = new BrainManager(options)
+      // Plug in the container so `brain.agent(MyAgent)` resolves
+      // its constructor deps through `@inject()` like every other
+      // injected class. The variance widening at the boundary
+      // (`never[]` ↔ `any[]`) is purely a TS typing artifact — the
+      // container call is identical to a direct `c.resolve(MyAgent)`.
+      manager.setAgentResolver(<A>(cls: new (...args: never[]) => A) =>
+        c.resolve(cls as unknown as new (...args: unknown[]) => A),
+      )
+      return manager
     })
   }
 
