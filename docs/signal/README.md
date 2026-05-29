@@ -2,7 +2,7 @@
 
 Outbound communication for Strav 1.0. The mail layer covers synchronous send + queued delivery via `Mailable` + three production HTTP transports (Resend, SendGrid, Mailgun). All pure-fetch — no SDK deps, no `nodemailer`. Inbound parsers, notifications, broadcast, and SSE land in subsequent slices.
 
-> **Status: 1.0.0-alpha.5 — mail layer + HTTP transport trio shipped.** Shipping: `Message` types + `Transport` interface + `ArrayTransport` + `LogTransport` + `ResendTransport` + `SendGridTransport` + `MailgunTransport` + `MailTransportError` + `MailManager` (multi-transport with default-`from` substitution + Mailable-aware `send` overload) + `MailProvider` + `Mailable` base class (Mailables ARE Jobs — dispatch via the standard `Queue.dispatch`).
+> **Status: 1.0.0-alpha.6 — mail layer + HTTP transport trio shipped.** Shipping: `Message` types + `Transport` interface + `ArrayTransport` + `LogTransport` + `ResendTransport` + `SendGridTransport` + `MailgunTransport` + `MailTransportError` + `MailManager` (multi-transport with default-`from` substitution + Mailable-aware `send` overload) + `MailProvider` + `Mailable` base class (Mailables ARE Jobs — dispatch via the standard `Queue.dispatch`).
 
 ## Install
 
