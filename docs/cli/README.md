@@ -2,7 +2,7 @@
 
 CLI layer for Strav 1.0 — `Command` base, signature DSL, `ConsoleProvider`, interactive prompts, subset-boot, on top of `@strav/kernel`'s `ConsoleKernel`.
 
-> **Status: 1.0.0-alpha.3 (M4 slice 1 — foundation).** Public surface: `Command` + `parseSignature` + `bindArgv` + `ConsoleProvider` + `runCli` + `ExitCode`. Built-in commands (`migrate`, `queue:work`, `view:cache`, `serve`, `make:*`, …) land in slices 2–7.
+> **Status: 1.0.0-alpha.3 shipped; alpha.4 imminent (M4 closeout).** Public surface: `Command` + `parseSignature` + `bindArgv` + `ConsoleProvider` + `runCli` + `ExitCode` + every built-in command set listed below (database / queue / view / http / scaffold / util). `cache:*` / `tenant:*` / `plugin:*` are deferred — each lands when its underlying package or convention does (see "What's deferred").
 
 ## Install
 
@@ -179,9 +179,16 @@ process.exit(exit)
 | `@strav/view` (`ViewConsoleProvider`) | `view:cache` · `view:clear` · `view:build` |
 | `@strav/http` (`HttpConsoleProvider`) | `serve` · `all` · `route:list` · `console` |
 | `@strav/cli` (`ScaffoldConsoleProvider`) | `make:controller` · `make:middleware` · `make:request` · `make:model` (model_generator) · `make:repository` · `make:migration` · `make:seeder` · `make:factory` · `make:job` · `make:mail` · `make:notification` · `make:policy` · `make:provider` · `make:command` · `make:test` |
+| `@strav/cli` (`UtilConsoleProvider`) | `key:generate` · `config:show` · `config:list` |
+| `@strav/database` (additional) | `db:seed` |
 
-## What's coming
+## What's deferred
 
-| Slice | Contents |
+The original slice 7 plan included `cache:*` / `tenant:*` / `plugin:*`. Each is held until its prerequisite lands rather than shipping a stub:
+
+| Command set | Blocked on |
 |---|---|
-| 7 | Key / cache / db / tenant / plugin commands |
+| `cache:*` (`cache:clear`, `cache:flush`) | `@strav/cache` is not yet a package — caching primitives + driver registry need to ship first. |
+| `tenant:*` (`tenant:create`, `tenant:list`, `tenant:backup`) | `TenantManager` is a runtime helper (`withTenant` / `withoutTenant`), not a CRUD manager. App-side tenant tables vary by repo — needs a generic convention or per-app subclass hook. |
+| `plugin:install <pkg>` | Needs a `package.json#strav` metadata convention + a loader (`spec/implementation-plan.md` §4.6). Real design slice; landing post-1.0. |
+| `db:setup-roles` | BYPASSRLS-role provisioning lives in app migrations today. A canonical command needs an opinionated role-naming convention first. |

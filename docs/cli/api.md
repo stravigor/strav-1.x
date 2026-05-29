@@ -30,6 +30,28 @@ import {
   // Exit codes
   ExitCode,
   type ExitCodeValue,
+  // Built-in commands + their providers
+  ConfigList,
+  ConfigShow,
+  KeyGenerate,
+  ScaffoldConsoleProvider,
+  UtilConsoleProvider,
+  // `make:*` command classes (re-exported individually for app subclassing)
+  MakeCommandFile,
+  MakeController,
+  MakeFactory,
+  MakeJob,
+  MakeMail,
+  MakeMiddleware,
+  MakeMigration,
+  MakeModel,
+  MakeNotification,
+  MakePolicy,
+  MakeProvider,
+  MakeRepository,
+  MakeRequest,
+  MakeSeeder,
+  MakeTest,
 } from '@strav/cli'
 ```
 
@@ -198,3 +220,25 @@ const ExitCode = {
   DataError: 65,
 } as const
 ```
+
+## `UtilConsoleProvider` — built-in utility commands
+
+```ts
+class UtilConsoleProvider extends ConsoleProvider {
+  readonly commands = [KeyGenerate, ConfigShow, ConfigList]
+}
+```
+
+Wire it in `bootstrap/providers.ts` alongside `DatabaseConsoleProvider` / `HttpConsoleProvider` / `ScaffoldConsoleProvider` to expose:
+
+### `key:generate {--show} {--force}`
+
+Generates 32 random bytes as a 64-char hex `APP_KEY`. Default writes to `.env` (create / append / update-in-place); `--show` prints to stdout instead; `--force` overwrites an existing key. `static providers = []` — boots nothing.
+
+### `config:show <key> {--json}`
+
+Reads `ConfigRepository.get(key)` and prints the result. Scalars print as-is; objects pretty-print as JSON; `--json` forces compact JSON for any value. Missing key → exit 65 with an error on stderr. `static providers = ['config']`.
+
+### `config:list`
+
+Prints every top-level config namespace alphabetically. Empty / `null` / `{}` values get a `(empty)` marker so apps can spot half-wired sections at a glance. `static providers = ['config']`.

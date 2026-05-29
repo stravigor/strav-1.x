@@ -8,13 +8,10 @@
 // Built on @strav/kernel's `Command` / `ConsoleKernel` — those stay as the
 // minimal infrastructure; @strav/cli is the productive developer surface.
 //
-// Still deferred (each is its own slice):
-//   - Migration commands (`migrate`, `migrate:rollback`, …) — slice 2
-//   - Queue + scheduler commands — slice 3
-//   - View commands — slice 4
-//   - Server commands (`serve`, `all`, `console`) — slice 5
-//   - `make:*` scaffolding + `model_generator` — slice 6
-//   - Key / cache / db / tenant / plugin commands — slice 7
+// Deferred to post-M4 slices (each lands when its underlying package does):
+//   - `cache:*` — needs `@strav/cache` (not yet a package)
+//   - `tenant:*` — needs a generic tenant-CRUD convention or app-side hooks
+//   - `plugin:install` — needs `package.json#strav` metadata convention
 
 export { type BoundArgv, bindArgv, UsageError } from './binder.ts'
 export {
@@ -24,6 +21,8 @@ export {
   type ExecuteArgs,
 } from './command.ts'
 export { ConsoleProvider, collectCommands } from './console_provider.ts'
+export { ConfigList } from './config_list.ts'
+export { ConfigShow } from './config_show.ts'
 export { ExitCode, type ExitCodeValue } from './exit_codes.ts'
 export { KeyGenerate } from './key_generate.ts'
 export {
