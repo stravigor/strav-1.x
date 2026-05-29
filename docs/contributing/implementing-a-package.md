@@ -462,7 +462,7 @@ Spring **doesn't import the framework at runtime** — it only writes files. Its
 
 1. **Read the matching shipped package.** `auth` is the cleanest small package; `database` is the most complex. Whatever pattern you need, one of them probably has it.
 2. **Read the spec.** `spec/<topic>.md` (where it exists) captures the design intent. It's NOT authoritative for current API — `docs/` is — but it's load-bearing for the *why*.
-3. **Read `memory/*.md` in `~/.claude/projects/-Users-liva-Projects-Strav-dev-sources-strav-1-x/memory/`** (Liva's memory store). The `project_m*_progress.md` files have decision notes that didn't make it into either spec or docs — the live "we tried this and it didn't work, so we did that" trail.
+3. **Read the project memory** — Claude Code stores per-project notes under `~/.claude/projects/<encoded-project-path>/memory/`. The `project_m*_progress.md` / `project_*_shipped.md` files there carry decision notes that didn't make it into spec or docs — the live "we tried this and it didn't work, so we did that" trail.
 4. **Match the existing tests' style.** Bun's `describe / test / expect` shape with one-line test names, MemStream for output assertions, InMemoryDatabase / FakeQueue / etc. for test doubles.
 
 Don't invent. Match.
