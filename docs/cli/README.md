@@ -2,7 +2,7 @@
 
 CLI layer for Strav 1.0 — `Command` base, signature DSL, `ConsoleProvider`, interactive prompts, subset-boot, on top of `@strav/kernel`'s `ConsoleKernel`.
 
-> **Status: 1.0.0-alpha.3 shipped; alpha.4 imminent (M4 closeout).** Public surface: `Command` + `parseSignature` + `bindArgv` + `ConsoleProvider` + `runCli` + `ExitCode` + every built-in command set listed below (database / queue / view / http / scaffold / util). `cache:*` / `tenant:*` / `plugin:*` are deferred — each lands when its underlying package or convention does (see "What's deferred").
+> **Status: 1.0.0-alpha.4 (M4 closeout).** Public surface: `Command` + `parseSignature` + `bindArgv` + `ConsoleProvider` + `runCli` + `ExitCode` + every built-in command set listed below (database / queue / view / http / scaffold / util). `cache:*` / `tenant:*` / `plugin:*` are deferred — each lands when its underlying package or convention does (see "What's deferred").
 
 ## Install
 
