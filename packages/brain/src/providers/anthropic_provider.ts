@@ -35,6 +35,7 @@ import type {
   ChatResult,
   ChatUsage,
   ContentBlock,
+  GenerateResult,
   MCPToolResultBlock,
   MCPToolUseBlock,
   Message,
@@ -44,6 +45,7 @@ import type {
   ToolResultBlock,
   ToolUseBlock,
 } from '../types.ts'
+import { parseGenerated, type OutputSchema } from '../output_schema.ts'
 
 const EPHEMERAL_CACHE = { type: 'ephemeral' } as const
 
@@ -260,6 +262,29 @@ export class AnthropicProvider implements Provider {
           usage: aggregated,
         }
       }
+    }
+  }
+
+  async generate<T>(
+    messages: readonly Message[],
+    schema: OutputSchema<T>,
+    options: ChatOptions = {},
+  ): Promise<GenerateResult<T>> {
+    const params = this.buildParams(messages, options) as Anthropic.MessageCreateParamsNonStreaming
+    params.output_config = {
+      ...(params.output_config ?? {}),
+      format: { type: 'json_schema', schema: schema.jsonSchema },
+    }
+    const response = await this.client.messages.create(params)
+    const text = collectText(response.content)
+    const value = parseGenerated(text, schema)
+    return {
+      value,
+      text,
+      model: response.model,
+      stopReason: response.stop_reason,
+      usage: toUsage(response.usage),
+      raw: response,
     }
   }
 

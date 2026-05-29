@@ -14,10 +14,12 @@
 
 import type { AgentResult } from './agent_result.ts'
 import type { MCPServer } from './mcp_server.ts'
+import type { OutputSchema } from './output_schema.ts'
 import type { Tool } from './tool.ts'
 import type {
   ChatOptions,
   ChatResult,
+  GenerateResult,
   Message,
   StreamEvent,
 } from './types.ts'
@@ -80,4 +82,21 @@ export interface Provider {
     tools: readonly Tool[],
     options?: RunWithToolsOptions,
   ): Promise<AgentResult>
+
+  /**
+   * Structured output. Sends `messages` to the model with a
+   * JSON-Schema constraint and returns the parsed object. Apps that
+   * supplied `schema.parse` get a runtime-validated value; otherwise
+   * the value is `T` by type assertion (the provider does its own
+   * upstream schema enforcement, but the framework doesn't validate).
+   *
+   * Optional on the interface so providers that lack a structured-
+   * output endpoint can omit it; `BrainManager.generate` throws a
+   * `BrainError` when the configured provider doesn't expose this.
+   */
+  generate?<T>(
+    messages: readonly Message[],
+    schema: OutputSchema<T>,
+    options?: ChatOptions,
+  ): Promise<GenerateResult<T>>
 }

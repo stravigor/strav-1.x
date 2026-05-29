@@ -22,12 +22,14 @@
 import type { Agent } from './agent.ts'
 import type { AgentResult } from './agent_result.ts'
 import type { MCPServer } from './mcp_server.ts'
+import type { OutputSchema } from './output_schema.ts'
 import { AgentRunner } from './agent_runner.ts'
 import { BrainError } from './brain_error.ts'
 import type { ModelTier } from './types.ts'
 import type {
   ChatOptions,
   ChatResult,
+  GenerateResult,
   Message,
   StreamEvent,
 } from './types.ts'
@@ -164,6 +166,32 @@ export class BrainManager {
       resolved.mcpServers = this.defaultMcpServers
     }
     return provider.runWithTools(messages, tools, resolved)
+  }
+
+  /**
+   * Structured output. Sends `input` to the configured (or
+   * `options.provider`-overridden) provider with the JSON-Schema
+   * constraint described by `schema`; returns the parsed object.
+   *
+   * Throws `BrainError` when the chosen provider doesn't implement
+   * `generate`. All three V1 providers (Anthropic, OpenAI, Gemini)
+   * do.
+   */
+  async generate<T>(
+    input: string | readonly Message[],
+    schema: OutputSchema<T>,
+    options: ChatOptions = {},
+  ): Promise<GenerateResult<T>> {
+    const provider = this.provider(options.provider)
+    if (!provider.generate) {
+      throw new BrainError(
+        `BrainManager.generate: provider "${provider.name}" does not implement generate.`,
+        { context: { provider: provider.name } },
+      )
+    }
+    const messages = normalizeInput(input)
+    const resolved = this.applyDefaults(options)
+    return provider.generate<T>(messages, schema, resolved)
   }
 
   /**

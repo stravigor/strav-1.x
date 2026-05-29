@@ -42,6 +42,9 @@ import {
   // MCP
   type MCPServer,
   type MCPServerToolConfig,
+  // Structured outputs
+  type OutputSchema,
+  type GenerateResult,
   // Shapes
   type Message,
   type ContentBlock,
@@ -76,6 +79,11 @@ class BrainManager {
   chat(input: string | readonly Message[], options?: ChatOptions): Promise<ChatResult>
   stream(input: string | readonly Message[], options?: ChatOptions): AsyncIterable<StreamEvent>
   countTokens(input: string | readonly Message[], options?: ChatOptions): Promise<number | null>
+  generate<T>(
+    input: string | readonly Message[],
+    schema: OutputSchema<T>,
+    options?: ChatOptions,
+  ): Promise<GenerateResult<T>>
 }
 
 interface BrainManagerOptions {
@@ -91,6 +99,8 @@ interface BrainManagerOptions {
 `stream` yields `text` events per delta and a single terminal `stop` event with `stopReason` + `usage`. Apps that need the full collected message use `chat` instead.
 
 `countTokens` returns `null` when the configured provider doesn't expose a count helper — apps fall back to a local estimator at the call site.
+
+`generate` returns a parsed object shaped to the supplied `OutputSchema<T>`. Throws `BrainError` when the configured provider lacks `generate`, when the response isn't valid JSON, or when `schema.parse` rejects. See [`guides/structured-outputs.md`](./guides/structured-outputs.md) for full coverage.
 
 `provider(name?)` resolves a provider by name (default when omitted). Throws `BrainError` for unknown names.
 
@@ -136,6 +146,16 @@ interface Provider {
   chat(messages: readonly Message[], options?: ChatOptions): Promise<ChatResult>
   stream(messages: readonly Message[], options?: ChatOptions): AsyncIterable<StreamEvent>
   countTokens?(messages: readonly Message[], options?: ChatOptions): Promise<number>
+  runWithTools?(
+    messages: readonly Message[],
+    tools: readonly Tool[],
+    options?: RunWithToolsOptions,
+  ): Promise<AgentResult>
+  generate?<T>(
+    messages: readonly Message[],
+    schema: OutputSchema<T>,
+    options?: ChatOptions,
+  ): Promise<GenerateResult<T>>
 }
 ```
 
@@ -741,3 +761,43 @@ function resolveMcpTools(
 ```
 
 Discovers tools across a list of servers and returns them as framework `Tool[]`. Honors `MCPServerToolConfig.enabled` and `allowedTools`. Tool names are namespaced `<server>__<tool>` so multiple servers can coexist; the framework strips the prefix before forwarding the call. The returned `close()` shuts down every transport in parallel — providers call it from a `finally`.
+
+---
+
+## Structured outputs
+
+### `OutputSchema<T>`
+
+```ts
+interface OutputSchema<T = unknown> {
+  name: string                              // identifier — appears in OpenAI's wire format + logs
+  description?: string                      // optional hint shown to the model
+  jsonSchema: Record<string, unknown>       // JSON Schema (draft 2020-12)
+  parse?(value: unknown): T                 // optional runtime validator
+}
+```
+
+Plain JSON Schema by design — the framework doesn't depend on Zod. Apps that use Zod combine `zod-to-json-schema` with `parse: z.parse` at the call site.
+
+### `GenerateResult<T>`
+
+```ts
+interface GenerateResult<T, Raw = unknown> {
+  value: T                  // parsed JSON, optionally run through schema.parse
+  text: string              // raw JSON string the model produced
+  model: string
+  stopReason: string | null
+  usage: ChatUsage
+  raw: Raw                  // provider's native response
+}
+```
+
+### Per-provider mapping
+
+| Provider | Wire |
+|---|---|
+| Anthropic | `output_config: { format: { type: 'json_schema', schema } }` |
+| OpenAI | `response_format: { type: 'json_schema', json_schema: { name, description?, schema, strict: true } }` |
+| Gemini | `config: { responseMimeType: 'application/json', responseJsonSchema: schema }` |
+
+`BrainManager.generate` throws `BrainError` when: the provider lacks `generate`; the response isn't valid JSON; or `schema.parse` rejects. Parse failures attach the raw text to `BrainError.context.text` for inspection.

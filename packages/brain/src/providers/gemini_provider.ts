@@ -61,6 +61,7 @@ import { BrainError } from '../brain_error.ts'
 import type { GeminiProviderConfig } from '../brain_config.ts'
 import type { MCPServer } from '../mcp_server.ts'
 import { resolveMcpTools, type ResolveMcpToolsOptions } from '../mcp/resolve_mcp_tools.ts'
+import { parseGenerated, type OutputSchema } from '../output_schema.ts'
 import type { Provider, RunWithToolsOptions } from '../provider.ts'
 import type { Tool } from '../tool.ts'
 import { ToolExecutionError } from '../tool_execution_error.ts'
@@ -69,6 +70,7 @@ import type {
   ChatResult,
   ChatUsage,
   ContentBlock,
+  GenerateResult,
   Message,
   StreamEvent,
   SystemPrompt,
@@ -269,6 +271,31 @@ export class GeminiProvider implements Provider {
           usage: aggregated,
         }
       }
+    }
+  }
+
+  async generate<T>(
+    messages: readonly Message[],
+    schema: OutputSchema<T>,
+    options: ChatOptions = {},
+  ): Promise<GenerateResult<T>> {
+    const params = this.buildParams(messages, options, [])
+    params.config = {
+      ...(params.config ?? {}),
+      responseMimeType: 'application/json',
+      responseJsonSchema: schema.jsonSchema,
+    }
+    const response = await this.models.generateContent(params)
+    const candidate = response.candidates?.[0]
+    const text = candidateText(candidate)
+    const value = parseGenerated(text, schema)
+    return {
+      value,
+      text,
+      model: response.modelVersion ?? params.model,
+      stopReason: candidate?.finishReason ? String(candidate.finishReason) : null,
+      usage: toUsage(response.usageMetadata),
+      raw: response,
     }
   }
 

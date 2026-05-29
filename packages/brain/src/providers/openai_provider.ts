@@ -53,6 +53,7 @@ import { BrainError } from '../brain_error.ts'
 import type { OpenAIProviderConfig } from '../brain_config.ts'
 import type { MCPServer } from '../mcp_server.ts'
 import { resolveMcpTools, type ResolveMcpToolsOptions } from '../mcp/resolve_mcp_tools.ts'
+import { parseGenerated, type OutputSchema } from '../output_schema.ts'
 import type { Provider, RunWithToolsOptions } from '../provider.ts'
 import type { Tool } from '../tool.ts'
 import { ToolExecutionError } from '../tool_execution_error.ts'
@@ -61,6 +62,7 @@ import type {
   ChatResult,
   ChatUsage,
   ContentBlock,
+  GenerateResult,
   Message,
   StreamEvent,
   SystemPrompt,
@@ -254,6 +256,35 @@ export class OpenAIProvider implements Provider {
           usage: aggregated,
         }
       }
+    }
+  }
+
+  async generate<T>(
+    messages: readonly Message[],
+    schema: OutputSchema<T>,
+    options: ChatOptions = {},
+  ): Promise<GenerateResult<T>> {
+    const params = this.buildParams(messages, options, [])
+    params.response_format = {
+      type: 'json_schema',
+      json_schema: {
+        name: schema.name,
+        ...(schema.description !== undefined ? { description: schema.description } : {}),
+        schema: schema.jsonSchema,
+        strict: true,
+      },
+    }
+    const response = await this.client.chat.completions.create(params)
+    const choice = response.choices[0]
+    const text = choice?.message?.content ?? ''
+    const value = parseGenerated(text, schema)
+    return {
+      value,
+      text,
+      model: response.model,
+      stopReason: choice?.finish_reason ?? null,
+      usage: toUsage(response.usage),
+      raw: response,
     }
   }
 

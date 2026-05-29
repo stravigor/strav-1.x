@@ -29,6 +29,7 @@ export {
 export { BrainProvider } from './brain_provider.ts'
 export { defineTool, type DefineToolSpec } from './define_tool.ts'
 export type { MCPServer, MCPServerToolConfig } from './mcp_server.ts'
+export type { OutputSchema } from './output_schema.ts'
 export { AnthropicProvider } from './providers/anthropic_provider.ts'
 export { GeminiProvider } from './providers/gemini_provider.ts'
 export { OpenAIProvider } from './providers/openai_provider.ts'
@@ -41,6 +42,7 @@ export type {
   ChatResult,
   ChatUsage,
   ContentBlock,
+  GenerateResult,
   MCPToolResultBlock,
   MCPToolUseBlock,
   Message,

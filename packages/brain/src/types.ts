@@ -200,3 +200,18 @@ export interface ChatResult<Raw = unknown> {
 export type StreamEvent =
   | { type: 'text'; delta: string }
   | { type: 'stop'; stopReason: string | null; usage: ChatUsage }
+
+/**
+ * Result of a structured-output call. `value` is the parsed JSON
+ * shaped to the `OutputSchema<T>` passed in. `text` is the raw JSON
+ * string the model produced (useful for logging / debugging when
+ * `parse` rejects). `raw` is the provider's full native response.
+ */
+export interface GenerateResult<T = unknown, Raw = unknown> {
+  value: T
+  text: string
+  model: string
+  stopReason: string | null
+  usage: ChatUsage
+  raw: Raw
+}
