@@ -777,7 +777,7 @@ interface OutputSchema<T = unknown> {
 }
 ```
 
-Plain JSON Schema by design — the framework doesn't depend on Zod. Apps that use Zod combine `zod-to-json-schema` with `parse: z.parse` at the call site.
+Plain JSON Schema by design — the framework doesn't depend on Zod. Apps that use Zod combine `zod-to-json-schema` with `parse: z.parse` at the call site, or use the `@strav/brain/zod` sub-path helpers (see below).
 
 ### `GenerateResult<T>`
 
@@ -801,3 +801,35 @@ interface GenerateResult<T, Raw = unknown> {
 | Gemini | `config: { responseMimeType: 'application/json', responseJsonSchema: schema }` |
 
 `BrainManager.generate` throws `BrainError` when: the provider lacks `generate`; the response isn't valid JSON; or `schema.parse` rejects. Parse failures attach the raw text to `BrainError.context.text` for inspection.
+
+---
+
+## `@strav/brain/zod` — Zod helpers (optional)
+
+Sub-path export. Opt-in helpers for apps that already use Zod. `zod` is an **optional peer dependency** — apps that don't import this path don't install it, don't bundle it.
+
+### `outputSchema`
+
+```ts
+function outputSchema<T>(
+  schema: z.ZodType<T>,
+  options?: { name?: string; description?: string },
+): OutputSchema<T>
+```
+
+Returns an `OutputSchema<T>` whose `jsonSchema` is derived via `z.toJSONSchema` and whose `parse` runs `schema.parse`. `description` defaults to the schema's `.describe(...)` text; `name` defaults to `'output'`.
+
+### `tool`
+
+```ts
+function tool<TInput, TOutput>(spec: {
+  name: string
+  description: string
+  input: z.ZodType<TInput>
+  execute(input: TInput, ctx: ToolContext): Promise<TOutput>
+}): Tool<TInput, TOutput>
+```
+
+Returns a framework `Tool` whose `inputSchema` is `z.toJSONSchema(spec.input)`. The wrapper validates the model's raw input through `spec.input.parse` before delegating to `execute`, so the function body sees an already-typed value. Validation errors propagate as `ZodError` and the agentic loop wraps them into `ToolExecutionError`.
+
+See [`guides/zod.md`](./guides/zod.md) for full coverage.

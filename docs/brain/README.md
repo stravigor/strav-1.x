@@ -100,6 +100,7 @@ export class Greeter {
 - [`guides/openai.md`](./guides/openai.md) — `OpenAIProvider` config, shape translation (system prompts, tool definitions, tool-result fan-out), reasoning-effort mapping, what's not supported (`countTokens`, server-side MCP), tier remapping for OpenAI apps.
 - [`guides/gemini.md`](./guides/gemini.md) — `GeminiProvider` config, shape translation (`assistant`→`model`, `systemInstruction`, `functionDeclarations` / `functionCall` / `functionResponse`), `thinkingConfig` mapping, MCP via the local client, tier remapping for Gemini apps.
 - [`guides/structured-outputs.md`](./guides/structured-outputs.md) — `brain.generate(input, schema)`: `OutputSchema<T>` shape, optional `parse` hook for Zod / Ajv, per-provider wire (Anthropic `output_config`, OpenAI `response_format`, Gemini `responseJsonSchema`), error handling, when NOT to use it.
+- [`guides/zod.md`](./guides/zod.md) — opt-in `@strav/brain/zod` sub-path: `outputSchema(zSchema)` for `brain.generate(...)`, `tool({ input: zSchema, ... })` for `brain.runTools(...)`. Optional peer dep, zero bundle cost when unused.
 
 ## When NOT to use brain
 
