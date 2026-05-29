@@ -16,12 +16,14 @@ import {
   OpenAIProvider,
   GeminiProvider,
   DeepSeekProvider,
+  OllamaProvider,
   // Config
   type BrainConfigShape,
   type AnthropicProviderConfig,
   type OpenAIProviderConfig,
   type GeminiProviderConfig,
   type DeepSeekProviderConfig,
+  type OllamaProviderConfig,
   type ProviderConfig,
   type BrainCacheConfig,
   DEFAULT_TIERS,
@@ -349,6 +351,28 @@ The subclassing pattern is the recommended template for any OpenAI-compatible ve
 
 `countTokens` is not implemented (DeepSeek has no count endpoint). `BrainManager.countTokens` returns `null` when routed to DeepSeek.
 
+## `OllamaProvider`
+
+Subclass of `OpenAIProvider` for running inference against a local [Ollama](https://ollama.com) server (or any OpenAI-compatible local-LLM server: LM Studio, llama.cpp's server, vLLM, TGI). Unlocks privacy-preserving + free dev workflows for open-weights models (Llama 3.2 / Qwen 2.5 / Mistral / …).
+
+```ts
+class OllamaProvider extends OpenAIProvider {
+  constructor(
+    name: string,
+    config: OllamaProviderConfig,
+    options?: { client?: OpenAI; mcpClientFactory?: … },
+  )
+}
+```
+
+Same override surface as `DeepSeekProvider`:
+- Defaults to `http://localhost:11434/v1` + `apiKey: 'ollama'` (placeholder; Ollama ignores).
+- `buildParams` strips `reasoning_effort`.
+- `generate` uses `response_format.json_object` + schema-in-system-prompt + client-side `parseGenerated`.
+- `runWithToolsAndSchema` / `streamWithToolsAndSchema` throw.
+
+`defaultModel` is **required** — Ollama models are user-installed via `ollama pull <model>`. Apps pick a tool-capable model (`llama3.2`, `qwen2.5`, `mistral`) for `runWithTools` to behave. `countTokens` is not implemented. See [`guides/ollama.md`](./guides/ollama.md) for the dev/prod swap pattern + LM Studio / vLLM / llama.cpp configurations.
+
 ## Config
 
 ```ts
@@ -364,6 +388,7 @@ type ProviderConfig =
   | OpenAIProviderConfig
   | GeminiProviderConfig
   | DeepSeekProviderConfig
+  | OllamaProviderConfig
 
 interface AnthropicProviderConfig {
   driver: 'anthropic'
@@ -397,6 +422,14 @@ interface DeepSeekProviderConfig {
   apiKey: string
   baseUrl?: string              // defaults to 'https://api.deepseek.com/v1'
   defaultModel?: string         // defaults to 'deepseek-chat'
+  defaultMaxTokens?: number
+}
+
+interface OllamaProviderConfig {
+  driver: 'ollama'
+  defaultModel: string          // REQUIRED — must be already pulled on the server
+  baseUrl?: string              // defaults to 'http://localhost:11434/v1'
+  apiKey?: string               // defaults to 'ollama' (placeholder; Ollama ignores it)
   defaultMaxTokens?: number
 }
 

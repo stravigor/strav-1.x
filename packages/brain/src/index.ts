@@ -20,6 +20,7 @@ export {
   DEFAULT_MODEL,
   DEFAULT_TIERS,
   type GeminiProviderConfig,
+  type OllamaProviderConfig,
   type OpenAIProviderConfig,
   type ProviderConfig,
 } from './brain_config.ts'
@@ -36,6 +37,7 @@ export type { OutputSchema } from './output_schema.ts'
 export { AnthropicProvider } from './providers/anthropic_provider.ts'
 export { DeepSeekProvider } from './providers/deepseek_provider.ts'
 export { GeminiProvider } from './providers/gemini_provider.ts'
+export { OllamaProvider } from './providers/ollama_provider.ts'
 export { OpenAIProvider } from './providers/openai_provider.ts'
 export type { Provider, RunWithToolsOptions } from './provider.ts'
 export { Thread, type ThreadOptions, type ThreadState } from './thread.ts'

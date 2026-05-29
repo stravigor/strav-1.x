@@ -77,11 +77,40 @@ export interface DeepSeekProviderConfig {
   defaultMaxTokens?: number
 }
 
+/**
+ * Ollama driver config — backed by the `openai` SDK pointed at a
+ * local Ollama server's OpenAI-compatible `/v1` endpoint. The same
+ * shape works against any OpenAI-compatible local server (LM Studio,
+ * llama.cpp's server, vLLM, …) by overriding `baseUrl`.
+ */
+export interface OllamaProviderConfig {
+  driver: 'ollama'
+  /**
+   * Required — model must be already pulled on the Ollama server
+   * (`ollama pull <model>`). No universal default exists because
+   * apps install whichever models they need. Common picks for
+   * tool-calling: `llama3.2`, `llama3.1`, `qwen2.5`, `mistral`.
+   */
+  defaultModel: string
+  /** Optional override of the SDK's base URL. Defaults to `http://localhost:11434/v1`. */
+  baseUrl?: string
+  /**
+   * Optional API key. Ollama doesn't require one — the SDK demands
+   * a non-empty string, so a placeholder is fine and the default
+   * (`'ollama'`) works. Override only when running behind a proxy
+   * that adds its own auth layer.
+   */
+  apiKey?: string
+  /** Default `max_tokens` for `chat()` calls that don't specify one. */
+  defaultMaxTokens?: number
+}
+
 export type ProviderConfig =
   | AnthropicProviderConfig
   | OpenAIProviderConfig
   | GeminiProviderConfig
   | DeepSeekProviderConfig
+  | OllamaProviderConfig
 
 /** Cache-shape defaults applied when `ChatOptions.cache` is omitted. */
 export interface BrainCacheConfig {
