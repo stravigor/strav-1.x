@@ -14,7 +14,8 @@
 import type { Agent } from './agent.ts'
 import type { AgentResult } from './agent_result.ts'
 import type { BrainManager } from './brain_manager.ts'
-import type { ChatOptions, Message } from './types.ts'
+import type { RunWithToolsOptions } from './provider.ts'
+import type { Message } from './types.ts'
 
 export class AgentRunner {
   private prompt: string | undefined
@@ -47,7 +48,7 @@ export class AgentRunner {
       throw new Error('AgentRunner.run: input() must be called before run().')
     }
     const messages: Message[] = [{ role: 'user', content: this.prompt }]
-    const options: ChatOptions & { maxIterations?: number; context?: Record<string, unknown> } = {
+    const options: RunWithToolsOptions = {
       tier: this.agent.tier,
       maxTokens: this.agent.maxTokens,
       system: this.agent.instructions,
@@ -56,6 +57,7 @@ export class AgentRunner {
     }
     if (this.agent.model !== undefined) options.model = this.agent.model
     if (this.agent.provider !== undefined) options.provider = this.agent.provider
+    if (this.agent.mcpServers.length > 0) options.mcpServers = this.agent.mcpServers
     return this.brain.runTools(messages, this.agent.tools, options)
   }
 }

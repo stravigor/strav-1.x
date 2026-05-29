@@ -21,6 +21,7 @@
 
 import type { Agent } from './agent.ts'
 import type { AgentResult } from './agent_result.ts'
+import type { MCPServer } from './mcp_server.ts'
 import { AgentRunner } from './agent_runner.ts'
 import { BrainError } from './brain_error.ts'
 import type { ModelTier } from './types.ts'
@@ -46,6 +47,13 @@ export interface BrainManagerOptions {
   tiers?: Partial<Record<ModelTier, string>>
   /** Default for `ChatOptions.cache` when the call site doesn't pass one. */
   defaultCache?: boolean
+  /**
+   * Default MCP servers used on every `runTools` call when the per-call
+   * options don't specify them. Per-call `mcpServers` replaces the
+   * default outright (no merge) — apps that want additive behavior
+   * concat at the call site.
+   */
+  defaultMcpServers?: readonly MCPServer[]
 }
 
 export class BrainManager {
@@ -53,6 +61,7 @@ export class BrainManager {
   private readonly providers: Map<string, Provider>
   private readonly tiers: Record<ModelTier, string>
   private readonly defaultCache: boolean
+  private readonly defaultMcpServers: readonly MCPServer[]
 
   constructor(options: BrainManagerOptions) {
     if (!options.providers[options.default]) {
@@ -65,6 +74,7 @@ export class BrainManager {
     this.providers = new Map(Object.entries(options.providers))
     this.tiers = { ...DEFAULT_TIERS, ...(options.tiers ?? {}) }
     this.defaultCache = options.defaultCache ?? false
+    this.defaultMcpServers = options.defaultMcpServers ?? []
   }
 
   /** Resolve a provider by name. Default when no name passed. Throws when unknown. */
@@ -147,6 +157,12 @@ export class BrainManager {
     }
     const messages = normalizeInput(input)
     const resolved = this.applyDefaults(options) as RunWithToolsOptions
+    // MCP defaults — per-call override (when present) replaces the
+    // configured list outright; apps that want concat behavior
+    // construct the merged array themselves and pass it in.
+    if (resolved.mcpServers === undefined && this.defaultMcpServers.length > 0) {
+      resolved.mcpServers = this.defaultMcpServers
+    }
     return provider.runWithTools(messages, tools, resolved)
   }
 

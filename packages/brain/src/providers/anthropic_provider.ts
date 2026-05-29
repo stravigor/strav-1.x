@@ -35,6 +35,8 @@ import type {
   ChatResult,
   ChatUsage,
   ContentBlock,
+  MCPToolResultBlock,
+  MCPToolUseBlock,
   Message,
   StreamEvent,
   SystemPrompt,
@@ -143,15 +145,56 @@ export class AnthropicProvider implements Provider {
     let iterations = 0
     let lastStopReason: string | null = null
 
-    while (true) {
-      const params = this.buildParams(workingMessages, options)
-      params.tools = tools.map((t) => ({
-        name: t.name,
-        description: t.description,
-        input_schema: t.inputSchema as Anthropic.Tool.InputSchema,
-      }))
+    const mcpServers = options.mcpServers ?? []
+    const useMcpBeta = mcpServers.length > 0
 
-      const response = await this.client.messages.create(params)
+    while (true) {
+      const params = this.buildParams(workingMessages, options) as Anthropic.MessageCreateParamsNonStreaming & {
+        mcp_servers?: Anthropic.Beta.Messages.BetaRequestMCPServerURLDefinition[]
+      }
+      params.tools = [
+        ...tools.map((t) => ({
+          name: t.name,
+          description: t.description,
+          input_schema: t.inputSchema as Anthropic.Tool.InputSchema,
+        })),
+        // MCP toolsets — one per declared server. The model sees the
+        // server's tools via Anthropic's connector, not via our local
+        // `tools` list.
+        ...mcpServers
+          .filter((s) => s.tools?.enabled !== false)
+          .map((s) => ({
+            type: 'mcp_toolset' as const,
+            mcp_server_name: s.name,
+            ...(s.tools?.allowedTools
+              ? { allowed_tools: [...s.tools.allowedTools] }
+              : {}),
+          })),
+      ] as unknown as Anthropic.MessageCreateParams['tools']
+
+      // Declare MCP servers + flip to the beta surface when in use.
+      // Anthropic's MCP connector requires `mcp-client-2025-11-20`.
+      let response: Anthropic.Message
+      if (useMcpBeta) {
+        params.mcp_servers = mcpServers.map((s) => {
+          const def: Anthropic.Beta.Messages.BetaRequestMCPServerURLDefinition = {
+            type: 'url',
+            name: s.name,
+            url: s.url,
+          }
+          if (s.authorizationToken !== undefined) def.authorization_token = s.authorizationToken
+          return def
+        })
+        const baseBetas = (params as { betas?: readonly string[] }).betas ?? []
+        ;(params as { betas?: string[] }).betas = baseBetas.includes('mcp-client-2025-11-20')
+          ? [...baseBetas]
+          : [...baseBetas, 'mcp-client-2025-11-20']
+        response = (await this.client.beta.messages.create(
+          params as unknown as Anthropic.Beta.Messages.MessageCreateParamsNonStreaming,
+        )) as unknown as Anthropic.Message
+      } else {
+        response = await this.client.messages.create(params)
+      }
       addUsage(aggregated, response.usage)
       lastStopReason = response.stop_reason ?? null
 
@@ -292,31 +335,42 @@ function toMessageParam(message: Message): Anthropic.MessageParam {
   }
   return {
     role: message.role,
-    content: message.content.map((block): Anthropic.ContentBlockParam => {
-      if (block.type === 'tool_use') {
-        return {
-          type: 'tool_use',
-          id: block.id,
-          name: block.name,
-          input: block.input as Record<string, unknown>,
+    content: message.content
+      // MCP blocks are inbound-only — Anthropic produces them, we
+      // surface them on `result.messages` for observability, but we
+      // never echo them back to the model. The backend tracks MCP
+      // tool state on its side.
+      .filter(
+        (b): b is Exclude<ContentBlock, MCPToolUseBlock | MCPToolResultBlock> =>
+          b.type !== 'mcp_tool_use' && b.type !== 'mcp_tool_result',
+      )
+      .map((block): Anthropic.ContentBlockParam => {
+        if (block.type === 'tool_use') {
+          return {
+            type: 'tool_use',
+            id: block.id,
+            name: block.name,
+            input: block.input as Record<string, unknown>,
+          }
         }
-      }
-      if (block.type === 'tool_result') {
-        const param: Anthropic.ToolResultBlockParam = {
-          type: 'tool_result',
-          tool_use_id: block.toolUseId,
-          content:
-            typeof block.content === 'string'
-              ? block.content
-              : block.content.map((b) => ({ type: 'text', text: b.text }) as Anthropic.TextBlockParam),
+        if (block.type === 'tool_result') {
+          const param: Anthropic.ToolResultBlockParam = {
+            type: 'tool_result',
+            tool_use_id: block.toolUseId,
+            content:
+              typeof block.content === 'string'
+                ? block.content
+                : block.content.map(
+                    (b) => ({ type: 'text', text: b.text }) as Anthropic.TextBlockParam,
+                  ),
+          }
+          if (block.isError) param.is_error = true
+          return param
         }
-        if (block.isError) param.is_error = true
-        return param
-      }
-      const text: Anthropic.TextBlockParam = { type: 'text', text: block.text }
-      if (block.cache) text.cache_control = EPHEMERAL_CACHE
-      return text
-    }),
+        const text: Anthropic.TextBlockParam = { type: 'text', text: block.text }
+        if (block.cache) text.cache_control = EPHEMERAL_CACHE
+        return text
+      }),
   }
 }
 
@@ -379,18 +433,51 @@ function collectText(content: Anthropic.ContentBlock[]): string {
  * surface them, and re-sending them as part of the assistant turn
  * could confuse the model.
  */
-function fromAnthropicContent(content: Anthropic.ContentBlock[]): ContentBlock[] {
+function fromAnthropicContent(
+  content: ReadonlyArray<Anthropic.ContentBlock | { type: string; [k: string]: unknown }>,
+): ContentBlock[] {
   const out: ContentBlock[] = []
   for (const block of content) {
     if (block.type === 'text') {
-      out.push({ type: 'text', text: block.text } satisfies TextBlock)
+      out.push({ type: 'text', text: (block as { text: string }).text } satisfies TextBlock)
     } else if (block.type === 'tool_use') {
+      const u = block as { id: string; name: string; input: unknown }
       out.push({
         type: 'tool_use',
-        id: block.id,
-        name: block.name,
-        input: block.input,
+        id: u.id,
+        name: u.name,
+        input: u.input,
       } satisfies ToolUseBlock)
+    } else if (block.type === 'mcp_tool_use') {
+      const m = block as unknown as {
+        id: string
+        server_name: string
+        name: string
+        input: unknown
+      }
+      out.push({
+        type: 'mcp_tool_use',
+        id: m.id,
+        serverName: m.server_name,
+        name: m.name,
+        input: m.input,
+      } satisfies MCPToolUseBlock)
+    } else if (block.type === 'mcp_tool_result') {
+      const r = block as unknown as {
+        tool_use_id: string
+        content: string | Array<{ type: 'text'; text: string }>
+        is_error?: boolean
+      }
+      const result: MCPToolResultBlock = {
+        type: 'mcp_tool_result',
+        toolUseId: r.tool_use_id,
+        content:
+          typeof r.content === 'string'
+            ? r.content
+            : r.content.map((c) => ({ type: 'text', text: c.text }) satisfies TextBlock),
+      }
+      if (r.is_error) result.isError = true
+      out.push(result)
     }
   }
   return out

@@ -64,6 +64,7 @@ export class BrainProvider extends ServiceProvider {
       }
       if (config.tiers !== undefined) options.tiers = config.tiers
       if (config.cache?.auto !== undefined) options.defaultCache = config.cache.auto
+      if (config.mcpServers !== undefined) options.defaultMcpServers = config.mcpServers
       const manager = new BrainManager(options)
       // Plug in the container so `brain.agent(MyAgent)` resolves
       // its constructor deps through `@inject()` like every other

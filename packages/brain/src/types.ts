@@ -71,7 +71,46 @@ export interface ToolResultBlock {
   isError?: boolean
 }
 
-export type ContentBlock = TextBlock | ToolUseBlock | ToolResultBlock
+/**
+ * Provider-emitted MCP tool-use block. Read-only — apps don't construct
+ * these; they appear in `assistant`-role messages when the model calls
+ * a tool exposed by a configured MCP server. Anthropic's backend
+ * invokes the MCP server itself and inlines the result as an
+ * `MCPToolResultBlock` in the same response, so the framework's
+ * agentic loop doesn't need to handle the call.
+ *
+ * Apps render these for observability (showing users that the model
+ * consulted Linear / Notion / GitHub via MCP) and for audit trails.
+ */
+export interface MCPToolUseBlock {
+  type: 'mcp_tool_use'
+  id: string
+  /** MCP server identifier — matches `MCPServer.name`. */
+  serverName: string
+  /** Tool name as exposed by the MCP server. */
+  name: string
+  /** Parsed input the model passed to the MCP tool. */
+  input: unknown
+}
+
+/**
+ * Provider-emitted MCP tool result. Pairs with `MCPToolUseBlock` by
+ * `toolUseId`. `content` is either a string or text blocks; `isError`
+ * is `true` when the MCP server returned an error.
+ */
+export interface MCPToolResultBlock {
+  type: 'mcp_tool_result'
+  toolUseId: string
+  content: string | TextBlock[]
+  isError?: boolean
+}
+
+export type ContentBlock =
+  | TextBlock
+  | ToolUseBlock
+  | ToolResultBlock
+  | MCPToolUseBlock
+  | MCPToolResultBlock
 
 /** A single conversation turn. `content` can be a bare string or a typed block list. */
 export interface Message {

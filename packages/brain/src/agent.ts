@@ -27,6 +27,7 @@
  * overrides on the Agent class is a future ergonomic slice.
  */
 
+import type { MCPServer } from './mcp_server.ts'
 import type { ModelTier } from './types.ts'
 import type { Tool } from './tool.ts'
 
@@ -36,6 +37,14 @@ export abstract class Agent {
 
   /** Tools the agent can call. Empty array → the model answers without tools. */
   readonly tools: readonly Tool[] = []
+
+  /**
+   * MCP servers exposed to the agent. Anthropic's backend connects
+   * to them and surfaces their tools to the model alongside any
+   * locally-registered `tools`. Empty array (or omitted) → no MCP
+   * servers; the agent runs with just `tools` (or no tools at all).
+   */
+  readonly mcpServers: readonly MCPServer[] = []
 
   /** Override the configured default provider. Default = brain's default provider. */
   readonly provider?: string

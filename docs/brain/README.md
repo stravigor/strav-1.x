@@ -2,9 +2,9 @@
 
 The AI module for Strav 1.0 — a unified `Provider` interface, a per-app `BrainManager` facade, multi-turn `Thread`s, and built-in prompt caching. V1 ships the **Anthropic** provider backed by the official `@anthropic-ai/sdk`; OpenAI, Gemini, and DeepSeek follow in later slices.
 
-> **Status: 1.0.0-alpha.9 — M5 slice 3 (foundation) + tools / agents shipped.**
-> Shipping: **`Provider`** interface, **`AnthropicProvider`** (chat / stream / countTokens / **runWithTools**) backed by `@anthropic-ai/sdk`, **`BrainManager`** facade (provider routing, model-tier sugar, default-cache config, single-shot + streaming + token-count surfaces, **`runTools(messages, tools, options)`**, **`agent(Class)` runner**), **`Thread`** (multi-turn with `toJSON` / `fromJSON` persistence), **`BrainProvider`** service provider (config-driven boot, eager construction so bad config fails at boot, **wires the container-aware Agent resolver**), **prompt caching** (top-level + per-block + system-prompt cache flags translate to `cache_control: { type: 'ephemeral' }`), **adaptive thinking** + **effort** opt-ins, **`defineTool({ name, description, inputSchema, execute })`**, **`Agent`** declarative base class + **`AgentRunner`** fluent builder, **`ToolUseBlock`** / **`ToolResultBlock`** content types, **typed errors** (`BrainError`, **`ToolExecutionError`**).
-> Deferred: **streaming agent loops** (V1: `runWithTools` awaits the full final response), **Anthropic server-side tools** (`code_execution_*`, `web_search_*`), **MCP** sub-path, **embeddings**, **vision / files / batches**, **structured outputs** (`output_config.format` + Zod), **OpenAI / Gemini / DeepSeek providers** (one slice per), **server-side compaction** (`compact-2026-01-12` beta — Thread-level integration), **`generate(schema)`** convenience over `chat`, **graceful tool-error recovery** (V1: throws abort the loop). **Managed Agents** lands as a separate sub-path (`@strav/brain/managed-agents`) when it ships.
+> **Status: 1.0.0-alpha.9 shipped (foundation + tools / agents) + MCP slice in workspace.**
+> Shipping: **`Provider`** interface, **`AnthropicProvider`** (chat / stream / countTokens / **runWithTools** w/ server-side MCP) backed by `@anthropic-ai/sdk`, **`BrainManager`** facade (provider routing, model-tier sugar, default-cache + default-MCP-servers config, single-shot + streaming + token-count surfaces, **`runTools(messages, tools, options)`**, **`agent(Class)` runner**), **`Thread`** (multi-turn with `toJSON` / `fromJSON` persistence), **`BrainProvider`** service provider, **prompt caching**, **adaptive thinking** + **effort** opt-ins, **`defineTool({ name, description, inputSchema, execute })`**, **`Agent`** declarative base class + **`AgentRunner`** fluent builder, **`MCPServer`** config + per-server `tools.allowedTools` / `enabled` knobs, app-level + agent-level + per-call MCP server declaration, **`MCPToolUseBlock`** / **`MCPToolResultBlock`** content types (read-only — Anthropic's backend handles invocation; framework surfaces for observability), automatic switch to `client.beta.messages.create` + `mcp-client-2025-11-20` beta header when MCP servers are in use, **`ToolUseBlock`** / **`ToolResultBlock`** content types, **typed errors** (`BrainError`, `ToolExecutionError`).
+> Deferred: **streaming agent loops**, **Anthropic server-side tools** (`code_execution_*`, `web_search_*`), **MCP local client** (`@strav/brain/mcp` sub-path — for OpenAI / Gemini / DeepSeek providers that lack server-side MCP), **MCP OAuth flow** (V1: static bearer tokens only), **embeddings**, **vision / files / batches**, **structured outputs** (`output_config.format` + Zod), **OpenAI / Gemini / DeepSeek providers** (one slice per), **server-side compaction** (`compact-2026-01-12` beta — Thread-level integration), **`generate(schema)`** convenience over `chat`, **graceful tool-error recovery** (V1: throws abort the loop). **Managed Agents** lands as a separate sub-path (`@strav/brain/managed-agents`) when it ships.
 
 ## Install
 
@@ -77,6 +77,8 @@ export class Greeter {
 | `BrainManager.runTools` / `Provider.runWithTools` / `RunWithToolsOptions` | The agentic loop. `runTools(messages, tools, options) → AgentResult` |
 | `Agent` / `AgentRunner` / `AgentResult` | Declarative agent base class + fluent `.input().context().run()` builder + result shape (`text`, `messages`, `iterations`, `stopReason`, `usage`) |
 | `ToolExecutionError` | Typed `StravError` (`brain.tool-execution-failed`). Wraps the tool's throw with `tool` + `callId` in `context` |
+| `MCPServer` / `MCPServerToolConfig` | MCP server config. `name`, `url`, `authorizationToken?`, `tools?: { allowedTools?, enabled? }`. Declare app-wide (`config.brain.mcpServers`), per-agent (`Agent.mcpServers`), or per-call (`options.mcpServers`) |
+| `MCPToolUseBlock` / `MCPToolResultBlock` | Read-only content blocks Anthropic emits when the model uses an MCP tool. Surfaced on `result.messages` for observability; framework never echoes them back |
 
 ## Defaults
 
@@ -93,6 +95,7 @@ export class Greeter {
 - [`guides/prompt-caching.md`](./guides/prompt-caching.md) — when to cache, where to place breakpoints, how to verify cache hits via `result.usage`.
 - [`guides/threads.md`](./guides/threads.md) — multi-turn conversations, persisting threads with `toJSON` / `fromJSON`, when NOT to use a thread.
 - [`guides/tools-and-agents.md`](./guides/tools-and-agents.md) — `defineTool` shape, `BrainManager.runTools` lower-level surface, `Agent` declarative class + `brain.agent(Class)` runner, `ctx.context` for passing per-request identity into tools, `ToolExecutionError` handling.
+- [`guides/mcp.md`](./guides/mcp.md) — declaring MCP servers (app / agent / per-call), `allowedTools` whitelist, `enabled` flag, how MCP and local tools coexist, reading `mcp_tool_use` / `mcp_tool_result` blocks for observability, when NOT to use MCP.
 
 ## When NOT to use brain
 

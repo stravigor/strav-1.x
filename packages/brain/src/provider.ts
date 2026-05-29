@@ -13,6 +13,7 @@
  */
 
 import type { AgentResult } from './agent_result.ts'
+import type { MCPServer } from './mcp_server.ts'
 import type { Tool } from './tool.ts'
 import type {
   ChatOptions,
@@ -26,6 +27,14 @@ export interface RunWithToolsOptions extends ChatOptions {
   maxIterations?: number
   /** Free-form context bag passed to every tool's `execute(input, ctx)`. */
   context?: Record<string, unknown>
+  /**
+   * MCP servers Anthropic should connect to on this call. Merges
+   * with `config.brain.mcpServers` (per-call wins). Empty array or
+   * undefined → no MCP servers. Anthropic's backend handles tool
+   * discovery + invocation; the framework only surfaces the
+   * resulting `mcp_tool_use` / `mcp_tool_result` blocks.
+   */
+  mcpServers?: readonly MCPServer[]
 }
 
 export interface Provider {

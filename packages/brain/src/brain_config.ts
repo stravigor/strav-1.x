@@ -16,6 +16,7 @@
  * that want every long request to cache flip this to `true`.
  */
 
+import type { MCPServer } from './mcp_server.ts'
 import type { ModelTier } from './types.ts'
 
 /** Anthropic-specific driver config. */
@@ -55,6 +56,13 @@ export interface BrainConfigShape {
   tiers?: Partial<Record<ModelTier, string>>
   /** Prompt-cache defaults. */
   cache?: BrainCacheConfig
+  /**
+   * Default MCP servers — declared on every `runWithTools` call
+   * unless the per-call options provide their own list. Apps that
+   * need different MCP server sets per route override at the call
+   * site or via `Agent.mcpServers`.
+   */
+  mcpServers?: readonly MCPServer[]
 }
 
 /**

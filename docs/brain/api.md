@@ -35,12 +35,17 @@ import {
   type ToolContext,
   type RunWithToolsOptions,
   ToolExecutionError,
+  // MCP
+  type MCPServer,
+  type MCPServerToolConfig,
   // Shapes
   type Message,
   type ContentBlock,
   type TextBlock,
   type ToolUseBlock,
   type ToolResultBlock,
+  type MCPToolUseBlock,
+  type MCPToolResultBlock,
   type SystemPrompt,
   type ChatOptions,
   type ChatResult,
@@ -527,3 +532,68 @@ interface ToolResultBlock {
 ```
 
 Content-block variants for tool calls + results. Appear in `assistant`-role messages (tool_use) and `user`-role messages (tool_result). Translated to the provider's wire format on send.
+
+---
+
+## MCP (Model Context Protocol)
+
+`@strav/brain` V1 supports MCP via Anthropic's server-side connector — apps declare server URLs, Anthropic's backend handles tool discovery and invocation. Local MCP client lands when an OpenAI / Gemini / DeepSeek provider needs it (`@strav/brain/mcp` sub-path).
+
+### `MCPServer`
+
+```ts
+interface MCPServer {
+  name: string                                 // identifier; matches MCPToolUseBlock.serverName
+  url: string                                  // HTTPS URL of the MCP server
+  authorizationToken?: string                  // optional bearer token
+  tools?: MCPServerToolConfig
+}
+
+interface MCPServerToolConfig {
+  allowedTools?: readonly string[]             // whitelist of tool names; omit for "all"
+  enabled?: boolean                            // default true; false declares-but-disables
+}
+```
+
+### Declaring MCP servers
+
+Three places, in increasing specificity. Each overrides (replaces, doesn't merge) the broader one:
+
+| Where | When |
+|---|---|
+| `config.brain.mcpServers` | App-wide default. Used on every `runTools` call unless overridden |
+| `Agent.mcpServers` | Per-agent. The agent always uses this list, regardless of app-level default |
+| `RunWithToolsOptions.mcpServers` | Per-call. Dynamic — e.g. when each user has their own MCP credentials |
+
+Passing `mcpServers: []` per-call opts out — the call sees no MCP servers regardless of the app-level default.
+
+### `MCPToolUseBlock`
+
+```ts
+interface MCPToolUseBlock {
+  type: 'mcp_tool_use'
+  id: string
+  serverName: string                           // matches MCPServer.name
+  name: string                                 // tool name as exposed by the MCP server
+  input: unknown
+}
+```
+
+Read-only. Appears in `assistant`-role messages when the model called an MCP tool. The framework surfaces this for observability (rendering "the agent consulted Linear" in UIs); it never echoes the block back to the model — Anthropic's backend tracks MCP state on its side.
+
+### `MCPToolResultBlock`
+
+```ts
+interface MCPToolResultBlock {
+  type: 'mcp_tool_result'
+  toolUseId: string                            // matches MCPToolUseBlock.id
+  content: string | TextBlock[]
+  isError?: boolean                            // true when the MCP server returned an error
+}
+```
+
+Same pattern — read-only. Apps that want to alert on MCP errors filter for `isError: true`.
+
+### Beta header
+
+When `mcpServers` is non-empty, the provider switches to `client.beta.messages.create` and adds the `mcp-client-2025-11-20` beta header automatically. Apps don't need to manage this — it's part of the provider's translation.
