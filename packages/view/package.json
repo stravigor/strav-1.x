@@ -1,6 +1,6 @@
 {
   "name": "@strav/view",
-  "version": "1.0.0-alpha.16",
+  "version": "1.0.0-alpha.17",
   "description": "Strav view engine — .strav template language (tokenizer + compiler + ViewEngine). Slice 1: core engine; @island + bundler + pages auto-router follow.",
   "type": "module",
   "main": "./src/index.ts",
