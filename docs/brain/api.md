@@ -220,7 +220,7 @@ Maps framework shapes to OpenAI's wire format:
 | `options.effort` | `reasoning_effort` (overrides `thinking` mapping) |
 | `options.maxTokens` | `max_completion_tokens` |
 | `options.cache: true` | silently no-op (OpenAI prompt cache is automatic) |
-| `options.mcpServers` (non-empty) | throws `BrainError` — OpenAI has no server-side MCP support |
+| `options.mcpServers` (non-empty) | resolved via the local MCP client (`@strav/brain/mcp`); discovered tools merged into the loop with names `<server>__<tool>` |
 
 Streaming adds `stream_options: { include_usage: true }` so the terminal `stop` event carries final usage including `cacheReadTokens` (from `prompt_tokens_details.cached_tokens`). `countTokens` is not implemented — `BrainManager.countTokens` returns `null` when routed to OpenAI.
 
@@ -490,7 +490,7 @@ brain.runTools(
 
 The agentic loop. Send → detect `tool_use` → execute → append `tool_result` → re-send, until the model returns `end_turn` or `maxIterations` is hit.
 
-Throws `BrainError` when the configured provider doesn't implement `runWithTools` (V1: `AnthropicProvider` + `OpenAIProvider`; Gemini / DeepSeek follow). Throws `ToolExecutionError` when a tool's `execute` throws — the loop aborts on the first failure in V1. Throws `BrainError` when `mcpServers` is non-empty and routed to `OpenAIProvider` (no server-side MCP).
+Throws `BrainError` when the configured provider doesn't implement `runWithTools` (V1: `AnthropicProvider` + `OpenAIProvider`; Gemini / DeepSeek follow). Throws `ToolExecutionError` when a tool's `execute` throws — the loop aborts on the first failure in V1. `OpenAIProvider` resolves `mcpServers` through the local MCP client at `@strav/brain/mcp` and surfaces discovered tools to the loop.
 
 ### `Agent`
 
@@ -585,7 +585,12 @@ Content-block variants for tool calls + results. Appear in `assistant`-role mess
 
 ## MCP (Model Context Protocol)
 
-`@strav/brain` V1 supports MCP via Anthropic's server-side connector — apps declare server URLs, Anthropic's backend handles tool discovery and invocation. Local MCP client lands when an OpenAI / Gemini / DeepSeek provider needs it (`@strav/brain/mcp` sub-path).
+`@strav/brain` supports MCP through two paths:
+
+- **Anthropic — server-side connector.** Apps declare server URLs; Anthropic's backend handles tool discovery and invocation; `MCPToolUseBlock` / `MCPToolResultBlock` blocks appear inline in the response.
+- **OpenAI (and future Gemini / DeepSeek) — local MCP client at `@strav/brain/mcp`.** The provider dials each server itself via Streamable HTTP, discovers its tools, and surfaces them to the agentic loop as ordinary `Tool`s named `<server>__<tool>`. No `mcp_tool_use` blocks — these tools flow through the standard `tool_use` / `tool_result` path.
+
+Both paths consume the same `MCPServer` config, so apps switch providers without rewriting their server declarations.
 
 ### `MCPServer`
 
@@ -644,4 +649,46 @@ Same pattern — read-only. Apps that want to alert on MCP errors filter for `is
 
 ### Beta header
 
-When `mcpServers` is non-empty, the provider switches to `client.beta.messages.create` and adds the `mcp-client-2025-11-20` beta header automatically. Apps don't need to manage this — it's part of the provider's translation.
+When `mcpServers` is non-empty on the Anthropic path, the provider switches to `client.beta.messages.create` and adds the `mcp-client-2025-11-20` beta header automatically. Apps don't need to manage this — it's part of the provider's translation.
+
+---
+
+## `@strav/brain/mcp` — local MCP client
+
+Sub-path export. Used internally by providers without server-side MCP (OpenAI today; Gemini / DeepSeek as they land). Exposed for apps that want lower-level access — listing tools without running the loop, or sharing connections across requests.
+
+### `MCPClient`
+
+```ts
+class MCPClient {
+  constructor(server: MCPServer, options?: { client?: Client })
+  connect(): Promise<void>
+  listTools(): Promise<MCPToolDescriptor[]>
+  callTool(name: string, input: unknown): Promise<MCPCallToolResult>
+  close(): Promise<void>
+}
+
+interface MCPToolDescriptor {
+  name: string
+  description: string
+  inputSchema: Record<string, unknown>
+}
+
+interface MCPCallToolResult {
+  content: string
+  isError: boolean
+}
+```
+
+Thin wrapper over `@modelcontextprotocol/sdk`'s `Client` using Streamable HTTP transport. `authorizationToken` from `MCPServer` becomes `Authorization: Bearer <token>`. `connect()` is idempotent; `listTools` / `callTool` auto-connect on first call. SDK-level failures wrap as `BrainError` with the underlying cause preserved.
+
+### `resolveMcpTools`
+
+```ts
+function resolveMcpTools(
+  servers: readonly MCPServer[],
+  options?: { clientFactory?(server: MCPServer): MCPClient },
+): Promise<{ tools: Tool[]; close(): Promise<void> }>
+```
+
+Discovers tools across a list of servers and returns them as framework `Tool[]`. Honors `MCPServerToolConfig.enabled` and `allowedTools`. Tool names are namespaced `<server>__<tool>` so multiple servers can coexist; the framework strips the prefix before forwarding the call. The returned `close()` shuts down every transport in parallel — providers call it from a `finally`.

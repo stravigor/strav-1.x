@@ -9,8 +9,8 @@
 
 import { describe, expect, test } from 'bun:test'
 import type OpenAI from 'openai'
-import { BrainError } from '../src/brain_error.ts'
 import { defineTool } from '../src/define_tool.ts'
+import type { MCPClient, MCPToolDescriptor } from '../src/mcp/client.ts'
 import { OpenAIProvider } from '../src/providers/openai_provider.ts'
 import { ToolExecutionError } from '../src/tool_execution_error.ts'
 import type { StreamEvent } from '../src/types.ts'
@@ -120,6 +120,40 @@ function makeProvider(client: OpenAI) {
     { driver: 'openai', apiKey: 'sk-test' },
     { client },
   )
+}
+
+interface FakeMcpClient {
+  listTools(): Promise<MCPToolDescriptor[]>
+  callTool(name: string, input: unknown): Promise<{ content: string; isError: boolean }>
+  close(): Promise<void>
+  closed: boolean
+}
+
+function makeFakeMcpClient(
+  responses: Record<string, { content: string; isError: boolean }>,
+  callRecord: Array<{ name: string; input: unknown }> = [],
+): FakeMcpClient {
+  const descriptors: MCPToolDescriptor[] = Object.keys(responses).map((name) => ({
+    name,
+    description: `List Linear ${name.replace(/^list_/, '')}`,
+    inputSchema: { type: 'object' },
+  }))
+  const fake: FakeMcpClient = {
+    closed: false,
+    async listTools() {
+      return descriptors
+    },
+    async callTool(name, input) {
+      callRecord.push({ name, input })
+      const response = responses[name]
+      if (!response) throw new Error(`fake mcp: no response for ${name}`)
+      return response
+    },
+    async close() {
+      fake.closed = true
+    },
+  }
+  return fake
 }
 
 // ─── chat — translation in / out ─────────────────────────────────────────
@@ -468,14 +502,45 @@ describe('OpenAIProvider — runWithTools()', () => {
     expect(chatCalls).toHaveLength(2)
   })
 
-  test('options.mcpServers (non-empty) throws BrainError — OpenAI has no MCP', async () => {
-    const { client } = makeFakeClient([makeCompletion('done', { finishReason: 'stop' })])
-    const provider = makeProvider(client)
-    await expect(
-      provider.runWithTools([{ role: 'user', content: 'q' }], [], {
-        mcpServers: [{ name: 'linear', url: 'https://mcp.linear.app/sse' }],
+  test('options.mcpServers (non-empty) resolves into tools via the local MCP client', async () => {
+    // First completion calls the MCP tool; second completion is the
+    // model's follow-up after seeing the tool result.
+    const { client, chatCalls } = makeFakeClient([
+      makeCompletion('', {
+        toolCalls: [
+          { id: 'call_1', name: 'linear__list_issues', arguments: '{"limit":3}' },
+        ],
+        finishReason: 'tool_calls',
       }),
-    ).rejects.toBeInstanceOf(BrainError)
+      makeCompletion('three open issues', { finishReason: 'stop' }),
+    ])
+    const callRecord: Array<{ name: string; input: unknown }> = []
+    const fakeMcp = makeFakeMcpClient({
+      list_issues: { content: '["a","b","c"]', isError: false },
+    }, callRecord)
+    const provider = new OpenAIProvider(
+      'openai',
+      { driver: 'openai', apiKey: 'sk-test' },
+      { client, mcpClientFactory: () => fakeMcp as unknown as MCPClient },
+    )
+    const result = await provider.runWithTools(
+      [{ role: 'user', content: 'list issues' }],
+      [],
+      { mcpServers: [{ name: 'linear', url: 'https://mcp.linear.app' }] },
+    )
+    expect(result.text).toBe('three open issues')
+    expect(chatCalls[0]?.params.tools).toEqual([
+      {
+        type: 'function',
+        function: {
+          name: 'linear__list_issues',
+          description: 'List Linear issues',
+          parameters: { type: 'object' },
+        },
+      },
+    ])
+    expect(callRecord).toEqual([{ name: 'list_issues', input: { limit: 3 } }])
+    expect(fakeMcp.closed).toBe(true)
   })
 
   test('options.mcpServers === [] is fine — empty list is a no-op', async () => {

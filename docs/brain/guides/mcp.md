@@ -2,7 +2,12 @@
 
 MCP (Model Context Protocol) is the open standard for exposing tools to LLMs. The Anthropic ecosystem has growing first-party MCP server support — Linear, Notion, GitHub, Asana, and more publish hosted MCP endpoints you can connect to.
 
-`@strav/brain` V1 supports MCP via **Anthropic's server-side connector**: you declare the MCP servers on your agent or per call, and Anthropic's backend handles the OAuth flow, tool discovery, and tool invocation. The model treats MCP-exposed tools the same as locally-defined `Tool`s; your code just sees the `mcp_tool_use` / `mcp_tool_result` blocks land in `result.messages` for observability.
+`@strav/brain` supports MCP through two paths:
+
+1. **Anthropic — server-side connector.** Declare servers; Anthropic's backend connects, discovers tools, invokes them, and inlines `mcp_tool_use` / `mcp_tool_result` blocks in the response.
+2. **OpenAI (and future Gemini / DeepSeek) — local MCP client at `@strav/brain/mcp`.** The provider dials each server itself via Streamable HTTP, discovers its tools, and surfaces them as ordinary `Tool`s in the agentic loop. Tool names are namespaced `<server>__<tool>` so multiple servers can coexist.
+
+Both paths accept the same `MCPServer` config shape, so apps can switch providers without rewriting their server declarations.
 
 This guide covers:
 
@@ -175,13 +180,50 @@ You'll also see `session.error`-style events if the MCP server is unreachable en
 
 When `mcpServers` is non-empty, the provider switches from `client.messages.create` to `client.beta.messages.create` and adds the `mcp-client-2025-11-20` beta header automatically. Apps don't need to manage this — it's part of the provider's translation.
 
-## What's deferred for V2
+## Local MCP client — `@strav/brain/mcp`
 
-- **OpenAI / Gemini / DeepSeek providers** — each will need its own MCP implementation. Anthropic ships first-party server-side MCP; for providers without that, V2 will add a local MCP client (`@strav/brain/mcp`) that translates discovered MCP tools into framework `Tool`s and runs them through the standard loop.
-- **MCP server discovery / introspection** — V1 requires you to know the server URL. V2 may add a `MCPDiscovery` service that catalogs known servers and surfaces capabilities to UIs.
-- **OAuth-flow MCP servers** — V1 only handles static bearer tokens. Servers that require OAuth (`linear.app`, `notion.com`) need an out-of-band token exchange today; the in-flight OAuth handshake is a separate slice.
-- **Per-tool permission policies** — V1 supports allowlist via `tools.allowedTools`. V2 may add `always_ask` / `always_allow` policies similar to Anthropic's Managed Agents.
-- **`@strav/brain/mcp` sub-path** — the standalone MCP client lives here when it ships, sharing types with this top-level surface.
+For providers without server-side MCP, the framework ships a local client at `@strav/brain/mcp`. The OpenAI provider uses it automatically when you pass `mcpServers` — there's nothing extra to wire up:
+
+```ts
+const result = await brain.runTools(
+  'Summarize my open Linear issues.',
+  [],
+  {
+    mcpServers: [
+      { name: 'linear', url: 'https://mcp.linear.app', authorizationToken: env('LINEAR_MCP_TOKEN') },
+    ],
+  },
+)
+```
+
+Behavior:
+
+- **Transport.** Streamable HTTP (the current MCP transport). Legacy SSE-only endpoints aren't supported.
+- **Tool namespacing.** Discovered tools are exposed to the model as `<server>__<tool>` (e.g. `linear__list_issues`). The framework strips the prefix before invoking the server, so MCP servers see their tool names unchanged.
+- **Iteration cost.** Unlike the Anthropic server-side path, each MCP tool call *does* cost an iteration — the framework round-trips through your process between the model's tool request and the next model turn. Bump `RunWithToolsOptions.maxIterations` if you expect long MCP chains.
+- **Lifecycle.** Transports are opened at the start of the run and closed in a `finally` once the loop exits. No connection pooling in V1.
+- **Auth.** `authorizationToken` becomes `Authorization: Bearer <token>` on every request. OAuth-flow servers still need out-of-band token exchange — same constraint as the Anthropic path.
+
+If you need lower-level access — listing tools without invoking the loop, sharing a connection across requests — instantiate `MCPClient` directly:
+
+```ts
+import { MCPClient } from '@strav/brain/mcp'
+
+const client = new MCPClient({ name: 'linear', url: 'https://mcp.linear.app', authorizationToken: token })
+await client.connect()
+const tools = await client.listTools()
+const { content, isError } = await client.callTool('list_issues', { limit: 3 })
+await client.close()
+```
+
+## What's deferred
+
+- **Gemini / DeepSeek providers** — same local-client mechanism will apply once those providers land. The `@strav/brain/mcp` API stays stable.
+- **MCP server discovery / introspection** — apps must know the server URL up front.
+- **OAuth-flow MCP servers** — only static bearer tokens today. Servers that require OAuth need an out-of-band exchange.
+- **Per-tool permission policies** — `always_ask` / `always_allow` semantics on top of the current allowlist.
+- **Connection pooling.** Each `runTools` call opens fresh transports. Long-lived agents will want pooling later.
+- **Resources / prompts / sampling.** Only the `tools/*` slice of MCP is exposed; the rest is on the roadmap.
 
 ## When NOT to use MCP
 

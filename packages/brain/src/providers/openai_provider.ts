@@ -22,9 +22,12 @@
  *     a `function` namespace where Anthropic uses flat tool
  *     definitions.
  *
- *   - `MCPServer[]` → throws `BrainError`. OpenAI has no
- *     server-side MCP support; the local MCP client slice
- *     (`@strav/brain/mcp`) lands when this is needed.
+ *   - `MCPServer[]` → resolved via the local MCP client
+ *     (`@strav/brain/mcp`). Each server is dialed, its tools are
+ *     discovered, and they're merged with locally-defined tools.
+ *     The agentic loop then treats them uniformly. Tool names are
+ *     namespaced `<server>__<tool>` to avoid collisions. Transports
+ *     are closed in a `finally` once the loop exits.
  *
  *   - `cache: true` is a no-op. OpenAI auto-caches; there's no
  *     per-block cache_control to set. The framework flag is
@@ -48,6 +51,8 @@ import OpenAI from 'openai'
 import type { AgentResult } from '../agent_result.ts'
 import { BrainError } from '../brain_error.ts'
 import type { OpenAIProviderConfig } from '../brain_config.ts'
+import type { MCPServer } from '../mcp_server.ts'
+import { resolveMcpTools, type ResolveMcpToolsOptions } from '../mcp/resolve_mcp_tools.ts'
 import type { Provider, RunWithToolsOptions } from '../provider.ts'
 import type { Tool } from '../tool.ts'
 import { ToolExecutionError } from '../tool_execution_error.ts'
@@ -66,20 +71,32 @@ import type {
 
 const DEFAULT_OPENAI_MODEL = 'gpt-5'
 
+export interface OpenAIProviderOptions {
+  client?: OpenAI
+  /**
+   * Internal seam — tests inject a stub MCP client factory so MCP
+   * tool resolution doesn't dial the network. Real apps leave it
+   * unset; the provider uses the default `MCPClient`.
+   */
+  mcpClientFactory?: ResolveMcpToolsOptions['clientFactory']
+}
+
 export class OpenAIProvider implements Provider {
   readonly name: string
   private readonly client: OpenAI
   private readonly defaultModel: string
   private readonly defaultMaxTokens: number
+  private readonly mcpClientFactory?: ResolveMcpToolsOptions['clientFactory']
 
   constructor(
     name: string,
     config: OpenAIProviderConfig,
-    options: { client?: OpenAI } = {},
+    options: OpenAIProviderOptions = {},
   ) {
     this.name = name
     this.defaultModel = config.defaultModel ?? DEFAULT_OPENAI_MODEL
     this.defaultMaxTokens = config.defaultMaxTokens ?? 4096
+    this.mcpClientFactory = options.mcpClientFactory
     this.client =
       options.client ??
       new OpenAI({
@@ -129,12 +146,25 @@ export class OpenAIProvider implements Provider {
     tools: readonly Tool[],
     options: RunWithToolsOptions = {},
   ): Promise<AgentResult> {
-    if (options.mcpServers && options.mcpServers.length > 0) {
-      throw new BrainError(
-        'OpenAIProvider.runWithTools: MCP servers are not supported by the OpenAI provider in V1. Use the Anthropic provider for server-side MCP, or wait for the local MCP client slice.',
-        { context: { provider: this.name } },
-      )
+    const mcpServers: readonly MCPServer[] = options.mcpServers ?? []
+    const resolved =
+      mcpServers.length > 0
+        ? await resolveMcpTools(mcpServers, {
+            ...(this.mcpClientFactory ? { clientFactory: this.mcpClientFactory } : {}),
+          })
+        : { tools: [] as Tool[], close: async () => {} }
+    try {
+      return await this._runLoop(messages, [...tools, ...resolved.tools], options)
+    } finally {
+      await resolved.close()
     }
+  }
+
+  private async _runLoop(
+    messages: readonly Message[],
+    tools: readonly Tool[],
+    options: RunWithToolsOptions,
+  ): Promise<AgentResult> {
     const maxIterations = options.maxIterations ?? 10
     const toolMap = new Map<string, Tool>(tools.map((t) => [t.name, t]))
     const workingMessages: Message[] = [...messages]
