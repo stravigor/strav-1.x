@@ -36,7 +36,18 @@ function nextPlaceholder(index: { value: number }): string {
 
 /** Snapshot of all column names in declaration order (used for SELECT *). */
 export function selectColumnList(schema: Schema): string {
-  return schema.fields.map((f) => quoteIdent(f.name)).join(', ')
+  const names = schema.fields.map((f) => quoteIdent(f.name))
+  // Tenanted schemas have a synthetic `<registry>_id` FK column that's
+  // injected at DDL time and is NOT in `schema.fields`. Include it
+  // explicitly so SELECTs return the tenant binding (and the hydrated
+  // Model can carry it forward through `toJSON()` for API responses).
+  // The convention is hard-coded to `tenant_id` here — when custom
+  // tenant registry names land, this needs the registry handle to
+  // compute the actual column name.
+  if (schema.tenancy.tenanted) {
+    names.splice(1, 0, quoteIdent('tenant_id'))
+  }
+  return names.join(', ')
 }
 
 /**
