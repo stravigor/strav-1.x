@@ -6,7 +6,8 @@ export class MakeController extends MakeCommand {
   static providers: string[] = []
 
   protected filePath(name: string): string {
-    return `app/http/controllers/${snake(name)}.ts`
+    const fileName = name.toLowerCase().endsWith('controller') ? snake(name) : `${snake(name)}_controller`
+    return `app/http/controllers/${fileName}.ts`
   }
 
   protected stub(name: string): string {
