@@ -13,16 +13,16 @@ No framework tool execution, no agentic loop, no `runWithTools` required — `se
 
 ## Coverage matrix
 
-| Tool | Anthropic | Gemini | OpenAI | DeepSeek | Ollama |
-|---|---|---|---|---|---|
-| `web_search` | yes (`web_search_20260209`) | yes (Google Search) | throws | throws | throws |
-| `code_execution` | yes (`code_execution_20260120`) | yes | throws | throws | throws |
-| `web_fetch` | yes (`web_fetch_20260309`) | throws (Anthropic-only) | throws | throws | throws |
-| `url_context` | throws (Gemini-only) | yes | throws | throws | throws |
+| Tool | Anthropic | Gemini | OpenAI (chat completions) | OpenAI (Responses) | DeepSeek | Ollama |
+|---|---|---|---|---|---|---|
+| `web_search` | yes (`web_search_20260209`) | yes (Google Search) | throws | yes (`web_search`) | throws | throws |
+| `code_execution` | yes (`code_execution_20260120`) | yes | throws | yes (`code_interpreter`) | throws | throws |
+| `web_fetch` | yes (`web_fetch_20260309`) | throws (Anthropic-only) | throws | throws (Anthropic-only) | throws | throws |
+| `url_context` | throws (Gemini-only) | yes | throws | throws (Gemini-only) | throws | throws |
 
-OpenAI's server tools live on the Responses API (`file_search`, `code_interpreter`, `web_search`, `computer_use`) which is a different endpoint than chat completions. A `OpenAIResponsesProvider` is a separate slice; this slice covers the chat-completions providers.
+OpenAI's server tools are split across two endpoints. The chat completions API (`OpenAIProvider`, driver `'openai'`) doesn't expose them; the Responses API (`OpenAIResponsesProvider`, driver `'openai-responses'`) does. See [`guides/openai-responses.md`](./openai-responses.md) for the OpenAI-side setup.
 
-DeepSeek + Ollama inherit OpenAI's `buildParams` and throw the same way.
+DeepSeek + Ollama inherit `OpenAIProvider`'s `buildParams` and throw the same way.
 
 ## `ServerTool`
 
@@ -153,7 +153,7 @@ A typed cross-provider observability surface (`AgentStreamEvent.server_tool_use`
 
 ## What's NOT in this slice
 
-- **OpenAI server tools** — `file_search`, `code_interpreter`, `web_search`, `computer_use` live on the Responses API. Adding them needs an `OpenAIResponsesProvider` subclass that re-implements `chat` / `runWithTools` / `streamWithTools` against `client.responses.create`. Separate slice when an app needs it.
+- **OpenAI's `file_search` / `computer_use` / `image_generation`** — V1 of `OpenAIResponsesProvider` ships `web_search` + `code_execution` only. The other server tools each need their own configuration (vector store IDs, VM state, response_format tweaks) and each is its own slice.
 - **Anthropic computer use, bash, text editor** — each has its own state management (browser session, shell session, file paths) and auth shape. Each is its own slice.
 - **Streaming events for server-tool execution** — the model emits server-tool calls inline as content_block_start events on Anthropic / part events on Gemini. A cross-provider streaming surface (`AgentStreamEvent.server_tool_use_start`?) deserves its own design pass; for now apps consume `tool_use` post-execution (for local tools) or read `result.messages` / `raw` (for server tools).
 

@@ -34,6 +34,31 @@ export interface AnthropicProviderConfig {
   betas?: readonly string[]
 }
 
+/**
+ * OpenAI Responses API driver config — backed by the `openai`
+ * SDK's `client.responses.create` endpoint. Use when you need
+ * OpenAI's server-side tools (web search, code interpreter) or
+ * the Responses API's reasoning surfaces. The chat completions
+ * provider (`driver: 'openai'`) covers everything else.
+ */
+export interface OpenAIResponsesProviderConfig {
+  driver: 'openai-responses'
+  /** API key. Required. Most apps source from `env('OPENAI_API_KEY')`. */
+  apiKey: string
+  /** Optional override of the SDK's base URL. */
+  baseUrl?: string
+  /** Optional organization id. */
+  organization?: string
+  /** Default model. Defaults to `gpt-5`. */
+  defaultModel?: string
+  /** Default `max_output_tokens`. Defaults to 4096. */
+  defaultMaxTokens?: number
+  /** Default embedding model (inherited from chat completions endpoint). Defaults to `text-embedding-3-small`. */
+  defaultEmbedModel?: string
+  /** Default audio-transcription model. Defaults to `whisper-1`. */
+  defaultTranscribeModel?: string
+}
+
 /** OpenAI-specific driver config. */
 export interface OpenAIProviderConfig {
   driver: 'openai'
@@ -129,6 +154,7 @@ export interface OllamaProviderConfig {
 export type ProviderConfig =
   | AnthropicProviderConfig
   | OpenAIProviderConfig
+  | OpenAIResponsesProviderConfig
   | GeminiProviderConfig
   | DeepSeekProviderConfig
   | OllamaProviderConfig

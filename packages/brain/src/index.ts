@@ -22,6 +22,7 @@ export {
   type GeminiProviderConfig,
   type OllamaProviderConfig,
   type OpenAIProviderConfig,
+  type OpenAIResponsesProviderConfig,
   type ProviderConfig,
 } from './brain_config.ts'
 export { BrainError } from './brain_error.ts'
@@ -40,6 +41,7 @@ export { GeminiProvider } from './providers/gemini_provider.ts'
 export { OllamaProvider } from './providers/ollama_provider.ts'
 export { OpenAICompatProvider } from './providers/openai_compat_provider.ts'
 export { OpenAIProvider } from './providers/openai_provider.ts'
+export { OpenAIResponsesProvider } from './providers/openai_responses_provider.ts'
 export type { Provider, RunWithToolsOptions } from './provider.ts'
 export { Thread, type ThreadOptions, type ThreadState } from './thread.ts'
 export type { Tool, ToolContext } from './tool.ts'
