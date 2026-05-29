@@ -90,10 +90,9 @@ The on-the-wire shape differences are hidden behind the unified `AgentStreamEven
 
 - **You only need the final answer.** Stick with `runTools` — it's cleaner and you don't need to handle the event union.
 - **You're batching agent runs from a worker.** Streaming adds connection-management overhead without giving you anything if no human is watching.
-- **You need backpressure or cancellation.** V1 streaming runs to completion; cancellation via `AbortSignal` is on the roadmap.
+- **You need backpressure.** V1 doesn't support backpressure on the iterator. Cancellation works (`options.signal` — see [`cancellation.md`](./cancellation.md)).
 
 ## What's deferred
 
 - **Tool-argument streaming.** `tool_use` fires once the parsed input is ready, not character-by-character. Apps that want to render "calling search(q='..." as it streams will get it in a later slice.
-- **Cancellation / AbortSignal.** Currently the iterator runs to completion. Apps that need to bail mid-stream wrap the consumer in their own race against a timeout.
 - **Graceful tool-error recovery.** Tool throws abort the iterator; future slices will let apps opt into "feed the error back to the model and let it adapt."

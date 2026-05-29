@@ -168,6 +168,14 @@ export interface ChatOptions {
    * provider by config; this is the override for that.
    */
   provider?: string
+  /**
+   * Cancel the in-flight operation. Aborting between iterations of
+   * a tool loop bails before the next model call; aborting mid-call
+   * propagates the SDK's native abort error (typically a `DOMException`
+   * with `name: 'AbortError'`). Streaming iterators reject on the
+   * next `for await` step.
+   */
+  signal?: AbortSignal
 }
 
 /** Token usage for a single call. Cache-hit fields are populated when caching is in play. */

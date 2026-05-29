@@ -80,7 +80,7 @@ export class AnthropicProvider implements Provider {
 
   async chat(messages: readonly Message[], options: ChatOptions = {}): Promise<ChatResult> {
     const params = this.buildParams(messages, options)
-    const response = await this.client.messages.create(params)
+    const response = await this.client.messages.create(params, reqOpts(options))
     return this.toChatResult(response)
   }
 
@@ -89,7 +89,7 @@ export class AnthropicProvider implements Provider {
     options: ChatOptions = {},
   ): AsyncIterable<StreamEvent> {
     const params = this.buildParams(messages, options)
-    const stream = this.client.messages.stream(params)
+    const stream = this.client.messages.stream(params, reqOpts(options))
     for await (const event of stream) {
       if (
         event.type === 'content_block_delta' &&
@@ -113,12 +113,15 @@ export class AnthropicProvider implements Provider {
     const base = this.buildParams(messages, options)
     // count_tokens only accepts a subset of MessageCreateParams; build
     // a focused payload that matches what apps actually need to budget.
-    const result = await this.client.messages.countTokens({
-      model: base.model,
-      messages: base.messages,
-      ...(base.system !== undefined ? { system: base.system } : {}),
-      ...(base.thinking !== undefined ? { thinking: base.thinking } : {}),
-    })
+    const result = await this.client.messages.countTokens(
+      {
+        model: base.model,
+        messages: base.messages,
+        ...(base.system !== undefined ? { system: base.system } : {}),
+        ...(base.thinking !== undefined ? { thinking: base.thinking } : {}),
+      },
+      reqOpts(options),
+    )
     return result.input_tokens
   }
 
@@ -153,6 +156,7 @@ export class AnthropicProvider implements Provider {
     const useMcpBeta = mcpServers.length > 0
 
     while (true) {
+      checkAborted(options.signal)
       const params = this.buildParams(workingMessages, options) as Anthropic.MessageCreateParamsNonStreaming & {
         mcp_servers?: Anthropic.Beta.Messages.BetaRequestMCPServerURLDefinition[]
       }
@@ -195,9 +199,10 @@ export class AnthropicProvider implements Provider {
           : [...baseBetas, 'mcp-client-2025-11-20']
         response = (await this.client.beta.messages.create(
           params as unknown as Anthropic.Beta.Messages.MessageCreateParamsNonStreaming,
+          reqOpts(options),
         )) as unknown as Anthropic.Message
       } else {
-        response = await this.client.messages.create(params)
+        response = await this.client.messages.create(params, reqOpts(options))
       }
       addUsage(aggregated, response.usage)
       lastStopReason = response.stop_reason ?? null
@@ -241,6 +246,7 @@ export class AnthropicProvider implements Provider {
           output = await tool.execute(block.input, {
             callId: block.id,
             context: options.context ?? {},
+            ...(options.signal !== undefined ? { signal: options.signal } : {}),
           })
         } catch (cause) {
           throw new ToolExecutionError(block.name, block.id, cause)
@@ -289,6 +295,7 @@ export class AnthropicProvider implements Provider {
     const useMcpBeta = mcpServers.length > 0
 
     while (true) {
+      checkAborted(options.signal)
       const params = this.buildParams(workingMessages, options) as Anthropic.MessageCreateParamsNonStreaming & {
         mcp_servers?: Anthropic.Beta.Messages.BetaRequestMCPServerURLDefinition[]
       }
@@ -328,9 +335,10 @@ export class AnthropicProvider implements Provider {
           : [...baseBetas, 'mcp-client-2025-11-20']
         response = (await this.client.beta.messages.create(
           params as unknown as Anthropic.Beta.Messages.MessageCreateParamsNonStreaming,
+          reqOpts(options),
         )) as unknown as Anthropic.Message
       } else {
-        response = await this.client.messages.create(params)
+        response = await this.client.messages.create(params, reqOpts(options))
       }
       addUsage(aggregated, response.usage)
       lastStopReason = response.stop_reason ?? null
@@ -370,6 +378,7 @@ export class AnthropicProvider implements Provider {
           output = await tool.execute(block.input, {
             callId: block.id,
             context: options.context ?? {},
+            ...(options.signal !== undefined ? { signal: options.signal } : {}),
           })
         } catch (cause) {
           throw new ToolExecutionError(block.name, block.id, cause)
@@ -420,6 +429,7 @@ export class AnthropicProvider implements Provider {
     const useMcpBeta = mcpServers.length > 0
 
     while (true) {
+      checkAborted(options.signal)
       yield { type: 'iteration_start', iteration: iterations }
 
       const params = this.buildParams(workingMessages, options) as Anthropic.MessageCreateParamsNonStreaming & {
@@ -459,8 +469,9 @@ export class AnthropicProvider implements Provider {
       const stream = useMcpBeta
         ? this.client.beta.messages.stream(
             params as unknown as Anthropic.Beta.Messages.MessageCreateParamsStreaming,
+            reqOpts(options),
           )
-        : this.client.messages.stream(params)
+        : this.client.messages.stream(params, reqOpts(options))
 
       for await (const event of stream) {
         if (
@@ -512,6 +523,7 @@ export class AnthropicProvider implements Provider {
           output = await tool.execute(block.input, {
             callId: block.id,
             context: options.context ?? {},
+            ...(options.signal !== undefined ? { signal: options.signal } : {}),
           })
         } catch (cause) {
           throw new ToolExecutionError(block.name, block.id, cause)
@@ -567,6 +579,7 @@ export class AnthropicProvider implements Provider {
     const useMcpBeta = mcpServers.length > 0
 
     while (true) {
+      checkAborted(options.signal)
       yield { type: 'iteration_start', iteration: iterations }
 
       const params = this.buildParams(workingMessages, options) as Anthropic.MessageCreateParamsNonStreaming & {
@@ -610,8 +623,9 @@ export class AnthropicProvider implements Provider {
       const stream = useMcpBeta
         ? this.client.beta.messages.stream(
             params as unknown as Anthropic.Beta.Messages.MessageCreateParamsStreaming,
+            reqOpts(options),
           )
-        : this.client.messages.stream(params)
+        : this.client.messages.stream(params, reqOpts(options))
 
       for await (const event of stream) {
         if (
@@ -666,6 +680,7 @@ export class AnthropicProvider implements Provider {
           output = await tool.execute(block.input, {
             callId: block.id,
             context: options.context ?? {},
+            ...(options.signal !== undefined ? { signal: options.signal } : {}),
           })
         } catch (cause) {
           throw new ToolExecutionError(block.name, block.id, cause)
@@ -714,7 +729,7 @@ export class AnthropicProvider implements Provider {
       ...(params.output_config ?? {}),
       format: { type: 'json_schema', schema: schema.jsonSchema },
     }
-    const response = await this.client.messages.create(params)
+    const response = await this.client.messages.create(params, reqOpts(options))
     const text = collectText(response.content)
     const value = parseGenerated(text, schema)
     return {
@@ -783,6 +798,18 @@ export class AnthropicProvider implements Provider {
 }
 
 // ─── Shape converters ─────────────────────────────────────────────────────
+
+/** Build the request-options bag forwarded to the SDK. Only `signal` for now. */
+function reqOpts(options: { signal?: AbortSignal }): { signal?: AbortSignal } | undefined {
+  return options.signal !== undefined ? { signal: options.signal } : undefined
+}
+
+/** Throw a DOMException-shaped abort error if the signal has fired. */
+function checkAborted(signal: AbortSignal | undefined): void {
+  if (signal?.aborted) {
+    throw signal.reason ?? new DOMException('Aborted', 'AbortError')
+  }
+}
 
 function toUsage(u: Anthropic.Usage): ChatUsage {
   return {

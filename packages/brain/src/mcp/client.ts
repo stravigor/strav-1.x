@@ -83,11 +83,14 @@ export class MCPClient {
     }
   }
 
-  async listTools(): Promise<MCPToolDescriptor[]> {
+  async listTools(opts: { signal?: AbortSignal } = {}): Promise<MCPToolDescriptor[]> {
     await this.connect()
     let response: Awaited<ReturnType<Client['listTools']>>
     try {
-      response = await this._client.listTools()
+      response = await this._client.listTools(
+        undefined,
+        opts.signal !== undefined ? { signal: opts.signal } : undefined,
+      )
     } catch (cause) {
       throw new BrainError(
         `MCPClient(${this.server.name}): tools/list failed.`,
@@ -101,14 +104,22 @@ export class MCPClient {
     }))
   }
 
-  async callTool(name: string, input: unknown): Promise<MCPCallToolResult> {
+  async callTool(
+    name: string,
+    input: unknown,
+    opts: { signal?: AbortSignal } = {},
+  ): Promise<MCPCallToolResult> {
     await this.connect()
     let response: Awaited<ReturnType<Client['callTool']>>
     try {
-      response = await this._client.callTool({
-        name,
-        arguments: (input ?? {}) as Record<string, unknown>,
-      })
+      response = await this._client.callTool(
+        {
+          name,
+          arguments: (input ?? {}) as Record<string, unknown>,
+        },
+        undefined,
+        opts.signal !== undefined ? { signal: opts.signal } : undefined,
+      )
     } catch (cause) {
       throw new BrainError(
         `MCPClient(${this.server.name}): tools/call ${name} failed.`,

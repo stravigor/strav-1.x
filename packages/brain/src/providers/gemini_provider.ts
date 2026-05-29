@@ -207,6 +207,7 @@ export class GeminiProvider implements Provider {
     let iterations = 0
 
     while (true) {
+      checkAborted(options.signal)
       const params = this.buildParams(workingMessages, options, tools)
       const response = await this.models.generateContent(params)
       addUsage(aggregated, response.usageMetadata)
@@ -250,6 +251,7 @@ export class GeminiProvider implements Provider {
           output = await tool.execute(call.input, {
             callId: call.id,
             context: options.context ?? {},
+            ...(options.signal !== undefined ? { signal: options.signal } : {}),
           })
         } catch (cause) {
           throw new ToolExecutionError(call.name, call.id, cause)
@@ -364,6 +366,7 @@ export class GeminiProvider implements Provider {
           output = await tool.execute(call.input, {
             callId: call.id,
             context: options.context ?? {},
+            ...(options.signal !== undefined ? { signal: options.signal } : {}),
           })
         } catch (cause) {
           throw new ToolExecutionError(call.name, call.id, cause)
@@ -427,6 +430,7 @@ export class GeminiProvider implements Provider {
     let iterations = 0
 
     while (true) {
+      checkAborted(options.signal)
       yield { type: 'iteration_start', iteration: iterations }
 
       const params = this.buildParams(workingMessages, options, tools)
@@ -490,6 +494,7 @@ export class GeminiProvider implements Provider {
           output = await tool.execute(call.input, {
             callId: call.id,
             context: options.context ?? {},
+            ...(options.signal !== undefined ? { signal: options.signal } : {}),
           })
         } catch (cause) {
           throw new ToolExecutionError(call.name, call.id, cause)
@@ -567,6 +572,7 @@ export class GeminiProvider implements Provider {
     let iterations = 0
 
     while (true) {
+      checkAborted(options.signal)
       yield { type: 'iteration_start', iteration: iterations }
 
       const params = this.buildParams(workingMessages, options, tools)
@@ -641,6 +647,7 @@ export class GeminiProvider implements Provider {
           output = await tool.execute(call.input, {
             callId: call.id,
             context: options.context ?? {},
+            ...(options.signal !== undefined ? { signal: options.signal } : {}),
           })
         } catch (cause) {
           throw new ToolExecutionError(call.name, call.id, cause)
@@ -734,6 +741,8 @@ export class GeminiProvider implements Provider {
     const thinking = buildThinkingConfig(options)
     if (thinking !== undefined) config.thinkingConfig = thinking
 
+    if (options.signal !== undefined) config.abortSignal = options.signal
+
     return { model, contents, config }
   }
 
@@ -760,6 +769,13 @@ export class GeminiProvider implements Provider {
 }
 
 // ─── Shape converters ─────────────────────────────────────────────────────
+
+/** Throw a DOMException-shaped abort error if the signal has fired. */
+function checkAborted(signal: AbortSignal | undefined): void {
+  if (signal?.aborted) {
+    throw signal.reason ?? new DOMException('Aborted', 'AbortError')
+  }
+}
 
 function systemPromptText(system: SystemPrompt | undefined): string {
   if (system === undefined) return ''

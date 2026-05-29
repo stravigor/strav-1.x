@@ -101,7 +101,8 @@ export class Greeter {
 - [`guides/gemini.md`](./guides/gemini.md) — `GeminiProvider` config, shape translation (`assistant`→`model`, `systemInstruction`, `functionDeclarations` / `functionCall` / `functionResponse`), `thinkingConfig` mapping, MCP via the local client, tier remapping for Gemini apps.
 - [`guides/structured-outputs.md`](./guides/structured-outputs.md) — `brain.generate(input, schema)`: `OutputSchema<T>` shape, optional `parse` hook for Zod / Ajv, per-provider wire (Anthropic `output_config`, OpenAI `response_format`, Gemini `responseJsonSchema`), error handling, when NOT to use it.
 - [`guides/zod.md`](./guides/zod.md) — opt-in `@strav/brain/zod` sub-path: `outputSchema(zSchema)` for `brain.generate(...)`, `tool({ input: zSchema, ... })` for `brain.runTools(...)`. Optional peer dep, zero bundle cost when unused.
-- [`guides/streaming-agents.md`](./guides/streaming-agents.md) — `brain.streamTools(...)` + `agent.stream()`: `AgentStreamEvent` vocabulary, lifecycle, per-provider mapping (Anthropic / OpenAI / Gemini all wired), error handling, what's deferred (tool-arg streaming, cancellation, schema combo).
+- [`guides/streaming-agents.md`](./guides/streaming-agents.md) — `brain.streamTools(...)` + `agent.stream()`: `AgentStreamEvent` vocabulary, lifecycle, per-provider mapping (Anthropic / OpenAI / Gemini all wired), error handling.
+- [`guides/cancellation.md`](./guides/cancellation.md) — `options.signal: AbortSignal` on every method; SDK forwarding (Anthropic / OpenAI / Gemini); inter-iteration checks in the agentic loop; `ToolContext.signal` for tools to pass through; MCP forwarding.
 
 ## When NOT to use brain
 

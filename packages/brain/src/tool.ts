@@ -23,6 +23,13 @@ export interface ToolContext {
   readonly callId: string
   /** Per-run free-form context bag passed by the caller. Optional. */
   readonly context: Readonly<Record<string, unknown>>
+  /**
+   * Cancellation signal forwarded from the run's `options.signal`.
+   * Tools that wrap network calls (HTTP fetches, MCP servers, child
+   * processes) should pass this through so cancellation actually
+   * unwinds in-flight work.
+   */
+  readonly signal?: AbortSignal
 }
 
 export interface Tool<TInput = unknown, TOutput = unknown> {

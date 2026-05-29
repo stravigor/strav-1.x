@@ -467,6 +467,7 @@ interface ChatOptions {
   cache?: boolean
   betas?: readonly string[]
   provider?: string
+  signal?: AbortSignal
 }
 ```
 
@@ -481,6 +482,7 @@ interface ChatOptions {
 | `cache` | Sets top-level `cache_control: { type: 'ephemeral' }`. Defaults to `config.brain.cache.auto`. |
 | `betas` | Beta headers for this call. Merged with provider-level betas. |
 | `provider` | Override the default-provider routing. Must name a provider in the registry. |
+| `signal` | `AbortSignal` for cancellation. Forwarded to the provider SDK; checked between tool-loop iterations; propagated into `ToolContext.signal` so tools can pass it on. See [`guides/cancellation.md`](./guides/cancellation.md). |
 
 ### `ChatResult`
 
@@ -541,6 +543,7 @@ interface Tool<TInput = unknown, TOutput = unknown> {
 interface ToolContext {
   readonly callId: string                          // matches ToolUseBlock.id
   readonly context: Readonly<Record<string, unknown>>
+  readonly signal?: AbortSignal                    // forwarded from options.signal
 }
 ```
 

@@ -112,7 +112,7 @@ export class OpenAIProvider implements Provider {
 
   async chat(messages: readonly Message[], options: ChatOptions = {}): Promise<ChatResult> {
     const params = this.buildParams(messages, options, [])
-    const response = await this.client.chat.completions.create(params)
+    const response = await this.client.chat.completions.create(params, reqOpts(options))
     return this.toChatResult(response)
   }
 
@@ -125,7 +125,7 @@ export class OpenAIProvider implements Provider {
       stream: true,
       stream_options: { include_usage: true },
     }
-    const stream = await this.client.chat.completions.create(params)
+    const stream = await this.client.chat.completions.create(params, reqOpts(options))
     let aggregatedUsage: OpenAI.CompletionUsage | undefined
     let finishReason: string | null = null
     for await (const chunk of stream) {
@@ -181,8 +181,9 @@ export class OpenAIProvider implements Provider {
     let iterations = 0
 
     while (true) {
+      checkAborted(options.signal)
       const params = this.buildParams(workingMessages, options, tools)
-      const response = await this.client.chat.completions.create(params)
+      const response = await this.client.chat.completions.create(params, reqOpts(options))
       addUsage(aggregated, response.usage)
 
       const choice = response.choices[0]
@@ -235,6 +236,7 @@ export class OpenAIProvider implements Provider {
           output = await tool.execute(parsedInput, {
             callId: call.id,
             context: options.context ?? {},
+            ...(options.signal !== undefined ? { signal: options.signal } : {}),
           })
         } catch (cause) {
           throw new ToolExecutionError(call.function.name, call.id, cause)
@@ -309,7 +311,7 @@ export class OpenAIProvider implements Provider {
           strict: true,
         },
       }
-      const response = await this.client.chat.completions.create(params)
+      const response = await this.client.chat.completions.create(params, reqOpts(options))
       addUsage(aggregated, response.usage)
 
       const choice = response.choices[0]
@@ -361,6 +363,7 @@ export class OpenAIProvider implements Provider {
           output = await tool.execute(parsedInput, {
             callId: call.id,
             context: options.context ?? {},
+            ...(options.signal !== undefined ? { signal: options.signal } : {}),
           })
         } catch (cause) {
           throw new ToolExecutionError(call.function.name, call.id, cause)
@@ -424,6 +427,7 @@ export class OpenAIProvider implements Provider {
     let iterations = 0
 
     while (true) {
+      checkAborted(options.signal)
       yield { type: 'iteration_start', iteration: iterations }
 
       const params: OpenAI.Chat.ChatCompletionCreateParamsStreaming = {
@@ -431,7 +435,7 @@ export class OpenAIProvider implements Provider {
         stream: true,
         stream_options: { include_usage: true },
       }
-      const stream = await this.client.chat.completions.create(params)
+      const stream = await this.client.chat.completions.create(params, reqOpts(options))
 
       let textBuf = ''
       const toolCallsByIndex: Map<
@@ -530,6 +534,7 @@ export class OpenAIProvider implements Provider {
           output = await tool.execute(parsedInput, {
             callId: call.id,
             context: options.context ?? {},
+            ...(options.signal !== undefined ? { signal: options.signal } : {}),
           })
         } catch (cause) {
           throw new ToolExecutionError(call.name, call.id, cause)
@@ -607,6 +612,7 @@ export class OpenAIProvider implements Provider {
     let iterations = 0
 
     while (true) {
+      checkAborted(options.signal)
       yield { type: 'iteration_start', iteration: iterations }
 
       const baseParams = this.buildParams(workingMessages, options, tools)
@@ -624,7 +630,7 @@ export class OpenAIProvider implements Provider {
         stream: true,
         stream_options: { include_usage: true },
       }
-      const stream = await this.client.chat.completions.create(params)
+      const stream = await this.client.chat.completions.create(params, reqOpts(options))
 
       let textBuf = ''
       const toolCallsByIndex: Map<
@@ -726,6 +732,7 @@ export class OpenAIProvider implements Provider {
           output = await tool.execute(parsedInput, {
             callId: call.id,
             context: options.context ?? {},
+            ...(options.signal !== undefined ? { signal: options.signal } : {}),
           })
         } catch (cause) {
           throw new ToolExecutionError(call.name, call.id, cause)
@@ -779,7 +786,7 @@ export class OpenAIProvider implements Provider {
         strict: true,
       },
     }
-    const response = await this.client.chat.completions.create(params)
+    const response = await this.client.chat.completions.create(params, reqOpts(options))
     const choice = response.choices[0]
     const text = choice?.message?.content ?? ''
     const value = parseGenerated(text, schema)
@@ -893,6 +900,18 @@ export class OpenAIProvider implements Provider {
 }
 
 // ─── Shape converters ─────────────────────────────────────────────────────
+
+/** Build the request-options bag forwarded to the SDK. Only `signal` for now. */
+function reqOpts(options: { signal?: AbortSignal }): { signal?: AbortSignal } | undefined {
+  return options.signal !== undefined ? { signal: options.signal } : undefined
+}
+
+/** Throw a DOMException-shaped abort error if the signal has fired. */
+function checkAborted(signal: AbortSignal | undefined): void {
+  if (signal?.aborted) {
+    throw signal.reason ?? new DOMException('Aborted', 'AbortError')
+  }
+}
 
 function systemPromptText(system: SystemPrompt | undefined): string {
   if (system === undefined) return ''

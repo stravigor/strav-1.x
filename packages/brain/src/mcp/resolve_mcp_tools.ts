@@ -75,8 +75,12 @@ function buildTool(
     name: `${serverName}${NAME_SEPARATOR}${descriptor.name}`,
     description: descriptor.description,
     inputSchema: descriptor.inputSchema,
-    async execute(input: unknown, _ctx: ToolContext): Promise<string> {
-      const result = await client.callTool(descriptor.name, input)
+    async execute(input: unknown, ctx: ToolContext): Promise<string> {
+      const result = await client.callTool(
+        descriptor.name,
+        input,
+        ctx.signal !== undefined ? { signal: ctx.signal } : {},
+      )
       if (result.isError) {
         return `MCP tool error: ${result.content}`
       }
