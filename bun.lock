@@ -14,7 +14,7 @@
     },
     "packages/auth": {
       "name": "@strav/auth",
-      "version": "1.0.0-alpha.17",
+      "version": "1.0.0-alpha.18",
       "dependencies": {
         "@strav/database": "workspace:*",
         "@strav/http": "workspace:*",
@@ -26,7 +26,7 @@
     },
     "packages/brain": {
       "name": "@strav/brain",
-      "version": "1.0.0-alpha.17",
+      "version": "1.0.0-alpha.18",
       "dependencies": {
         "@anthropic-ai/sdk": "^0.100.0",
         "@google/genai": "^2.7.0",
@@ -48,7 +48,7 @@
     },
     "packages/cli": {
       "name": "@strav/cli",
-      "version": "1.0.0-alpha.17",
+      "version": "1.0.0-alpha.18",
       "dependencies": {
         "@strav/kernel": "workspace:*",
       },
@@ -58,7 +58,7 @@
     },
     "packages/database": {
       "name": "@strav/database",
-      "version": "1.0.0-alpha.17",
+      "version": "1.0.0-alpha.18",
       "dependencies": {
         "@strav/cli": "workspace:*",
         "@strav/kernel": "workspace:*",
@@ -69,7 +69,7 @@
     },
     "packages/durable": {
       "name": "@strav/durable",
-      "version": "1.0.0-alpha.17",
+      "version": "1.0.0-alpha.18",
       "dependencies": {
         "@strav/database": "workspace:*",
         "@strav/kernel": "workspace:*",
@@ -81,7 +81,7 @@
     },
     "packages/http": {
       "name": "@strav/http",
-      "version": "1.0.0-alpha.17",
+      "version": "1.0.0-alpha.18",
       "dependencies": {
         "@strav/cli": "workspace:*",
         "@strav/kernel": "workspace:*",
@@ -93,7 +93,7 @@
     },
     "packages/kernel": {
       "name": "@strav/kernel",
-      "version": "1.0.0-alpha.17",
+      "version": "1.0.0-alpha.18",
       "dependencies": {
         "pino": "^10.3.1",
         "reflect-metadata": "^0.2.2",
@@ -104,7 +104,7 @@
     },
     "packages/machine": {
       "name": "@strav/machine",
-      "version": "1.0.0-alpha.17",
+      "version": "1.0.0-alpha.18",
       "dependencies": {
         "@strav/database": "workspace:*",
         "@strav/kernel": "workspace:*",
@@ -115,7 +115,7 @@
     },
     "packages/queue": {
       "name": "@strav/queue",
-      "version": "1.0.0-alpha.17",
+      "version": "1.0.0-alpha.18",
       "dependencies": {
         "@strav/cli": "workspace:*",
         "@strav/database": "workspace:*",
@@ -125,9 +125,21 @@
         "@types/bun": ">=1.3.14",
       },
     },
+    "packages/rag": {
+      "name": "@strav/rag",
+      "version": "1.0.0-alpha.18",
+      "dependencies": {
+        "@strav/brain": "workspace:*",
+        "@strav/database": "workspace:*",
+        "@strav/kernel": "workspace:*",
+      },
+      "peerDependencies": {
+        "@types/bun": ">=1.3.14",
+      },
+    },
     "packages/signal": {
       "name": "@strav/signal",
-      "version": "1.0.0-alpha.17",
+      "version": "1.0.0-alpha.18",
       "dependencies": {
         "@strav/kernel": "workspace:*",
         "@strav/queue": "workspace:*",
@@ -138,7 +150,7 @@
     },
     "packages/view": {
       "name": "@strav/view",
-      "version": "1.0.0-alpha.17",
+      "version": "1.0.0-alpha.18",
       "dependencies": {
         "@strav/cli": "workspace:*",
         "@strav/kernel": "workspace:*",
@@ -160,7 +172,7 @@
     },
     "packages/workflow": {
       "name": "@strav/workflow",
-      "version": "1.0.0-alpha.17",
+      "version": "1.0.0-alpha.18",
       "dependencies": {
         "@strav/kernel": "workspace:*",
       },
@@ -293,6 +305,8 @@
     "@strav/machine": ["@strav/machine@workspace:packages/machine"],
 
     "@strav/queue": ["@strav/queue@workspace:packages/queue"],
+
+    "@strav/rag": ["@strav/rag@workspace:packages/rag"],
 
     "@strav/signal": ["@strav/signal@workspace:packages/signal"],
 

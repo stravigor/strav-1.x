@@ -1,0 +1,29 @@
+{
+  "name": "@strav/rag",
+  "version": "1.0.0-alpha.18",
+  "description": "Strav RAG module — vector store abstraction, pgvector + in-memory drivers, chunking strategies. Composes with @strav/brain for embeddings and @strav/database for persistence.",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "files": [
+    "src",
+    "README.md"
+  ],
+  "engines": {
+    "bun": ">=1.3.14"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "@strav/brain": "workspace:*",
+    "@strav/database": "workspace:*",
+    "@strav/kernel": "workspace:*"
+  },
+  "peerDependencies": {
+    "@types/bun": ">=1.3.14"
+  }
+}
