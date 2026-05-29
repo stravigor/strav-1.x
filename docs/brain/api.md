@@ -565,10 +565,14 @@ Factory that returns a `Tool`. Mirrors `defineSchema` / `defineWorkflow` / `defi
 interface RunWithToolsOptions extends ChatOptions {
   maxIterations?: number                         // default 10
   context?: Record<string, unknown>              // passed to every tool's execute(_, ctx).context
+  mcpServers?: readonly MCPServer[]              // per-call override
+  onToolError?(error: ToolExecutionError): string | undefined
 }
 ```
 
 Extends `ChatOptions`. Use `maxIterations` as a safety net; use `context` to thread per-request data (user id, tenant id, trace id) into tool execution without putting it in the prompt.
+
+`onToolError` is the graceful-recovery hook: when set, a tool's `execute` throw (or "tool not registered" / "JSON-parse args failed" on OpenAI) doesn't abort the loop — the callback's returned string becomes a `tool_result` block with `isError: true`, the model sees the error and adapts. Returning `undefined` rethrows. Covers all four agentic-loop methods (`runWithTools` / `streamWithTools` / `runWithToolsAndSchema` / `streamWithToolsAndSchema`). See [`guides/tools-and-agents.md`](./guides/tools-and-agents.md#tool-errors).
 
 ### `AgentResult`
 

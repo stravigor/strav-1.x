@@ -174,20 +174,53 @@ class ToolExecutionError extends StravError {
 }
 ```
 
-V1 propagates this out of `runWithTools` — the loop aborts on the first tool failure. The intent is that infrastructure failures (DB down, third-party API timeout) should be visible to the caller, not silently retried by the model.
+**Default — abort the loop.** Without an `onToolError` callback, `runWithTools` / `streamWithTools` / `generateWithTools` / `streamGenerateWithTools` propagate `ToolExecutionError` and abort. The intent is that infrastructure failures (DB down, third-party API timeout) should be visible to the caller, not silently swept under the rug.
 
-Apps that want the model to recover from tool failures gracefully wrap the call:
+**Opt-in — let the model recover.** Pass `onToolError` and the framework will feed the failure back to the model as an `isError: true` tool_result; the model sees what went wrong and adapts (retries with different args, asks the user, gives up gracefully).
 
 ```ts
-try {
-  return await brain.runTools(prompt, tools)
-} catch (err) {
-  if (err instanceof ToolExecutionError) {
-    // Append a synthetic tool_result with isError: true and re-run
-    // the loop. The model sees the error and adapts.
-    // (A future slice may automate this.)
+const result = await brain.runTools(prompt, tools, {
+  onToolError(err) {
+    // Return a string to feed back to the model:
+    return `Tool failed: ${(err.cause as Error).message}. Try a different approach.`
+    // Return undefined to fall back to throwing:
+    // return undefined
+  },
+})
+```
+
+What the callback sees:
+
+```ts
+onToolError(error: ToolExecutionError): string | undefined
+```
+
+- `error.context.tool` — the tool name the model tried to call.
+- `error.context.callId` — provider-assigned id of the tool_use block.
+- `error.cause` — the original throw (or a synthetic `Error` describing what went wrong: "Tool 'X' is not registered", "Failed to parse tool input JSON", ...).
+
+What the callback covers:
+
+- **`execute()` threw.** The most common case.
+- **Tool not registered.** The model called a name your `tools` array doesn't include — common when a previous-turn tool was removed or renamed.
+- **Tool input wasn't valid JSON** (OpenAI only — Anthropic + Gemini parse arguments themselves). Useful when models produce malformed argument streams under load.
+
+**Per-error filtering.** Common pattern: feed back transient failures, rethrow programmer / config errors:
+
+```ts
+onToolError(err) {
+  if (err.cause instanceof TransientApiError) return err.cause.message
+  return undefined  // rethrow ToolExecutionError
+}
+```
+
+**Streaming.** When `onToolError` recovers a failure inside `streamWithTools` (or its schema twin), the emitted `tool_result` event carries `isError: true` and the loop continues to the next iteration. Apps that render error indicators in UIs switch on the flag:
+
+```ts
+for await (const event of brain.streamTools(prompt, tools, { onToolError: handler })) {
+  if (event.type === 'tool_result' && event.isError) {
+    renderToolFailure(event.name, event.content)
   }
-  throw err
 }
 ```
 

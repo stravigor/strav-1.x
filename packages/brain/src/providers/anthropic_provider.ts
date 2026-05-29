@@ -29,7 +29,6 @@ import type { AnthropicProviderConfig } from '../brain_config.ts'
 import { DEFAULT_MODEL } from '../brain_config.ts'
 import type { Provider, RunWithToolsOptions } from '../provider.ts'
 import type { Tool } from '../tool.ts'
-import { ToolExecutionError } from '../tool_execution_error.ts'
 import type {
   ChatOptions,
   ChatResult,
@@ -48,6 +47,7 @@ import type {
 import type { AgentGenerateResult } from '../agent_generate_result.ts'
 import type { AgentStreamEvent } from '../agent_stream_event.ts'
 import { parseGenerated, type OutputSchema } from '../output_schema.ts'
+import { runToolWithRecovery } from '../tool_runner.ts'
 
 const EPHEMERAL_CACHE = { type: 'ephemeral' } as const
 
@@ -233,28 +233,18 @@ export class AnthropicProvider implements Provider {
       )
       const resultBlocks: ContentBlock[] = []
       for (const block of toolUseBlocks) {
-        const tool = toolMap.get(block.name)
-        if (!tool) {
-          throw new ToolExecutionError(
-            block.name,
-            block.id,
-            new Error(`Tool "${block.name}" is not registered.`),
-          )
-        }
-        let output: unknown
-        try {
-          output = await tool.execute(block.input, {
-            callId: block.id,
-            context: options.context ?? {},
-            ...(options.signal !== undefined ? { signal: options.signal } : {}),
-          })
-        } catch (cause) {
-          throw new ToolExecutionError(block.name, block.id, cause)
-        }
+        const { content, isError } = await runToolWithRecovery(
+          toolMap.get(block.name),
+          block.name,
+          block.id,
+          block.input,
+          options,
+        )
         const resultBlock: ToolResultBlock = {
           type: 'tool_result',
           toolUseId: block.id,
-          content: typeof output === 'string' ? output : JSON.stringify(output),
+          content,
+          ...(isError ? { isError: true } : {}),
         }
         resultBlocks.push(resultBlock)
       }
@@ -365,28 +355,18 @@ export class AnthropicProvider implements Provider {
       )
       const resultBlocks: ContentBlock[] = []
       for (const block of toolUseBlocks) {
-        const tool = toolMap.get(block.name)
-        if (!tool) {
-          throw new ToolExecutionError(
-            block.name,
-            block.id,
-            new Error(`Tool "${block.name}" is not registered.`),
-          )
-        }
-        let output: unknown
-        try {
-          output = await tool.execute(block.input, {
-            callId: block.id,
-            context: options.context ?? {},
-            ...(options.signal !== undefined ? { signal: options.signal } : {}),
-          })
-        } catch (cause) {
-          throw new ToolExecutionError(block.name, block.id, cause)
-        }
+        const { content, isError } = await runToolWithRecovery(
+          toolMap.get(block.name),
+          block.name,
+          block.id,
+          block.input,
+          options,
+        )
         const resultBlock: ToolResultBlock = {
           type: 'tool_result',
           toolUseId: block.id,
-          content: typeof output === 'string' ? output : JSON.stringify(output),
+          content,
+          ...(isError ? { isError: true } : {}),
         }
         resultBlocks.push(resultBlock)
       }
@@ -509,37 +489,26 @@ export class AnthropicProvider implements Provider {
       )
       const resultBlocks: ContentBlock[] = []
       for (const block of toolUseBlocks) {
-        const tool = toolMap.get(block.name)
-        if (!tool) {
-          throw new ToolExecutionError(
-            block.name,
-            block.id,
-            new Error(`Tool "${block.name}" is not registered.`),
-          )
-        }
         yield { type: 'tool_use', id: block.id, name: block.name, input: block.input }
-        let output: unknown
-        try {
-          output = await tool.execute(block.input, {
-            callId: block.id,
-            context: options.context ?? {},
-            ...(options.signal !== undefined ? { signal: options.signal } : {}),
-          })
-        } catch (cause) {
-          throw new ToolExecutionError(block.name, block.id, cause)
-        }
-        const content = typeof output === 'string' ? output : JSON.stringify(output)
+        const { content, isError } = await runToolWithRecovery(
+          toolMap.get(block.name),
+          block.name,
+          block.id,
+          block.input,
+          options,
+        )
         resultBlocks.push({
           type: 'tool_result',
           toolUseId: block.id,
           content,
+          ...(isError ? { isError: true } : {}),
         } satisfies ToolResultBlock)
         yield {
           type: 'tool_result',
           id: block.id,
           name: block.name,
           content,
-          isError: false,
+          isError,
         }
       }
       workingMessages.push({ role: 'user', content: resultBlocks })
@@ -666,37 +635,26 @@ export class AnthropicProvider implements Provider {
       )
       const resultBlocks: ContentBlock[] = []
       for (const block of toolUseBlocks) {
-        const tool = toolMap.get(block.name)
-        if (!tool) {
-          throw new ToolExecutionError(
-            block.name,
-            block.id,
-            new Error(`Tool "${block.name}" is not registered.`),
-          )
-        }
         yield { type: 'tool_use', id: block.id, name: block.name, input: block.input }
-        let output: unknown
-        try {
-          output = await tool.execute(block.input, {
-            callId: block.id,
-            context: options.context ?? {},
-            ...(options.signal !== undefined ? { signal: options.signal } : {}),
-          })
-        } catch (cause) {
-          throw new ToolExecutionError(block.name, block.id, cause)
-        }
-        const content = typeof output === 'string' ? output : JSON.stringify(output)
+        const { content, isError } = await runToolWithRecovery(
+          toolMap.get(block.name),
+          block.name,
+          block.id,
+          block.input,
+          options,
+        )
         resultBlocks.push({
           type: 'tool_result',
           toolUseId: block.id,
           content,
+          ...(isError ? { isError: true } : {}),
         } satisfies ToolResultBlock)
         yield {
           type: 'tool_result',
           id: block.id,
           name: block.name,
           content,
-          isError: false,
+          isError,
         }
       }
       workingMessages.push({ role: 'user', content: resultBlocks })

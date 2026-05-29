@@ -18,6 +18,7 @@ import type { AgentStreamEvent } from './agent_stream_event.ts'
 import type { MCPServer } from './mcp_server.ts'
 import type { OutputSchema } from './output_schema.ts'
 import type { Tool } from './tool.ts'
+import type { ToolExecutionError } from './tool_execution_error.ts'
 import type {
   ChatOptions,
   ChatResult,
@@ -39,6 +40,30 @@ export interface RunWithToolsOptions extends ChatOptions {
    * resulting `mcp_tool_use` / `mcp_tool_result` blocks.
    */
   mcpServers?: readonly MCPServer[]
+  /**
+   * Tool-error recovery hook. Called when a tool's `execute` throws
+   * — OR when the model called a tool that isn't registered. Two
+   * outcomes:
+   *
+   *   - Return a string → the loop continues. The string lands as
+   *     `tool_result.content` with `isError: true`, the model sees
+   *     the error and can adapt (try a different approach, ask the
+   *     user, give up). Recommended for production agents that
+   *     should survive transient failures.
+   *
+   *   - Return `undefined` (the default when this option is unset)
+   *     → the framework throws `ToolExecutionError` and the loop
+   *     aborts. Same behavior as before this option existed.
+   *
+   * The hook may inspect `error.cause` to filter — e.g., feed back
+   * transient HTTP errors but rethrow programmer errors:
+   *
+   * ```ts
+   * onToolError: (err) =>
+   *   err.cause instanceof TransientError ? err.cause.message : undefined
+   * ```
+   */
+  onToolError?(error: ToolExecutionError): string | undefined
 }
 
 export interface Provider {

@@ -64,9 +64,9 @@ import type { AgentGenerateResult } from '../agent_generate_result.ts'
 import type { AgentStreamEvent } from '../agent_stream_event.ts'
 import { resolveMcpTools, type ResolveMcpToolsOptions } from '../mcp/resolve_mcp_tools.ts'
 import { parseGenerated, type OutputSchema } from '../output_schema.ts'
+import { runToolWithRecovery } from '../tool_runner.ts'
 import type { Provider, RunWithToolsOptions } from '../provider.ts'
 import type { Tool } from '../tool.ts'
-import { ToolExecutionError } from '../tool_execution_error.ts'
 import type {
   ChatOptions,
   ChatResult,
@@ -238,30 +238,19 @@ export class GeminiProvider implements Provider {
 
       const resultBlocks: ContentBlock[] = []
       for (const call of toolUses) {
-        const tool = toolMap.get(call.name)
-        if (!tool) {
-          throw new ToolExecutionError(
-            call.name,
-            call.id,
-            new Error(`Tool "${call.name}" is not registered.`),
-          )
-        }
-        let output: unknown
-        try {
-          output = await tool.execute(call.input, {
-            callId: call.id,
-            context: options.context ?? {},
-            ...(options.signal !== undefined ? { signal: options.signal } : {}),
-          })
-        } catch (cause) {
-          throw new ToolExecutionError(call.name, call.id, cause)
-        }
-        const resultBlock: ToolResultBlock = {
+        const { content, isError } = await runToolWithRecovery(
+          toolMap.get(call.name),
+          call.name,
+          call.id,
+          call.input,
+          options,
+        )
+        resultBlocks.push({
           type: 'tool_result',
           toolUseId: call.id,
-          content: typeof output === 'string' ? output : JSON.stringify(output),
-        }
-        resultBlocks.push(resultBlock)
+          content,
+          ...(isError ? { isError: true } : {}),
+        } satisfies ToolResultBlock)
       }
       workingMessages.push({ role: 'user', content: resultBlocks })
 
@@ -353,28 +342,18 @@ export class GeminiProvider implements Provider {
 
       const resultBlocks: ContentBlock[] = []
       for (const call of toolUses) {
-        const tool = toolMap.get(call.name)
-        if (!tool) {
-          throw new ToolExecutionError(
-            call.name,
-            call.id,
-            new Error(`Tool "${call.name}" is not registered.`),
-          )
-        }
-        let output: unknown
-        try {
-          output = await tool.execute(call.input, {
-            callId: call.id,
-            context: options.context ?? {},
-            ...(options.signal !== undefined ? { signal: options.signal } : {}),
-          })
-        } catch (cause) {
-          throw new ToolExecutionError(call.name, call.id, cause)
-        }
+        const { content, isError } = await runToolWithRecovery(
+          toolMap.get(call.name),
+          call.name,
+          call.id,
+          call.input,
+          options,
+        )
         resultBlocks.push({
           type: 'tool_result',
           toolUseId: call.id,
-          content: typeof output === 'string' ? output : JSON.stringify(output),
+          content,
+          ...(isError ? { isError: true } : {}),
         } satisfies ToolResultBlock)
       }
       workingMessages.push({ role: 'user', content: resultBlocks })
@@ -480,37 +459,26 @@ export class GeminiProvider implements Provider {
 
       const resultBlocks: ContentBlock[] = []
       for (const call of toolUses) {
-        const tool = toolMap.get(call.name)
-        if (!tool) {
-          throw new ToolExecutionError(
-            call.name,
-            call.id,
-            new Error(`Tool "${call.name}" is not registered.`),
-          )
-        }
         yield { type: 'tool_use', id: call.id, name: call.name, input: call.input }
-        let output: unknown
-        try {
-          output = await tool.execute(call.input, {
-            callId: call.id,
-            context: options.context ?? {},
-            ...(options.signal !== undefined ? { signal: options.signal } : {}),
-          })
-        } catch (cause) {
-          throw new ToolExecutionError(call.name, call.id, cause)
-        }
-        const content = typeof output === 'string' ? output : JSON.stringify(output)
+        const { content, isError } = await runToolWithRecovery(
+          toolMap.get(call.name),
+          call.name,
+          call.id,
+          call.input,
+          options,
+        )
         resultBlocks.push({
           type: 'tool_result',
           toolUseId: call.id,
           content,
+          ...(isError ? { isError: true } : {}),
         } satisfies ToolResultBlock)
         yield {
           type: 'tool_result',
           id: call.id,
           name: call.name,
           content,
-          isError: false,
+          isError,
         }
       }
       workingMessages.push({ role: 'user', content: resultBlocks })
@@ -633,37 +601,26 @@ export class GeminiProvider implements Provider {
 
       const resultBlocks: ContentBlock[] = []
       for (const call of toolUses) {
-        const tool = toolMap.get(call.name)
-        if (!tool) {
-          throw new ToolExecutionError(
-            call.name,
-            call.id,
-            new Error(`Tool "${call.name}" is not registered.`),
-          )
-        }
         yield { type: 'tool_use', id: call.id, name: call.name, input: call.input }
-        let output: unknown
-        try {
-          output = await tool.execute(call.input, {
-            callId: call.id,
-            context: options.context ?? {},
-            ...(options.signal !== undefined ? { signal: options.signal } : {}),
-          })
-        } catch (cause) {
-          throw new ToolExecutionError(call.name, call.id, cause)
-        }
-        const content = typeof output === 'string' ? output : JSON.stringify(output)
+        const { content, isError } = await runToolWithRecovery(
+          toolMap.get(call.name),
+          call.name,
+          call.id,
+          call.input,
+          options,
+        )
         resultBlocks.push({
           type: 'tool_result',
           toolUseId: call.id,
           content,
+          ...(isError ? { isError: true } : {}),
         } satisfies ToolResultBlock)
         yield {
           type: 'tool_result',
           id: call.id,
           name: call.name,
           content,
-          isError: false,
+          isError,
         }
       }
       workingMessages.push({ role: 'user', content: resultBlocks })

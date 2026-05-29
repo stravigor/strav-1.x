@@ -56,6 +56,7 @@ import type { AgentGenerateResult } from '../agent_generate_result.ts'
 import type { AgentStreamEvent } from '../agent_stream_event.ts'
 import { resolveMcpTools, type ResolveMcpToolsOptions } from '../mcp/resolve_mcp_tools.ts'
 import { parseGenerated, type OutputSchema } from '../output_schema.ts'
+import { recoverOrThrow, runToolWithRecovery } from '../tool_runner.ts'
 import type { Provider, RunWithToolsOptions } from '../provider.ts'
 import type { Tool } from '../tool.ts'
 import { ToolExecutionError } from '../tool_execution_error.ts'
@@ -213,40 +214,34 @@ export class OpenAIProvider implements Provider {
       const resultBlocks: ContentBlock[] = []
       for (const call of toolCalls) {
         if (call.type !== 'function') continue
-        const tool = toolMap.get(call.function.name)
-        if (!tool) {
-          throw new ToolExecutionError(
-            call.function.name,
-            call.id,
-            new Error(`Tool "${call.function.name}" is not registered.`),
-          )
-        }
         let parsedInput: unknown
+        let parseFailed: { content: string; isError: boolean } | undefined
         try {
           parsedInput = call.function.arguments ? JSON.parse(call.function.arguments) : {}
         } catch (err) {
-          throw new ToolExecutionError(
-            call.function.name,
-            call.id,
-            new Error(`Failed to parse tool input JSON: ${(err as Error).message}`),
+          parseFailed = recoverOrThrow(
+            new ToolExecutionError(
+              call.function.name,
+              call.id,
+              new Error(`Failed to parse tool input JSON: ${(err as Error).message}`),
+            ),
+            options,
           )
         }
-        let output: unknown
-        try {
-          output = await tool.execute(parsedInput, {
-            callId: call.id,
-            context: options.context ?? {},
-            ...(options.signal !== undefined ? { signal: options.signal } : {}),
-          })
-        } catch (cause) {
-          throw new ToolExecutionError(call.function.name, call.id, cause)
-        }
-        const resultBlock: ToolResultBlock = {
+        const { content, isError } = parseFailed
+          ?? (await runToolWithRecovery(
+            toolMap.get(call.function.name),
+            call.function.name,
+            call.id,
+            parsedInput,
+            options,
+          ))
+        resultBlocks.push({
           type: 'tool_result',
           toolUseId: call.id,
-          content: typeof output === 'string' ? output : JSON.stringify(output),
-        }
-        resultBlocks.push(resultBlock)
+          content,
+          ...(isError ? { isError: true } : {}),
+        } satisfies ToolResultBlock)
       }
       workingMessages.push({ role: 'user', content: resultBlocks })
 
@@ -340,38 +335,33 @@ export class OpenAIProvider implements Provider {
       const resultBlocks: ContentBlock[] = []
       for (const call of toolCalls) {
         if (call.type !== 'function') continue
-        const tool = toolMap.get(call.function.name)
-        if (!tool) {
-          throw new ToolExecutionError(
-            call.function.name,
-            call.id,
-            new Error(`Tool "${call.function.name}" is not registered.`),
-          )
-        }
         let parsedInput: unknown
+        let parseFailed: { content: string; isError: boolean } | undefined
         try {
           parsedInput = call.function.arguments ? JSON.parse(call.function.arguments) : {}
         } catch (err) {
-          throw new ToolExecutionError(
-            call.function.name,
-            call.id,
-            new Error(`Failed to parse tool input JSON: ${(err as Error).message}`),
+          parseFailed = recoverOrThrow(
+            new ToolExecutionError(
+              call.function.name,
+              call.id,
+              new Error(`Failed to parse tool input JSON: ${(err as Error).message}`),
+            ),
+            options,
           )
         }
-        let output: unknown
-        try {
-          output = await tool.execute(parsedInput, {
-            callId: call.id,
-            context: options.context ?? {},
-            ...(options.signal !== undefined ? { signal: options.signal } : {}),
-          })
-        } catch (cause) {
-          throw new ToolExecutionError(call.function.name, call.id, cause)
-        }
+        const { content, isError } = parseFailed
+          ?? (await runToolWithRecovery(
+            toolMap.get(call.function.name),
+            call.function.name,
+            call.id,
+            parsedInput,
+            options,
+          ))
         resultBlocks.push({
           type: 'tool_result',
           toolUseId: call.id,
-          content: typeof output === 'string' ? output : JSON.stringify(output),
+          content,
+          ...(isError ? { isError: true } : {}),
         } satisfies ToolResultBlock)
       }
       workingMessages.push({ role: 'user', content: resultBlocks })
@@ -509,48 +499,42 @@ export class OpenAIProvider implements Provider {
       const resultBlocks: ContentBlock[] = []
       for (const call of orderedCalls) {
         if (!call.id || !call.name) continue
-        const tool = toolMap.get(call.name)
-        if (!tool) {
-          throw new ToolExecutionError(
-            call.name,
-            call.id,
-            new Error(`Tool "${call.name}" is not registered.`),
-          )
-        }
         let parsedInput: unknown
+        let parseFailed: { content: string; isError: boolean } | undefined
         try {
           parsedInput = call.args ? JSON.parse(call.args) : {}
         } catch (err) {
-          throw new ToolExecutionError(
-            call.name,
-            call.id,
-            new Error(`Failed to parse tool input JSON: ${(err as Error).message}`),
+          parseFailed = recoverOrThrow(
+            new ToolExecutionError(
+              call.name,
+              call.id,
+              new Error(`Failed to parse tool input JSON: ${(err as Error).message}`),
+            ),
+            options,
           )
+          parsedInput = call.args
         }
         yield { type: 'tool_use', id: call.id, name: call.name, input: parsedInput }
-
-        let output: unknown
-        try {
-          output = await tool.execute(parsedInput, {
-            callId: call.id,
-            context: options.context ?? {},
-            ...(options.signal !== undefined ? { signal: options.signal } : {}),
-          })
-        } catch (cause) {
-          throw new ToolExecutionError(call.name, call.id, cause)
-        }
-        const content = typeof output === 'string' ? output : JSON.stringify(output)
+        const { content, isError } = parseFailed
+          ?? (await runToolWithRecovery(
+            toolMap.get(call.name),
+            call.name,
+            call.id,
+            parsedInput,
+            options,
+          ))
         resultBlocks.push({
           type: 'tool_result',
           toolUseId: call.id,
           content,
+          ...(isError ? { isError: true } : {}),
         } satisfies ToolResultBlock)
         yield {
           type: 'tool_result',
           id: call.id,
           name: call.name,
           content,
-          isError: false,
+          isError,
         }
       }
       workingMessages.push({ role: 'user', content: resultBlocks })
@@ -707,48 +691,42 @@ export class OpenAIProvider implements Provider {
       const resultBlocks: ContentBlock[] = []
       for (const call of orderedCalls) {
         if (!call.id || !call.name) continue
-        const tool = toolMap.get(call.name)
-        if (!tool) {
-          throw new ToolExecutionError(
-            call.name,
-            call.id,
-            new Error(`Tool "${call.name}" is not registered.`),
-          )
-        }
         let parsedInput: unknown
+        let parseFailed: { content: string; isError: boolean } | undefined
         try {
           parsedInput = call.args ? JSON.parse(call.args) : {}
         } catch (err) {
-          throw new ToolExecutionError(
-            call.name,
-            call.id,
-            new Error(`Failed to parse tool input JSON: ${(err as Error).message}`),
+          parseFailed = recoverOrThrow(
+            new ToolExecutionError(
+              call.name,
+              call.id,
+              new Error(`Failed to parse tool input JSON: ${(err as Error).message}`),
+            ),
+            options,
           )
+          parsedInput = call.args
         }
         yield { type: 'tool_use', id: call.id, name: call.name, input: parsedInput }
-
-        let output: unknown
-        try {
-          output = await tool.execute(parsedInput, {
-            callId: call.id,
-            context: options.context ?? {},
-            ...(options.signal !== undefined ? { signal: options.signal } : {}),
-          })
-        } catch (cause) {
-          throw new ToolExecutionError(call.name, call.id, cause)
-        }
-        const content = typeof output === 'string' ? output : JSON.stringify(output)
+        const { content, isError } = parseFailed
+          ?? (await runToolWithRecovery(
+            toolMap.get(call.name),
+            call.name,
+            call.id,
+            parsedInput,
+            options,
+          ))
         resultBlocks.push({
           type: 'tool_result',
           toolUseId: call.id,
           content,
+          ...(isError ? { isError: true } : {}),
         } satisfies ToolResultBlock)
         yield {
           type: 'tool_result',
           id: call.id,
           name: call.name,
           content,
-          isError: false,
+          isError,
         }
       }
       workingMessages.push({ role: 'user', content: resultBlocks })
