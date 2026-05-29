@@ -61,6 +61,7 @@ import type { Provider, RunWithToolsOptions } from '../provider.ts'
 import type { Tool } from '../tool.ts'
 import { ToolExecutionError } from '../tool_execution_error.ts'
 import type {
+  AudioSource,
   ChatOptions,
   ChatResult,
   ChatUsage,
@@ -75,10 +76,13 @@ import type {
   TextBlock,
   ToolResultBlock,
   ToolUseBlock,
+  TranscribeOptions,
+  TranscribeResult,
 } from '../types.ts'
 
 const DEFAULT_OPENAI_MODEL = 'gpt-5'
 const DEFAULT_OPENAI_EMBED_MODEL = 'text-embedding-3-small'
+const DEFAULT_OPENAI_TRANSCRIBE_MODEL = 'whisper-1'
 
 export interface OpenAIProviderOptions {
   client?: OpenAI
@@ -102,6 +106,7 @@ export class OpenAIProvider implements Provider {
   protected readonly defaultModel: string
   protected readonly defaultMaxTokens: number
   protected readonly defaultEmbedModel: string
+  protected readonly defaultTranscribeModel: string
   protected readonly mcpClientFactory?: ResolveMcpToolsOptions['clientFactory']
 
   constructor(
@@ -113,6 +118,7 @@ export class OpenAIProvider implements Provider {
     this.defaultModel = config.defaultModel ?? DEFAULT_OPENAI_MODEL
     this.defaultMaxTokens = config.defaultMaxTokens ?? 4096
     this.defaultEmbedModel = config.defaultEmbedModel ?? DEFAULT_OPENAI_EMBED_MODEL
+    this.defaultTranscribeModel = config.defaultTranscribeModel ?? DEFAULT_OPENAI_TRANSCRIBE_MODEL
     this.mcpClientFactory = options.mcpClientFactory
     this.client =
       options.client ??
@@ -803,6 +809,43 @@ export class OpenAIProvider implements Provider {
     }
   }
 
+  async transcribe(
+    audio: AudioSource,
+    options: TranscribeOptions = {},
+  ): Promise<TranscribeResult<OpenAI.Audio.TranscriptionCreateResponse>> {
+    const model = options.model ?? this.defaultTranscribeModel
+    const file = await audioSourceToFile(audio)
+    const params: OpenAI.Audio.TranscriptionCreateParams = {
+      file,
+      model,
+      ...(options.language !== undefined ? { language: options.language } : {}),
+      ...(options.prompt !== undefined ? { prompt: options.prompt } : {}),
+    }
+    const response = await this.client.audio.transcriptions.create(
+      params,
+      options.signal !== undefined ? { signal: options.signal } : undefined,
+    )
+    // Whisper-1 returns { text, language?, duration? } when
+    // response_format is 'verbose_json'; we default to the SDK
+    // default (`json`) which only surfaces `text`. Apps that
+    // want language / duration from Whisper set
+    // `response_format: 'verbose_json'` via a raw SDK call;
+    // we can extend the option set when an app asks.
+    const text = 'text' in response && typeof response.text === 'string' ? response.text : ''
+    const result: TranscribeResult<OpenAI.Audio.TranscriptionCreateResponse> = {
+      text,
+      model,
+      raw: response,
+    }
+    if ('language' in response && typeof response.language === 'string') {
+      result.language = response.language
+    }
+    if ('duration' in response && typeof response.duration === 'number') {
+      result.duration = response.duration
+    }
+    return result
+  }
+
   async embed(
     texts: readonly string[],
     options: EmbedOptions = {},
@@ -958,6 +1001,43 @@ export class OpenAIProvider implements Provider {
 /** Build the request-options bag forwarded to the SDK. Only `signal` for now. */
 function reqOpts(options: { signal?: AbortSignal }): { signal?: AbortSignal } | undefined {
   return options.signal !== undefined ? { signal: options.signal } : undefined
+}
+
+/**
+ * Materialize an `AudioSource` as a `File` the OpenAI SDK's
+ * `Uploadable` shape accepts. Base64 → in-memory File; URL →
+ * fetch + wrap. The SDK wants a filename; we synthesize one
+ * since `AudioSource` doesn't carry one. The extension lets the
+ * SDK pick the right content-type for the multipart upload.
+ */
+async function audioSourceToFile(audio: AudioSource): Promise<File> {
+  if (audio.type === 'base64') {
+    const bytes = Buffer.from(audio.data, 'base64')
+    const ext = extFromMime(audio.mediaType)
+    return new File([bytes], `audio.${ext}`, { type: audio.mediaType })
+  }
+  const response = await fetch(audio.url)
+  if (!response.ok) {
+    throw new BrainError(
+      `OpenAIProvider.transcribe: failed to fetch audio at ${audio.url}: ${response.status} ${response.statusText}.`,
+      { context: { url: audio.url, status: response.status } },
+    )
+  }
+  const buf = await response.arrayBuffer()
+  const mime = response.headers.get('content-type') ?? 'audio/mpeg'
+  return new File([buf], `audio.${extFromMime(mime)}`, { type: mime })
+}
+
+function extFromMime(mime: string): string {
+  // Strip parameters (`audio/mpeg; codecs=...` → `audio/mpeg`).
+  const m = mime.split(';')[0]?.trim().toLowerCase() ?? ''
+  if (m === 'audio/mp3' || m === 'audio/mpeg' || m === 'audio/mpga') return 'mp3'
+  if (m === 'audio/wav' || m === 'audio/x-wav') return 'wav'
+  if (m === 'audio/ogg') return 'ogg'
+  if (m === 'audio/flac') return 'flac'
+  if (m === 'audio/webm') return 'webm'
+  if (m === 'audio/aac' || m === 'audio/x-aac' || m === 'audio/mp4' || m === 'audio/m4a') return 'm4a'
+  return 'mp3'
 }
 
 /** Throw a DOMException-shaped abort error if the signal has fired. */

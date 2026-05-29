@@ -110,6 +110,7 @@ class BrainManager {
     options?: RunWithToolsOptions,
   ): AsyncIterable<AgentStreamEvent<T>>
   embed(input: string | readonly string[], options?: EmbedOptions): Promise<EmbedResult>
+  transcribe(audio: AudioSource, options?: TranscribeOptions): Promise<TranscribeResult>
 }
 
 interface BrainManagerOptions {
@@ -200,6 +201,7 @@ interface Provider {
     options?: RunWithToolsOptions,
   ): AsyncIterable<AgentStreamEvent<T>>
   embed?(texts: readonly string[], options?: EmbedOptions): Promise<EmbedResult>
+  transcribe?(audio: AudioSource, options?: TranscribeOptions): Promise<TranscribeResult>
 }
 ```
 
@@ -829,6 +831,43 @@ interface EmbedResult<Raw = unknown> {
 ```
 
 See [`guides/embeddings.md`](./guides/embeddings.md) for per-provider defaults, the routing pattern, and what's deferred (image / audio embeddings; Voyage / Cohere providers).
+
+### `BrainManager.transcribe(audio, options?)`
+
+```ts
+brain.transcribe(
+  audio: AudioSource,
+  options?: TranscribeOptions,
+): Promise<TranscribeResult>
+```
+
+Convert a single audio clip to text. Complements `AudioBlock` (which sends audio + a text prompt together to a multimodal chat model) by exposing the dedicated transcription endpoint where the provider has one. Apps that already have an `AudioBlock` pass its `.source` directly.
+
+```ts
+type AudioSource =
+  | { type: 'base64'; mediaType: string; data: string }
+  | { type: 'url'; url: string }
+
+interface TranscribeOptions {
+  model?: string
+  provider?: string
+  language?: string           // BCP-47 hint ('en', 'fr', ...)
+  prompt?: string             // vocabulary / style bias
+  signal?: AbortSignal
+}
+
+interface TranscribeResult<Raw = unknown> {
+  text: string
+  model: string
+  language?: string           // OpenAI surfaces on Whisper
+  duration?: number           // OpenAI surfaces on Whisper
+  raw: Raw
+}
+```
+
+Throws `BrainError` when the chosen provider doesn't implement `transcribe`. V1: OpenAI (Whisper / gpt-4o-transcribe), Ollama (inherits via the OpenAI-compat path — talks to a local Whisper / equivalent endpoint), Gemini (wraps `chat` with an `AudioBlock` + "transcribe verbatim" system prompt). DeepSeek + Anthropic throw — no transcription endpoint.
+
+See [`guides/multimodal.md#transcription`](./guides/multimodal.md#transcription--braintranscribeaudio-options) for the full provider matrix, when to pick `transcribe` vs `AudioBlock`, and the local + private Ollama path.
 
 ### `Agent`
 

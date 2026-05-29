@@ -62,7 +62,13 @@ import type { GeminiProviderConfig } from '../brain_config.ts'
 import type { MCPServer } from '../mcp_server.ts'
 import type { AgentGenerateResult } from '../agent_generate_result.ts'
 import type { AgentStreamEvent } from '../agent_stream_event.ts'
-import type { EmbedOptions, EmbedResult } from '../types.ts'
+import type {
+  AudioSource,
+  EmbedOptions,
+  EmbedResult,
+  TranscribeOptions,
+  TranscribeResult,
+} from '../types.ts'
 import { resolveMcpTools, type ResolveMcpToolsOptions } from '../mcp/resolve_mcp_tools.ts'
 import { parseGenerated, type OutputSchema } from '../output_schema.ts'
 import { runToolWithRecovery } from '../tool_runner.ts'
@@ -196,6 +202,48 @@ export class GeminiProvider implements Provider {
    * need exact embed-token usage call `countTokens` separately
    * before the call.
    */
+  /**
+   * Gemini has no dedicated transcription endpoint, so we wrap a
+   * chat call: an AudioBlock + a system message that tells the
+   * model to transcribe verbatim. Apps that want OpenAI-style
+   * Whisper transcription with `language` / `duration` metadata
+   * route to OpenAI (or local Whisper via Ollama).
+   *
+   * `options.prompt` threads into the system instruction —
+   * useful for style/vocabulary hints. `options.language` is
+   * surfaced to the model in the system prompt (Gemini doesn't
+   * have a dedicated language field).
+   */
+  async transcribe(
+    audio: AudioSource,
+    options: TranscribeOptions = {},
+  ): Promise<TranscribeResult> {
+    const lines = [
+      'Transcribe the attached audio verbatim. Output ONLY the transcribed text — no preamble, no quotes, no commentary.',
+      options.language ? `Audio language: ${options.language}.` : undefined,
+      options.prompt ? `Style / vocabulary hints: ${options.prompt}` : undefined,
+    ].filter((s): s is string => s !== undefined)
+    const system = lines.join(' ')
+    const chatResult = await this.chat(
+      [
+        {
+          role: 'user',
+          content: [{ type: 'audio', source: audio }],
+        },
+      ],
+      {
+        system,
+        ...(options.model !== undefined ? { model: options.model } : {}),
+        ...(options.signal !== undefined ? { signal: options.signal } : {}),
+      },
+    )
+    return {
+      text: chatResult.text,
+      model: chatResult.model,
+      raw: chatResult.raw,
+    }
+  }
+
   async embed(
     texts: readonly string[],
     options: EmbedOptions = {},

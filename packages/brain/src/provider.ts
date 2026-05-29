@@ -20,6 +20,7 @@ import type { OutputSchema } from './output_schema.ts'
 import type { Tool } from './tool.ts'
 import type { ToolExecutionError } from './tool_execution_error.ts'
 import type {
+  AudioSource,
   ChatOptions,
   ChatResult,
   EmbedOptions,
@@ -27,6 +28,8 @@ import type {
   GenerateResult,
   Message,
   StreamEvent,
+  TranscribeOptions,
+  TranscribeResult,
 } from './types.ts'
 
 export interface RunWithToolsOptions extends ChatOptions {
@@ -190,4 +193,19 @@ export interface Provider {
     texts: readonly string[],
     options?: EmbedOptions,
   ): Promise<EmbedResult>
+
+  /**
+   * Audio transcription — convert an audio clip to text.
+   * Complements `AudioBlock` (which sends audio + text together
+   * to a multimodal chat model) by exposing the dedicated
+   * transcription endpoint where the provider has one. V1:
+   * OpenAI (Whisper / gpt-4o-transcribe), Ollama (inherits via
+   * OpenAI-compat), Gemini (chat-wrap fallback — internally
+   * sends an AudioBlock with a "transcribe verbatim" prompt).
+   * Anthropic + DeepSeek throw — no transcription API.
+   */
+  transcribe?(
+    audio: AudioSource,
+    options?: TranscribeOptions,
+  ): Promise<TranscribeResult>
 }

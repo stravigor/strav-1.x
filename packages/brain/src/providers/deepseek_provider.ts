@@ -21,7 +21,14 @@ import type OpenAI from 'openai'
 import { BrainError } from '../brain_error.ts'
 import type { DeepSeekProviderConfig } from '../brain_config.ts'
 import type { ResolveMcpToolsOptions } from '../mcp/resolve_mcp_tools.ts'
-import type { ChatUsage, EmbedOptions, EmbedResult } from '../types.ts'
+import type {
+  AudioSource,
+  ChatUsage,
+  EmbedOptions,
+  EmbedResult,
+  TranscribeOptions,
+  TranscribeResult,
+} from '../types.ts'
 import { OpenAICompatProvider } from './openai_compat_provider.ts'
 
 const DEFAULT_DEEPSEEK_MODEL = 'deepseek-chat'
@@ -55,6 +62,21 @@ export class DeepSeekProvider extends OpenAICompatProvider {
           : {}),
       },
       options,
+    )
+  }
+
+  /**
+   * DeepSeek doesn't expose an audio transcription endpoint.
+   * Override the inherited `transcribe` (from OpenAIProvider) to
+   * throw clearly rather than 404 at the wire.
+   */
+  override async transcribe(
+    _audio: AudioSource,
+    _options?: TranscribeOptions,
+  ): Promise<TranscribeResult<OpenAI.Audio.TranscriptionCreateResponse>> {
+    throw new BrainError(
+      "DeepSeekProvider.transcribe: DeepSeek's API does not expose audio transcription. Route transcribe calls to a provider with native support — OpenAI / Ollama / Gemini.",
+      { context: { provider: this.name } },
     )
   }
 

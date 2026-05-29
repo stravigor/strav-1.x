@@ -76,6 +76,9 @@ export class OllamaProvider extends OpenAICompatProvider {
         ...(config.defaultEmbedModel !== undefined
           ? { defaultEmbedModel: config.defaultEmbedModel }
           : {}),
+        ...(config.defaultTranscribeModel !== undefined
+          ? { defaultTranscribeModel: config.defaultTranscribeModel }
+          : {}),
       },
       options,
     )

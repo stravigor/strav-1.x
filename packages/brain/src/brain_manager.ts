@@ -29,6 +29,7 @@ import { AgentRunner } from './agent_runner.ts'
 import { BrainError } from './brain_error.ts'
 import type { ModelTier } from './types.ts'
 import type {
+  AudioSource,
   ChatOptions,
   ChatResult,
   EmbedOptions,
@@ -36,6 +37,8 @@ import type {
   GenerateResult,
   Message,
   StreamEvent,
+  TranscribeOptions,
+  TranscribeResult,
 } from './types.ts'
 import type { Provider, RunWithToolsOptions } from './provider.ts'
 import type { Tool } from './tool.ts'
@@ -312,6 +315,33 @@ export class BrainManager {
     }
     const texts = typeof input === 'string' ? [input] : input
     return provider.embed(texts, options)
+  }
+
+  /**
+   * Transcribe one audio clip to text. Complements `AudioBlock`
+   * (which sends audio + a text prompt together to a multimodal
+   * chat model) by exposing the dedicated transcription endpoint
+   * where the provider has one. Apps that already have an
+   * `AudioBlock` can pass its `source` directly.
+   *
+   * Throws `BrainError` when the configured (or
+   * `options.provider`-overridden) provider doesn't implement
+   * `transcribe`. V1: OpenAI / Ollama (Whisper / gpt-4o-transcribe
+   * / local) and Gemini (chat-wrap fallback); Anthropic +
+   * DeepSeek throw.
+   */
+  async transcribe(
+    audio: AudioSource,
+    options: TranscribeOptions = {},
+  ): Promise<TranscribeResult> {
+    const provider = this.provider(options.provider)
+    if (!provider.transcribe) {
+      throw new BrainError(
+        `BrainManager.transcribe: provider "${provider.name}" does not implement transcribe. Route to a provider with audio support (V1: OpenAI / Ollama / Gemini).`,
+        { context: { provider: provider.name } },
+      )
+    }
+    return provider.transcribe(audio, options)
   }
 
   /**

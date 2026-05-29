@@ -306,6 +306,60 @@ export interface EmbedOptions {
 }
 
 /**
+ * Per-call options for `brain.transcribe(...)`.
+ */
+export interface TranscribeOptions {
+  /** Override the configured default transcription model. */
+  model?: string
+  /**
+   * Override the default provider. Must name a provider that
+   * implements `transcribe` (V1: OpenAI / Gemini / Ollama;
+   * Anthropic + DeepSeek throw).
+   */
+  provider?: string
+  /**
+   * Optional BCP-47 language hint (`en`, `fr`, `ja`). Improves
+   * accuracy when known; models without hint support ignore.
+   */
+  language?: string
+  /**
+   * Optional bias prompt to steer vocabulary / style / formatting.
+   * OpenAI calls this `prompt`; Gemini-via-chat threads it into
+   * the system message; others ignore.
+   */
+  prompt?: string
+  /** Cancellation signal — same shape as `ChatOptions.signal`. */
+  signal?: AbortSignal
+}
+
+/**
+ * Audio source — same discriminated union as
+ * `AudioBlock.source`, named separately for `transcribe(...)`
+ * which takes it directly (no wrapping `AudioBlock` shell).
+ */
+export type AudioSource =
+  | { type: 'base64'; mediaType: string; data: string }
+  | { type: 'url'; url: string }
+
+/**
+ * Result of one `transcribe` call. `text` is the transcribed
+ * audio; `language` / `duration` are surfaced when the provider
+ * returns them (OpenAI does on the `verbose_json` response
+ * format; Gemini's chat-wrap path doesn't). `raw` is the
+ * provider's full native response for fields the framework
+ * doesn't surface.
+ */
+export interface TranscribeResult<Raw = unknown> {
+  text: string
+  model: string
+  /** BCP-47 detected (or echoed) language. Optional. */
+  language?: string
+  /** Audio duration in seconds. Optional. */
+  duration?: number
+  raw: Raw
+}
+
+/**
  * Result of one `embed` call. `embeddings[i]` is the vector for
  * the i-th input text. `model` is the model the provider used
  * (echoed back for logging). `usage.inputTokens` is the total

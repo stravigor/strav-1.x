@@ -235,6 +235,70 @@ Supported audio MIMEs on Gemini: `audio/mp3`, `audio/wav`, `audio/ogg`, `audio/f
 | **Anthropic** | throws `BrainError` — SDK doesn't expose an audio block. |
 | **OpenAI / DeepSeek / Ollama** | throws `BrainError` — preprocess via Whisper / model-specific transcription and send text. |
 
+## Transcription — `brain.transcribe(audio, options?)`
+
+`AudioBlock` is one shape — "send audio + a prompt together to a multimodal chat model." When all you want is text out of audio in, there's a more direct primitive: `brain.transcribe`. Same audio source shape, dedicated transcription endpoint per provider.
+
+```ts
+const audio = readFileSync('./meeting.mp3').toString('base64')
+
+const { text, language, duration } = await brain.transcribe(
+  { type: 'base64', mediaType: 'audio/mp3', data: audio },
+  { language: 'en' },   // optional hint
+)
+```
+
+Apps that already built an `AudioBlock` for a chat call can pass its `source` directly:
+
+```ts
+const block: AudioBlock = { type: 'audio', source: { type: 'url', url: 'https://example.com/voice.wav' } }
+const { text } = await brain.transcribe(block.source)
+```
+
+### Provider coverage
+
+| Provider | How | Defaults |
+|---|---|---|
+| **OpenAI** | `client.audio.transcriptions.create` — Whisper-1, gpt-4o-transcribe, gpt-4o-mini-transcribe. | `whisper-1`. Surfaces `language` + `duration` when the model returns them. |
+| **Ollama** | Inherits OpenAI via the compat path — talks to a local Whisper / equivalent transcription endpoint. | `defaultTranscribeModel` is required in config (no universal default for user-installed models; `whisper` is the common pick if your Ollama build includes it). |
+| **Gemini** | No dedicated transcription endpoint. The provider wraps a `chat` call internally: sends an `AudioBlock` + a system prompt that tells the model to transcribe verbatim. | Uses the configured `defaultModel` for chat (typically `gemini-2.5-flash`). |
+| **DeepSeek** | Throws `BrainError`. | — |
+| **Anthropic** | Throws (no transcription API). | — |
+
+### `TranscribeOptions`
+
+```ts
+interface TranscribeOptions {
+  model?: string              // override defaultTranscribeModel
+  provider?: string           // override the default provider
+  language?: string           // BCP-47 hint ('en', 'fr', 'ja', ...)
+  prompt?: string             // vocabulary / style bias
+  signal?: AbortSignal
+}
+```
+
+### `TranscribeResult`
+
+```ts
+interface TranscribeResult<Raw = unknown> {
+  text: string
+  model: string
+  language?: string           // OpenAI surfaces this on Whisper
+  duration?: number           // OpenAI surfaces this on Whisper
+  raw: Raw
+}
+```
+
+### When to use `transcribe` vs `AudioBlock`
+
+| Use case | Pick |
+|---|---|
+| Just want text out, single-step | `brain.transcribe` |
+| Need text + reasoning about the audio in one round-trip | `brain.chat` with `AudioBlock` on Gemini |
+| Local + private (Ollama + Whisper) | `brain.transcribe` |
+| Whisper-style language detection / timestamps | `brain.transcribe` on OpenAI (read `raw` for more detail) |
+| Multimodal agent: "transcribe this then call a tool" | `runTools` with `AudioBlock` on Gemini |
+
 ## Local + private
 
 Ollama vision + base64 + the local MCP client gives a fully on-device path — image goes from disk → base64 → local Ollama model, no cloud involved:

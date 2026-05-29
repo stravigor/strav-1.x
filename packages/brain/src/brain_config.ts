@@ -49,6 +49,8 @@ export interface OpenAIProviderConfig {
   defaultMaxTokens?: number
   /** Default embedding model for `brain.embed(...)`. Defaults to `text-embedding-3-small`. */
   defaultEmbedModel?: string
+  /** Default audio-transcription model for `brain.transcribe(...)`. Defaults to `whisper-1`. */
+  defaultTranscribeModel?: string
 }
 
 /** Google (Gemini) driver config — backed by `@google/genai`. */
@@ -114,6 +116,14 @@ export interface OllamaProviderConfig {
    * Calls that omit `options.model` without this set throw.
    */
   defaultEmbedModel?: string
+  /**
+   * Default audio-transcription model for `brain.transcribe(...)`.
+   * No universal default — Ollama versions vary on whether they
+   * expose a Whisper-style endpoint, and apps pull whatever
+   * model their build supports (e.g. `whisper`). Calls that omit
+   * `options.model` without this set throw.
+   */
+  defaultTranscribeModel?: string
 }
 
 export type ProviderConfig =

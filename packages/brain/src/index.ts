@@ -50,6 +50,7 @@ export type {
   ChatUsage,
   ContentBlock,
   AudioBlock,
+  AudioSource,
   DocumentBlock,
   EmbedOptions,
   EmbedResult,
@@ -64,4 +65,6 @@ export type {
   TextBlock,
   ToolResultBlock,
   ToolUseBlock,
+  TranscribeOptions,
+  TranscribeResult,
 } from './types.ts'
