@@ -19,7 +19,7 @@
 
 import { randomBytes } from 'node:crypto'
 import type { Database } from '@strav/database'
-import { StravError } from '@strav/kernel'
+import { StravError, ulid } from '@strav/kernel'
 
 export class MagicLinkError extends StravError {
   constructor(message: string, options: { context?: Record<string, unknown> } = {}) {
@@ -89,8 +89,8 @@ export class MagicLinkManager {
 
     await this.db.execute(
       `INSERT INTO "strav_magic_links" (id, user_id, token, redirect_to, expires_at, created_at, updated_at)
-       VALUES (gen_random_uuid(), $1, $2, $3, $4, now(), now())`,
-      [userId, token, redirectTo, expiresAt],
+       VALUES ($1, $2, $3, $4, $5, now(), now())`,
+      [ulid(), userId, token, redirectTo, expiresAt],
     )
 
     const path = options.path ?? this.path

@@ -28,9 +28,8 @@ class FakeMagicDb {
   async execute(sql: string, params: readonly unknown[] = []): Promise<number> {
     this.executeCalls.push({ sql, params: [...params] })
     if (/INSERT INTO "strav_magic_links"/i.test(sql)) {
-      const [userId, token, redirectTo, expiresAt] = params
-      const id = crypto.randomUUID()
-      this.rows.set(id, {
+      const [id, userId, token, redirectTo, expiresAt] = params
+      this.rows.set(id as string, {
         id,
         user_id: userId,
         token,
