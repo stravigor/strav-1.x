@@ -22,6 +22,8 @@ import type { ToolExecutionError } from './tool_execution_error.ts'
 import type {
   ChatOptions,
   ChatResult,
+  EmbedOptions,
+  EmbedResult,
   GenerateResult,
   Message,
   StreamEvent,
@@ -177,4 +179,15 @@ export interface Provider {
     tools: readonly Tool[],
     options?: RunWithToolsOptions,
   ): AsyncIterable<AgentStreamEvent>
+
+  /**
+   * Embeddings — turn one or more text inputs into vectors for
+   * similarity search / RAG / clustering. Optional because not
+   * every provider exposes an embeddings endpoint (V1: Anthropic
+   * and DeepSeek don't; OpenAI, Gemini, Ollama do).
+   */
+  embed?(
+    texts: readonly string[],
+    options?: EmbedOptions,
+  ): Promise<EmbedResult>
 }

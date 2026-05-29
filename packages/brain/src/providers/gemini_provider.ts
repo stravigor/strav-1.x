@@ -62,6 +62,7 @@ import type { GeminiProviderConfig } from '../brain_config.ts'
 import type { MCPServer } from '../mcp_server.ts'
 import type { AgentGenerateResult } from '../agent_generate_result.ts'
 import type { AgentStreamEvent } from '../agent_stream_event.ts'
+import type { EmbedOptions, EmbedResult } from '../types.ts'
 import { resolveMcpTools, type ResolveMcpToolsOptions } from '../mcp/resolve_mcp_tools.ts'
 import { parseGenerated, type OutputSchema } from '../output_schema.ts'
 import { runToolWithRecovery } from '../tool_runner.ts'
@@ -82,6 +83,7 @@ import type {
 } from '../types.ts'
 
 const DEFAULT_GEMINI_MODEL = 'gemini-2.5-flash'
+const DEFAULT_GEMINI_EMBED_MODEL = 'text-embedding-004'
 
 /**
  * The slice of `GoogleGenAI` the provider exercises. Narrowed so
@@ -93,6 +95,17 @@ export interface GeminiModelsClient {
     params: GenerateContentParameters,
   ): Promise<AsyncIterable<GenerateContentResponse>>
   countTokens(params: { model: string; contents: Content[] }): Promise<{ totalTokens?: number }>
+  /**
+   * Optional on the test seam — the real SDK always provides it,
+   * but tests that don't exercise embed don't need to stub it.
+   * `embed()` calls this directly; missing it throws a clear
+   * TypeError if invoked.
+   */
+  embedContent?(params: {
+    model: string
+    contents: string[]
+    config?: { outputDimensionality?: number; abortSignal?: AbortSignal }
+  }): Promise<{ embeddings?: Array<{ values?: number[] }> }>
 }
 
 export interface GeminiProviderOptions {
@@ -106,12 +119,14 @@ export class GeminiProvider implements Provider {
   private readonly models: GeminiModelsClient
   private readonly defaultModel: string
   private readonly defaultMaxTokens: number
+  private readonly defaultEmbedModel: string
   private readonly mcpClientFactory?: ResolveMcpToolsOptions['clientFactory']
 
   constructor(name: string, config: GeminiProviderConfig, options: GeminiProviderOptions = {}) {
     this.name = name
     this.defaultModel = config.defaultModel ?? DEFAULT_GEMINI_MODEL
     this.defaultMaxTokens = config.defaultMaxTokens ?? 4096
+    this.defaultEmbedModel = config.defaultEmbedModel ?? DEFAULT_GEMINI_EMBED_MODEL
     this.mcpClientFactory = options.mcpClientFactory
     if (options.client) {
       this.models = options.client.models
@@ -169,6 +184,44 @@ export class GeminiProvider implements Provider {
     const model = options.model ?? this.defaultModel
     const response = await this.models.countTokens({ model, contents })
     return response.totalTokens ?? 0
+  }
+
+  /**
+   * Gemini embeddings via `ai.models.embedContent`. Returns one
+   * vector per input text. `usage.inputTokens` is `0` — Gemini's
+   * embed endpoint doesn't surface token counts in the response
+   * for the Gemini Developer API tier (Vertex's request-level
+   * metadata exposes billable characters, but that's a different
+   * accounting unit and not the framework's contract). Apps that
+   * need exact embed-token usage call `countTokens` separately
+   * before the call.
+   */
+  async embed(
+    texts: readonly string[],
+    options: EmbedOptions = {},
+  ): Promise<EmbedResult<{ embeddings?: Array<{ values?: number[] }> }>> {
+    const model = options.model ?? this.defaultEmbedModel
+    const config: { outputDimensionality?: number; abortSignal?: AbortSignal } = {}
+    if (options.dimensions !== undefined) config.outputDimensionality = options.dimensions
+    if (options.signal !== undefined) config.abortSignal = options.signal
+    if (!this.models.embedContent) {
+      throw new BrainError(
+        `GeminiProvider.embed: underlying SDK does not implement embedContent. This usually means a test stub omitted it.`,
+        { context: { provider: this.name } },
+      )
+    }
+    const response = await this.models.embedContent({
+      model,
+      contents: texts as string[],
+      ...(Object.keys(config).length > 0 ? { config } : {}),
+    })
+    const embeddings = (response.embeddings ?? []).map((e) => e.values ?? [])
+    return {
+      embeddings,
+      model,
+      usage: { inputTokens: 0 },
+      raw: response,
+    }
   }
 
   async runWithTools(

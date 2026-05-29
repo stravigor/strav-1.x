@@ -18,9 +18,10 @@
  */
 
 import type OpenAI from 'openai'
+import { BrainError } from '../brain_error.ts'
 import type { DeepSeekProviderConfig } from '../brain_config.ts'
 import type { ResolveMcpToolsOptions } from '../mcp/resolve_mcp_tools.ts'
-import type { ChatUsage } from '../types.ts'
+import type { ChatUsage, EmbedOptions, EmbedResult } from '../types.ts'
 import { OpenAICompatProvider } from './openai_compat_provider.ts'
 
 const DEFAULT_DEEPSEEK_MODEL = 'deepseek-chat'
@@ -54,6 +55,22 @@ export class DeepSeekProvider extends OpenAICompatProvider {
           : {}),
       },
       options,
+    )
+  }
+
+  /**
+   * DeepSeek doesn't expose an embeddings endpoint via their
+   * OpenAI-compat API. Override the inherited `embed` to throw
+   * with a clear message instead of letting the SDK return a
+   * confusing 404.
+   */
+  override async embed(
+    _texts: readonly string[],
+    _options?: EmbedOptions,
+  ): Promise<EmbedResult<OpenAI.CreateEmbeddingResponse>> {
+    throw new BrainError(
+      `DeepSeekProvider.embed: DeepSeek's API does not expose embeddings. Route embed calls to a provider with native support — OpenAI / Gemini / Ollama.`,
+      { context: { provider: this.name } },
     )
   }
 

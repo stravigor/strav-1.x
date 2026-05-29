@@ -210,6 +210,45 @@ export type StreamEvent =
   | { type: 'stop'; stopReason: string | null; usage: ChatUsage }
 
 /**
+ * Per-call options for `brain.embed(...)`. Only the embed-relevant
+ * subset of `ChatOptions` — chat-specific knobs (system prompt,
+ * thinking, cache, tools) don't apply.
+ */
+export interface EmbedOptions {
+  /** Override the configured default embedding model. */
+  model?: string
+  /**
+   * Override the default provider. Must name a provider that
+   * implements `embed` (V1: OpenAI, Gemini, Ollama; Anthropic +
+   * DeepSeek throw with a clear "route to a different provider"
+   * message).
+   */
+  provider?: string
+  /**
+   * Optional dimensionality hint. OpenAI passes through as
+   * `dimensions`; Gemini as `outputDimensionality`. Providers
+   * that ignore it silently drop the field.
+   */
+  dimensions?: number
+  /** Cancellation signal — same shape as `ChatOptions.signal`. */
+  signal?: AbortSignal
+}
+
+/**
+ * Result of one `embed` call. `embeddings[i]` is the vector for
+ * the i-th input text. `model` is the model the provider used
+ * (echoed back for logging). `usage.inputTokens` is the total
+ * tokens consumed across all inputs.
+ */
+export interface EmbedResult<Raw = unknown> {
+  embeddings: number[][]
+  model: string
+  usage: { inputTokens: number }
+  /** Provider's full native response — escape hatch for fields the framework doesn't surface. */
+  raw: Raw
+}
+
+/**
  * Result of a structured-output call. `value` is the parsed JSON
  * shaped to the `OutputSchema<T>` passed in. `text` is the raw JSON
  * string the model produced (useful for logging / debugging when

@@ -47,6 +47,8 @@ export interface OpenAIProviderConfig {
   defaultModel?: string
   /** Default `max_tokens` for `chat()` calls that don't specify one. */
   defaultMaxTokens?: number
+  /** Default embedding model for `brain.embed(...)`. Defaults to `text-embedding-3-small`. */
+  defaultEmbedModel?: string
 }
 
 /** Google (Gemini) driver config — backed by `@google/genai`. */
@@ -62,6 +64,8 @@ export interface GeminiProviderConfig {
   defaultMaxTokens?: number
   /** Optional API version pin (`v1` / `v1beta`). */
   apiVersion?: string
+  /** Default embedding model for `brain.embed(...)`. Defaults to `text-embedding-004`. */
+  defaultEmbedModel?: string
 }
 
 /** DeepSeek driver config — backed by the `openai` SDK pointed at DeepSeek's OpenAI-compatible endpoint. */
@@ -103,6 +107,13 @@ export interface OllamaProviderConfig {
   apiKey?: string
   /** Default `max_tokens` for `chat()` calls that don't specify one. */
   defaultMaxTokens?: number
+  /**
+   * Default embedding model for `brain.embed(...)`. No universal
+   * default — apps pull an embedding-tuned model (e.g.
+   * `nomic-embed-text`, `mxbai-embed-large`) and reference it here.
+   * Calls that omit `options.model` without this set throw.
+   */
+  defaultEmbedModel?: string
 }
 
 export type ProviderConfig =

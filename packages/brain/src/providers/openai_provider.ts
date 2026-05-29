@@ -65,6 +65,8 @@ import type {
   ChatResult,
   ChatUsage,
   ContentBlock,
+  EmbedOptions,
+  EmbedResult,
   GenerateResult,
   Message,
   StreamEvent,
@@ -75,6 +77,7 @@ import type {
 } from '../types.ts'
 
 const DEFAULT_OPENAI_MODEL = 'gpt-5'
+const DEFAULT_OPENAI_EMBED_MODEL = 'text-embedding-3-small'
 
 export interface OpenAIProviderOptions {
   client?: OpenAI
@@ -97,6 +100,7 @@ export class OpenAIProvider implements Provider {
   protected readonly client: OpenAI
   protected readonly defaultModel: string
   protected readonly defaultMaxTokens: number
+  protected readonly defaultEmbedModel: string
   protected readonly mcpClientFactory?: ResolveMcpToolsOptions['clientFactory']
 
   constructor(
@@ -107,6 +111,7 @@ export class OpenAIProvider implements Provider {
     this.name = name
     this.defaultModel = config.defaultModel ?? DEFAULT_OPENAI_MODEL
     this.defaultMaxTokens = config.defaultMaxTokens ?? 4096
+    this.defaultEmbedModel = config.defaultEmbedModel ?? DEFAULT_OPENAI_EMBED_MODEL
     this.mcpClientFactory = options.mcpClientFactory
     this.client =
       options.client ??
@@ -794,6 +799,28 @@ export class OpenAIProvider implements Provider {
         } as AgentStreamEvent<T>
         return
       }
+    }
+  }
+
+  async embed(
+    texts: readonly string[],
+    options: EmbedOptions = {},
+  ): Promise<EmbedResult<OpenAI.CreateEmbeddingResponse>> {
+    const model = options.model ?? this.defaultEmbedModel
+    const params: OpenAI.EmbeddingCreateParams = {
+      model,
+      input: texts as string[],
+      ...(options.dimensions !== undefined ? { dimensions: options.dimensions } : {}),
+    }
+    const response = await this.client.embeddings.create(
+      params,
+      options.signal !== undefined ? { signal: options.signal } : undefined,
+    )
+    return {
+      embeddings: response.data.map((d) => d.embedding),
+      model: response.model,
+      usage: { inputTokens: response.usage?.prompt_tokens ?? 0 },
+      raw: response,
     }
   }
 

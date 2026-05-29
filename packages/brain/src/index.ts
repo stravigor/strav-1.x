@@ -49,6 +49,8 @@ export type {
   ChatResult,
   ChatUsage,
   ContentBlock,
+  EmbedOptions,
+  EmbedResult,
   GenerateResult,
   MCPToolResultBlock,
   MCPToolUseBlock,

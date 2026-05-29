@@ -73,6 +73,9 @@ export class OllamaProvider extends OpenAICompatProvider {
         ...(config.defaultMaxTokens !== undefined
           ? { defaultMaxTokens: config.defaultMaxTokens }
           : {}),
+        ...(config.defaultEmbedModel !== undefined
+          ? { defaultEmbedModel: config.defaultEmbedModel }
+          : {}),
       },
       options,
     )

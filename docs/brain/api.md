@@ -106,6 +106,7 @@ class BrainManager {
     tools: readonly Tool[],
     options?: RunWithToolsOptions,
   ): AsyncIterable<AgentStreamEvent<T>>
+  embed(input: string | readonly string[], options?: EmbedOptions): Promise<EmbedResult>
 }
 
 interface BrainManagerOptions {
@@ -195,6 +196,7 @@ interface Provider {
     schema: OutputSchema<T>,
     options?: RunWithToolsOptions,
   ): AsyncIterable<AgentStreamEvent<T>>
+  embed?(texts: readonly string[], options?: EmbedOptions): Promise<EmbedResult>
 }
 ```
 
@@ -763,6 +765,35 @@ brain.streamGenerateWithTools<T>(
 ```
 
 Streaming twin of `generateWithTools`. Yields the standard `AgentStreamEvent<T>` vocabulary; the terminal `stop` event narrows to include `value: T` + `text: string` — the parsed JSON shaped to the schema and the raw JSON the model emitted on its terminal turn. Throws `BrainError` when the provider lacks `streamWithToolsAndSchema` (V1: all three providers implement it).
+
+### `BrainManager.embed(input, options?)`
+
+```ts
+brain.embed(
+  input: string | readonly string[],
+  options?: EmbedOptions,
+): Promise<EmbedResult>
+```
+
+Turn one or more text inputs into embedding vectors. A single string is normalized to a one-element array on the wire (returning a one-vector result); apps that want batch pass an array directly. Throws `BrainError` when the configured (or `options.provider`-overridden) provider doesn't implement `embed` (V1: Anthropic + DeepSeek throw; OpenAI / Gemini / Ollama supported).
+
+```ts
+interface EmbedOptions {
+  model?: string                  // override the configured default
+  provider?: string               // override the default provider
+  dimensions?: number             // OpenAI: dimensions; Gemini: outputDimensionality
+  signal?: AbortSignal
+}
+
+interface EmbedResult<Raw = unknown> {
+  embeddings: number[][]          // one vector per input, in order
+  model: string
+  usage: { inputTokens: number }  // 0 on Gemini (no token count in response)
+  raw: Raw
+}
+```
+
+See [`guides/embeddings.md`](./guides/embeddings.md) for per-provider defaults, the routing pattern, and what's deferred (image / audio embeddings; Voyage / Cohere providers).
 
 ### `Agent`
 

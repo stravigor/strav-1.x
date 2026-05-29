@@ -31,6 +31,8 @@ import type { ModelTier } from './types.ts'
 import type {
   ChatOptions,
   ChatResult,
+  EmbedOptions,
+  EmbedResult,
   GenerateResult,
   Message,
   StreamEvent,
@@ -284,6 +286,32 @@ export class BrainManager {
     const messages = normalizeInput(input)
     const resolved = this.applyDefaults(options)
     return provider.generate<T>(messages, schema, resolved)
+  }
+
+  /**
+   * Turn one or more text inputs into embedding vectors. Accepts
+   * either a single string (returns one vector) or an array
+   * (batch — returns one vector per input in the same order).
+   *
+   * Throws `BrainError` when the configured (or
+   * `options.provider`-overridden) provider doesn't implement
+   * `embed`. V1: OpenAI, Gemini, Ollama support it; Anthropic +
+   * DeepSeek throw with a clear "route to a different provider"
+   * message.
+   */
+  async embed(
+    input: string | readonly string[],
+    options: EmbedOptions = {},
+  ): Promise<EmbedResult> {
+    const provider = this.provider(options.provider)
+    if (!provider.embed) {
+      throw new BrainError(
+        `BrainManager.embed: provider "${provider.name}" does not implement embed. Route to a provider with an embeddings API (V1: OpenAI / Gemini / Ollama).`,
+        { context: { provider: provider.name } },
+      )
+    }
+    const texts = typeof input === 'string' ? [input] : input
+    return provider.embed(texts, options)
   }
 
   /**
