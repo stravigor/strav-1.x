@@ -1,0 +1,33 @@
+{
+  "name": "@strav/social",
+  "version": "1.0.0-alpha.21",
+  "description": "Strav social-login module — provider-agnostic OAuth/OIDC client. Normalized profile + token DTOs, state + PKCE helpers, capability gating, multi-provider routing. Line / Google / Facebook adapters ship as subpath imports (`@strav/social/line`, `@strav/social/google`, `@strav/social/facebook`).",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./line": "./src/line/index.ts",
+    "./google": "./src/google/index.ts",
+    "./facebook": "./src/facebook/index.ts",
+    "./tenanted": "./src/tenanted/index.ts"
+  },
+  "files": [
+    "src",
+    "README.md"
+  ],
+  "engines": {
+    "bun": ">=1.3.14"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "@strav/database": "workspace:*",
+    "@strav/http": "workspace:*",
+    "@strav/kernel": "workspace:*"
+  },
+  "peerDependencies": {
+    "@types/bun": ">=1.3.14"
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "name": "@strav-tests/m7-social",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "M7 end-to-end smoke for @strav/social — boots Application + DatabaseProvider + EncryptionProvider + SocialProvider, runs applySocialAccountMigration against real Postgres, drives the full Line authorize → exchange → profile → SocialAccountRepository.connect → findByProviderIdentity loop with a stubbed Line OAuth backend. Encrypted token round-trip + cross-user link guard verified end-to-end. Self-skips when no Postgres is available.",
+  "dependencies": {
+    "@strav/database": "workspace:*",
+    "@strav/kernel": "workspace:*",
+    "@strav/social": "workspace:*"
+  }
+}
