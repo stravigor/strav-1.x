@@ -1,0 +1,14 @@
+{
+  "name": "@strav-tests/m6-payment",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "M6 end-to-end smoke — boots Application + DatabaseProvider + HttpProvider + PaymentProvider + StripePaymentProvider + OmisePaymentProvider against real Postgres, runs applyPaymentLedgerMigration, fires signed webhook payloads through a live Bun HTTP server, and asserts dedup + handler dispatch + capability gating. Vendor SDK calls are stubbed (no network).",
+  "dependencies": {
+    "@strav/database": "workspace:*",
+    "@strav/http": "workspace:*",
+    "@strav/kernel": "workspace:*",
+    "@strav/payment": "workspace:*",
+    "stripe": "^18.0.0"
+  }
+}

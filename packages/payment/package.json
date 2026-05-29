@@ -1,0 +1,33 @@
+{
+  "name": "@strav/payment",
+  "version": "1.0.0-alpha.20",
+  "description": "Strav payment module — provider-agnostic payment abstraction. Normalized DTOs, multi-provider routing, ledger schema, webhook dispatcher. Stripe and Omise drivers ship as subpath imports (`@strav/payment/stripe`, `@strav/payment/omise`). Paddle support comes in a later release.",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./stripe": "./src/stripe/index.ts",
+    "./omise": "./src/omise/index.ts"
+  },
+  "files": [
+    "src",
+    "README.md"
+  ],
+  "engines": {
+    "bun": ">=1.3.14"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "@strav/database": "workspace:*",
+    "@strav/http": "workspace:*",
+    "@strav/kernel": "workspace:*",
+    "stripe": "^18.0.0",
+    "omise": "^0.12.0"
+  },
+  "peerDependencies": {
+    "@types/bun": ">=1.3.14"
+  }
+}
