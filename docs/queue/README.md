@@ -2,7 +2,7 @@
 
 Background-job primitives for Strav 1.0 — the `Job` base class + `JobRegistry` + `Queue` contract + two drivers (`SyncQueue` in-process + `DatabaseQueue` Postgres-backed with queue-until-commit semantics) + `Worker` (SELECT FOR UPDATE SKIP LOCKED poll loop, backoff, abort-aware shutdown) + `Scheduler` (cron + `onOneServer` advisory lock).
 
-> **Status: 1.0.0-alpha.4 — queue package functionally complete.** Shipping: contract layer + `SyncQueue` + `DatabaseQueue` (queue-until-commit) + `jobSchema` + `Worker` (SKIP LOCKED + backoff + atomic-move-to-failed) + `Scheduler` (cron + `onOneServer`) + `schedulerRunsSchema` + `failedJobsSchema`. Console commands now ship via `@strav/cli`'s `QueueConsoleProvider`.
+> **Status: 1.0.0-alpha.5 — queue package functionally complete.** Shipping: contract layer + `SyncQueue` + `DatabaseQueue` (queue-until-commit) + `jobSchema` + `Worker` (SKIP LOCKED + backoff + atomic-move-to-failed) + `Scheduler` (cron + `onOneServer`) + `schedulerRunsSchema` + `failedJobsSchema`. Console commands now ship via `@strav/cli`'s `QueueConsoleProvider`.
 
 ## Install
 

@@ -2,7 +2,7 @@
 
 The `.strav` template engine for Strav 1.0. The full frozen directive set is implemented: `@if` / `@for` / `@each` / `@extends` / `@section` / `@yield` / `@include` / `@push` / `@stack` / `@csrf` / `@method` / `@route` / `@asset` / `@raw` / `@escape` / `@component` — plus `@island` for Vue 3 hydration islands. A programmatic Vue SFC bundler (`buildIslands`) compiles each island into a self-mounting browser bundle.
 
-> **Status: 1.0.0-alpha.4 — engine + islands + pages auto-router + console commands shipped.** `resources/views/pages/**/*.strav` files are automatically registered as GET routes by `ViewProvider.boot()`. See `docs/view/guides/pages.md`.
+> **Status: 1.0.0-alpha.5 — engine + islands + pages auto-router + console commands shipped.** `resources/views/pages/**/*.strav` files are automatically registered as GET routes by `ViewProvider.boot()`. See `docs/view/guides/pages.md`.
 
 ## Install
 
