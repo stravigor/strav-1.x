@@ -1,6 +1,6 @@
 {
   "name": "@strav/kernel",
-  "version": "1.0.0-alpha.6",
+  "version": "1.0.0-alpha.7",
   "description": "Strav kernel — IoC container, service providers, lifecycle, config, events, helpers",
   "type": "module",
   "main": "./src/index.ts",
@@ -37,5 +37,6 @@
   },
   "peerDependencies": {
     "@types/bun": ">=1.3.14"
-  }
+  },
+  "devDependencies": null
 }

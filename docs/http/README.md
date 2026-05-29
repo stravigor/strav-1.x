@@ -2,7 +2,7 @@
 
 Routing, request/response handling, and the HTTP kernel for Strav 1.0.
 
-> **Status: 1.0.0-alpha.6 — M2 shipped.**
+> **Status: 1.0.0-alpha.7 — M2 shipped.**
 > Shipping: **Router** (trie, params, optional params, wildcards, groups, named routes, tuple-arity-3 FormRequest sugar), **HttpContext** (server / request / response namespaces + typed `state` with kernel-bound `requestId`), **HttpRequest** (cached body parsing, query, cookies, content negotiation), **HttpResponse** (factories + pending header/cookie mutations), **middleware composition** (onion, short-circuit, terminating), **MiddlewareRegistry** (name → def, parameterized `name:args` factories, `replace` for built-in override), **HttpKernel** (`handle()` / `serve()`; baked-in request-id + correlated child logger), **ExceptionHandler** (default JSON + HTML, `StravError` mapping), **HttpProvider** (container wiring + boot-time precompile + built-in registration), **built-in middleware** (`security_headers`, `cors`, `request_log`), **FormRequest** (Zod-backed `rule.*` API, lifecycle, registered custom rules, spec-shaped validation error responses).
 > Deferred for now: subdomain matching, sessions, Pages auto-router, WS/SSE, opt-in middleware (`auth`, `throttle`, `csrf`, etc.), type-detected `(req, ctx)` action signature.
 

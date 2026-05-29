@@ -2,7 +2,7 @@
 
 Workflow orchestration for Strav 1.0 — **sequential / parallel / route / loop** steps with **saga-style compensation**. Pure functions on `@strav/kernel`; no DB, no HTTP, no provider.
 
-> **Status: 1.0.0-alpha.6 — M5 slice 1 (workflow foundation).**
+> **Status: 1.0.0-alpha.7 — M5 slice 1 (workflow foundation).**
 > Shipping: **`Workflow`** typed builder (progressive `Results` widening per step), **`defineWorkflow(name)`** convenience factory, **sequential `.step()`** + per-step compensation, **`.parallel()`** fan-out with per-entry compensation, **`.route()`** conditional dispatch, **`.loop()`** bounded iteration with `until` / `feedback` / `mapInput`, **`Workflow.run(input)`** typed result + `duration`, **`Workflow.plan()`** for introspection, **`WorkflowError`** (`workflow.step-failed`) + **`CompensationError`** (`workflow.compensation-failed`) typed `StravError`s.
 > Deferred: **`route` / `loop` compensation** (put cleanup in a regular `step()` for now), **partial-results on failure** (results object today is dropped on throw — the typed payload only ships on success), **AbortSignal threading** (long workflows can't cancel mid-step). **Durable / crash-resumable execution** lands with `@strav/durable` in slice 5.5.
 
