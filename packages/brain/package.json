@@ -1,7 +1,7 @@
 {
   "name": "@strav/brain",
   "version": "1.0.0-alpha.10",
-  "description": "Strav AI module — unified Provider interface, BrainManager, threads, prompt caching. Anthropic provider in V1; OpenAI / Gemini / DeepSeek follow.",
+  "description": "Strav AI module — unified Provider interface, BrainManager, threads, prompt caching, tools / agents / MCP. Anthropic + OpenAI providers; Gemini / DeepSeek follow.",
   "type": "module",
   "main": "./src/index.ts",
   "types": "./src/index.ts",
@@ -20,7 +20,8 @@
   },
   "dependencies": {
     "@strav/kernel": "workspace:*",
-    "@anthropic-ai/sdk": "^0.100.0"
+    "@anthropic-ai/sdk": "^0.100.0",
+    "openai": "^6.0.0"
   },
   "peerDependencies": {
     "@types/bun": ">=1.3.14"

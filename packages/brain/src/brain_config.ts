@@ -34,7 +34,22 @@ export interface AnthropicProviderConfig {
   betas?: readonly string[]
 }
 
-export type ProviderConfig = AnthropicProviderConfig // | OpenAIProviderConfig | … (later slices)
+/** OpenAI-specific driver config. */
+export interface OpenAIProviderConfig {
+  driver: 'openai'
+  /** API key. Required. Most apps source from `env('OPENAI_API_KEY')`. */
+  apiKey: string
+  /** Optional override of the SDK's base URL — useful for proxies, Azure OpenAI, or test doubles. */
+  baseUrl?: string
+  /** Optional organization id. */
+  organization?: string
+  /** Default model when neither `options.model` nor `options.tier` is passed. Defaults to `gpt-5`. */
+  defaultModel?: string
+  /** Default `max_tokens` for `chat()` calls that don't specify one. */
+  defaultMaxTokens?: number
+}
+
+export type ProviderConfig = AnthropicProviderConfig | OpenAIProviderConfig // | GoogleProviderConfig | DeepSeekProviderConfig (later slices)
 
 /** Cache-shape defaults applied when `ChatOptions.cache` is omitted. */
 export interface BrainCacheConfig {

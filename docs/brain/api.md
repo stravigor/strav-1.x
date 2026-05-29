@@ -13,9 +13,11 @@ import {
   // Provider interface + impl
   type Provider,
   AnthropicProvider,
+  OpenAIProvider,
   // Config
   type BrainConfigShape,
   type AnthropicProviderConfig,
+  type OpenAIProviderConfig,
   type ProviderConfig,
   type BrainCacheConfig,
   DEFAULT_TIERS,
@@ -185,6 +187,43 @@ The SDK's `Anthropic.Message` is collapsed into `ChatResult`:
 - `usage` carries the SDK's `input_tokens` / `output_tokens` + `cache_creation_input_tokens` / `cache_read_input_tokens` (`0` when absent).
 - `raw` is the unmodified SDK `Message` for apps that need anything else (citations, server-tool results, etc.).
 
+## `OpenAIProvider`
+
+Concrete `Provider` backed by `openai` (chat-completions API).
+
+```ts
+class OpenAIProvider implements Provider {
+  readonly name: string
+
+  constructor(
+    name: string,
+    config: OpenAIProviderConfig,
+    options?: { client?: OpenAI },
+  )
+
+  // …implements Provider (except countTokens — not implemented for OpenAI)
+}
+```
+
+Maps framework shapes to OpenAI's wire format:
+
+| Framework | OpenAI SDK |
+|---|---|
+| `options.system: string` | first message: `{ role: 'system', content: string }` |
+| `options.system: { text, cache }` | `{ role: 'system', content: text }` (cache silently dropped — OpenAI auto-caches) |
+| `options.system: array` | joined with newlines |
+| Assistant `message.content` with `ToolUseBlock`s | `{ role: 'assistant', content?, tool_calls: [{ id, type: 'function', function: { name, arguments } }] }` |
+| User `message.content` with `ToolResultBlock`s | one `{ role: 'tool', tool_call_id, content }` message per result (fan-out) |
+| `Tool[]` | `[{ type: 'function', function: { name, description, parameters: inputSchema } }]` |
+| `options.thinking: 'adaptive'` | `reasoning_effort: 'medium'` |
+| `options.thinking: 'disabled'` | `reasoning_effort: 'minimal'` |
+| `options.effort` | `reasoning_effort` (overrides `thinking` mapping) |
+| `options.maxTokens` | `max_completion_tokens` |
+| `options.cache: true` | silently no-op (OpenAI prompt cache is automatic) |
+| `options.mcpServers` (non-empty) | throws `BrainError` — OpenAI has no server-side MCP support |
+
+Streaming adds `stream_options: { include_usage: true }` so the terminal `stop` event carries final usage including `cacheReadTokens` (from `prompt_tokens_details.cached_tokens`). `countTokens` is not implemented — `BrainManager.countTokens` returns `null` when routed to OpenAI.
+
 ## Config
 
 ```ts
@@ -195,7 +234,7 @@ interface BrainConfigShape {
   cache?: BrainCacheConfig
 }
 
-type ProviderConfig = AnthropicProviderConfig // OpenAI / Gemini / DeepSeek follow
+type ProviderConfig = AnthropicProviderConfig | OpenAIProviderConfig // Gemini / DeepSeek follow
 
 interface AnthropicProviderConfig {
   driver: 'anthropic'
@@ -204,6 +243,15 @@ interface AnthropicProviderConfig {
   defaultModel?: string
   defaultMaxTokens?: number
   betas?: readonly string[]
+}
+
+interface OpenAIProviderConfig {
+  driver: 'openai'
+  apiKey: string
+  baseUrl?: string
+  organization?: string
+  defaultModel?: string         // defaults to 'gpt-5'
+  defaultMaxTokens?: number
 }
 
 interface BrainCacheConfig {
@@ -442,7 +490,7 @@ brain.runTools(
 
 The agentic loop. Send → detect `tool_use` → execute → append `tool_result` → re-send, until the model returns `end_turn` or `maxIterations` is hit.
 
-Throws `BrainError` when the configured provider doesn't implement `runWithTools` (V1: only `AnthropicProvider`). Throws `ToolExecutionError` when a tool's `execute` throws — the loop aborts on the first failure in V1.
+Throws `BrainError` when the configured provider doesn't implement `runWithTools` (V1: `AnthropicProvider` + `OpenAIProvider`; Gemini / DeepSeek follow). Throws `ToolExecutionError` when a tool's `execute` throws — the loop aborts on the first failure in V1. Throws `BrainError` when `mcpServers` is non-empty and routed to `OpenAIProvider` (no server-side MCP).
 
 ### `Agent`
 

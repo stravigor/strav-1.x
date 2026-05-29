@@ -16,6 +16,7 @@ export {
   type BrainConfigShape,
   DEFAULT_MODEL,
   DEFAULT_TIERS,
+  type OpenAIProviderConfig,
   type ProviderConfig,
 } from './brain_config.ts'
 export { BrainError } from './brain_error.ts'
@@ -28,6 +29,7 @@ export { BrainProvider } from './brain_provider.ts'
 export { defineTool, type DefineToolSpec } from './define_tool.ts'
 export type { MCPServer, MCPServerToolConfig } from './mcp_server.ts'
 export { AnthropicProvider } from './providers/anthropic_provider.ts'
+export { OpenAIProvider } from './providers/openai_provider.ts'
 export type { Provider, RunWithToolsOptions } from './provider.ts'
 export { Thread, type ThreadOptions, type ThreadState } from './thread.ts'
 export type { Tool, ToolContext } from './tool.ts'
