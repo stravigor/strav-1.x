@@ -173,6 +173,35 @@ export interface AudioBlock {
     | { type: 'url'; url: string }
 }
 
+/**
+ * Server-side compaction block. Anthropic's `compact-2026-01-12`
+ * beta returns a `compaction` block when an auto-compaction trigger
+ * fires during a request. The framework surfaces it on
+ * `result.content` and Thread persists it on the assistant turn so
+ * subsequent requests echo it back verbatim — the model only sees
+ * the summary + opaque blob from then on, and the older raw turns
+ * stay out of context.
+ *
+ * V1 produces these on Anthropic only. Other providers ignore the
+ * `compact` option silently, and never emit a `CompactionBlock`.
+ *
+ * Round-trip invariant: pass the block back unchanged. The
+ * `encryptedContent` blob is opaque metadata the server uses to
+ * stitch the compaction history together; the framework never
+ * mutates it.
+ *
+ * `content === null` means a compaction attempt failed (e.g.,
+ * malformed model output). The server treats these as no-ops on
+ * the next request, so apps don't need to special-case them.
+ */
+export interface CompactionBlock {
+  type: 'compaction'
+  /** Summary of compacted content. Null when compaction failed. */
+  content: string | null
+  /** Opaque metadata round-tripped verbatim on subsequent requests. */
+  encryptedContent: string | null
+}
+
 export type ContentBlock =
   | TextBlock
   | ImageBlock
@@ -182,6 +211,7 @@ export type ContentBlock =
   | ToolResultBlock
   | MCPToolUseBlock
   | MCPToolResultBlock
+  | CompactionBlock
 
 /** A single conversation turn. `content` can be a bare string or a typed block list. */
 export interface Message {
@@ -254,6 +284,36 @@ export type ServerTool =
       /** Gemini fetches the URL and surfaces grounded answers from it. */
     }
 
+/**
+ * Per-call compaction configuration. Maps to Anthropic's
+ * `compact-2026-01-12` beta `edits[]` entry. All fields optional —
+ * omitting one falls back to the server's default (trigger:
+ * 150,000 input tokens; no extra instructions; no pause).
+ */
+export interface CompactConfig {
+  /**
+   * Trigger threshold in input tokens. Compaction fires once the
+   * conversation crosses this token count. Default 150,000 — same
+   * as the server-side default.
+   */
+  trigger?: number
+  /**
+   * Extra hint to the summarization model. Useful for biasing the
+   * compaction toward what your app actually cares to preserve
+   * ("keep all customer ids referenced", "preserve every diff
+   * hunk", ...).
+   */
+  instructions?: string
+  /**
+   * When `true`, the server returns the compaction block in-line
+   * but does NOT continue generation — the next assistant turn
+   * waits for an explicit re-prompt. Apps that want to inspect or
+   * gate compaction set this; default `false` (compaction is
+   * transparent).
+   */
+  pauseAfterCompaction?: boolean
+}
+
 export interface ChatOptions {
   /** Override the configured default model. Wins over `tier`. */
   model?: string
@@ -308,6 +368,36 @@ export interface ChatOptions {
    * route to Anthropic / Gemini).
    */
   serverTools?: readonly ServerTool[]
+  /**
+   * Server-side conversation compaction. When set, the provider
+   * auto-summarizes the older part of the message history once the
+   * `trigger` token threshold is reached; the summary lives on the
+   * response as a `CompactionBlock` that apps round-trip on
+   * subsequent requests (Thread does this automatically). Saves
+   * tokens on long threads without lossy client-side pruning.
+   *
+   * Only honored by `AnthropicProvider` (driver `'anthropic'`),
+   * via the `compact-2026-01-12` beta. Silently ignored by every
+   * other provider so apps targeting multiple providers with the
+   * same options object don't have to special-case.
+   */
+  compact?: CompactConfig
+  /**
+   * Stateful conversation pointer — OpenAI Responses API. When set,
+   * the provider sends only the new turn(s); the server picks up
+   * from the prior `Response` identified by this id and replays
+   * the conversation server-side. Saves tokens on long threads.
+   *
+   * Only honored by `OpenAIResponsesProvider` (driver
+   * `'openai-responses'`); silently ignored by every other provider
+   * — apps that target multiple providers with the same options
+   * object don't have to special-case.
+   *
+   * Pair with `ChatResult.responseId` (returned by every call) to
+   * thread the conversation forward. `Thread` does this
+   * automatically when its underlying provider supports it.
+   */
+  previousResponseId?: string
 }
 
 /** Token usage for a single call. Cache-hit fields are populated when caching is in play. */
@@ -330,6 +420,24 @@ export interface ChatResult<Raw = unknown> {
   stopReason: string | null
   usage: ChatUsage
   raw: Raw
+  /**
+   * Structured assistant content blocks — populated when the model
+   * emitted more than plain text on this turn (compaction blocks
+   * today; reasoning blocks once those surface). Apps that
+   * persist the conversation (`Thread`, custom stores) push this
+   * onto the message history when present so round-trippable
+   * blocks survive subsequent requests. Undefined when the turn
+   * was plain text only.
+   */
+  content?: ContentBlock[]
+  /**
+   * Provider response id when the provider exposes stateful
+   * conversations (currently OpenAI Responses API). Apps thread
+   * this forward via `ChatOptions.previousResponseId` so the
+   * server replays prior turns without re-sending them.
+   * Undefined for providers that don't support the pattern.
+   */
+  responseId?: string
 }
 
 /**
@@ -447,4 +555,6 @@ export interface GenerateResult<T = unknown, Raw = unknown> {
   stopReason: string | null
   usage: ChatUsage
   raw: Raw
+  /** See `ChatResult.responseId`. */
+  responseId?: string
 }

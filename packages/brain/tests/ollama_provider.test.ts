@@ -7,7 +7,9 @@
  *   - buildParams strips `reasoning_effort`.
  *   - generate uses response_format.json_object + system-prompt
  *     schema injection + client-side parse.
- *   - runWithToolsAndSchema / streamWithToolsAndSchema throw.
+ *   - runWithToolsAndSchema / streamWithToolsAndSchema work via the
+ *     OpenAICompatProvider tool-forcing pattern (synthetic
+ *     respond_with_* tool whose parameters = schema.jsonSchema).
  *   - Inherits chat / runWithTools unchanged.
  */
 
@@ -169,11 +171,41 @@ describe('OllamaProvider.generate', () => {
   })
 })
 
-// ─── Combined schema methods throw ───────────────────────────────────────
+// ─── runWithToolsAndSchema via tool-forcing ──────────────────────────────
 
-describe('OllamaProvider — combined schema methods throw', () => {
-  test('runWithToolsAndSchema throws', async () => {
-    const { client } = makeFakeClient([])
+describe('OllamaProvider — runWithToolsAndSchema (tool-forcing)', () => {
+  test('respond_with_<schema> call args parse into result.value', async () => {
+    const { client, calls } = makeFakeClient([
+      makeCompletion({
+        toolCalls: [
+          {
+            id: 'final',
+            name: 'respond_with_city_answer',
+            arguments: '{"city":"Berlin","population":3700000}',
+          },
+        ],
+        finishReason: 'tool_calls',
+      }),
+    ])
+    const provider = new OllamaProvider(
+      'ollama',
+      { driver: 'ollama', defaultModel: 'llama3.2' },
+      { client },
+    )
+    const result = await provider.runWithToolsAndSchema!(
+      [{ role: 'user', content: 'q' }],
+      [],
+      citySchema,
+    )
+    expect(result.value).toEqual({ city: 'Berlin', population: 3700000 })
+    const sentTools = calls[0]?.params.tools as Array<{ function?: { name: string } }>
+    expect(sentTools.some((t) => t.function?.name === 'respond_with_city_answer')).toBe(true)
+  })
+
+  test('model emits text without calling respond_with → BrainError', async () => {
+    const { client } = makeFakeClient([
+      makeCompletion({ content: 'Berlin', finishReason: 'stop' }),
+    ])
     const provider = new OllamaProvider(
       'ollama',
       { driver: 'ollama', defaultModel: 'llama3.2' },
@@ -182,28 +214,6 @@ describe('OllamaProvider — combined schema methods throw', () => {
     await expect(
       provider.runWithToolsAndSchema!([{ role: 'user', content: 'q' }], [], citySchema),
     ).rejects.toBeInstanceOf(BrainError)
-  })
-
-  test('streamWithToolsAndSchema throws on first iteration', async () => {
-    const { client } = makeFakeClient([])
-    const provider = new OllamaProvider(
-      'ollama',
-      { driver: 'ollama', defaultModel: 'llama3.2' },
-      { client },
-    )
-    let thrown: unknown
-    try {
-      for await (const _e of provider.streamWithToolsAndSchema!(
-        [{ role: 'user', content: 'q' }],
-        [],
-        citySchema,
-      )) {
-        // drain
-      }
-    } catch (e) {
-      thrown = e
-    }
-    expect(thrown).toBeInstanceOf(BrainError)
   })
 })
 

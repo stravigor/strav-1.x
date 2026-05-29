@@ -29,4 +29,11 @@ export interface AgentResult {
   stopReason: string
   /** Token usage summed across every model call in the loop. */
   usage: ChatUsage
+  /**
+   * Final provider response id when the provider exposes stateful
+   * conversations (OpenAI Responses API). Captured from the last
+   * model turn so apps that persist the conversation can resume
+   * via `ChatOptions.previousResponseId`. Undefined elsewhere.
+   */
+  responseId?: string
 }

@@ -95,10 +95,23 @@ await thread.send('hard question', { tier: 'powerful' })
 
 V1 deliberately ships a minimal feature set. Things you might expect that aren't here:
 
-- **Auto-compaction.** Long threads accumulate without bound. Apps that need bounded context prune `thread.messages` in place, or use Anthropic's server-side compaction beta (lands in V2 via a Thread-level integration).
+- **Auto-compaction (client-side pruning).** Long threads accumulate without bound. Apps that need bounded context prune `thread.messages` in place. Or — better — opt the thread into Anthropic's server-side compaction by setting `options: { compact: {} }` at construction time. See [guides/compaction.md](./compaction.md) for the full pattern.
 - **Streaming `send()`.** The `send` method awaits the full reply. For token-by-token streaming inside a conversation, call `brain.stream(thread.messages.concat({ role: 'user', content: text }))` directly — the thread is just a convenient state container, not a hard requirement.
 - **Tool use / agents.** Lands when `@strav/brain` ships its tool / agent layer.
 - **Branching.** One thread = one conversation. If you need "fork conversation at turn N and explore two replies," clone with `Thread.fromJSON(brain, original.toJSON())` and mutate one independently.
+
+### Stateful conversations (OpenAI Responses)
+
+When the thread's underlying provider is `OpenAIResponsesProvider`,
+`Thread` auto-threads `previous_response_id` across `send()` calls.
+The last response id is stored on `thread.lastResponseId` (and
+included in `toJSON()` so persisted threads keep the pointer when
+restored). Apps don't need to manage it manually — but per-call
+`options.previousResponseId` on `send()` always wins, which is
+useful for rewinding or branching from an older response.
+
+For every other provider, `lastResponseId` stays undefined and the
+`previousResponseId` field is silently ignored.
 
 ## When NOT to use `Thread`
 

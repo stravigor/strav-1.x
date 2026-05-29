@@ -41,7 +41,7 @@ The Responses API adds:
 
 - **Server-side tools** — `web_search`, `code_interpreter`, plus `file_search` / `computer_use` / `image_generation` (V1 of this provider supports `web_search` + `code_interpreter` only).
 - **Reasoning surfaces** — `reasoning.effort` maps the same way as chat completions but the response carries reasoning items inline.
-- **Stateful conversations** — `previous_response_id` lets OpenAI manage history server-side (V1 of this provider doesn't use it; the framework manages history client-side per `Message[]`).
+- **Stateful conversations** — `previous_response_id` lets OpenAI manage history server-side. The framework plumbs this through `ChatOptions.previousResponseId` (request) + `ChatResult.responseId` (response), and `Thread` auto-threads it across `send()` calls so apps don't need to manage the pointer manually.
 
 For apps that don't need server tools, **stick with `OpenAIProvider`**. It's simpler, has full schema support, and matches the rest of the framework's patterns.
 
@@ -129,11 +129,85 @@ for await (const event of brain.streamTools(prompt, [], {
 
 V1 doesn't surface server-tool execution events as `AgentStreamEvent`s — apps that want to render "(searching the web...)" indicators read from the post-completion `Response.output` (available on `event.messages` and `result.raw`).
 
+## Structured output
+
+`generate()`, `runWithToolsAndSchema()`, and `streamWithToolsAndSchema()` all work on the Responses API. Schemas translate to `text.format: { type: 'json_schema', strict: true, name, schema }` and apply on every request — including every iteration of the tool loop, so the final assistant turn is always shape-checked by OpenAI before the framework parses + validates locally.
+
+```ts
+const schema: OutputSchema<{ name: string; age: number }> = {
+  name: 'person',
+  jsonSchema: {
+    type: 'object',
+    properties: { name: { type: 'string' }, age: { type: 'number' } },
+    required: ['name', 'age'],
+    additionalProperties: false,
+  },
+}
+
+const { value } = await brain.generate(prompt, schema, { provider: 'openai-responses' })
+
+// Combined with server tools — fine; the model researches with web_search, then answers in-schema.
+const { value: researched } = await brain.generateWithTools(prompt, schema, [], {
+  provider: 'openai-responses',
+  serverTools: [{ type: 'web_search' }],
+})
+```
+
+The schema variants are identical in behavior to the chat-completions provider — pick `'openai-responses'` when you also need server tools, otherwise `'openai'` is the simpler default.
+
+## Stateful conversations via `previous_response_id`
+
+The Responses API supports server-side conversation memory: pass the
+id of a prior response on the next request, and OpenAI replays the
+history from its side. Long threads save tokens because you don't
+re-send every prior turn.
+
+The framework exposes this as two paired fields:
+
+- `ChatOptions.previousResponseId` — set on a per-call basis to
+  reference the prior turn's response id.
+- `ChatResult.responseId` / `GenerateResult.responseId` /
+  `AgentResult.responseId` — surfaced on every result when the
+  provider returns one.
+
+```ts
+const first = await brain.chat('hello', { provider: 'openai-responses' })
+const second = await brain.chat('and again', {
+  provider: 'openai-responses',
+  previousResponseId: first.responseId,
+})
+```
+
+`Thread` automates this. It tracks `lastResponseId` on every `send`
+and threads it forward on the next call. Round-trips through
+`toJSON()` / `fromJSON()` preserve the pointer so apps persisting
+a thread across requests get the same behavior:
+
+```ts
+const t = new Thread(brain, { options: { provider: 'openai-responses' } })
+await t.send('hi')
+// → t.lastResponseId === 'resp_abc'
+await t.send('more')
+// → sent with previous_response_id: 'resp_abc'
+```
+
+Per-call `previousResponseId` always wins over the auto-tracked
+value, so apps can rewind or branch a conversation by passing an
+older id explicitly.
+
+Suspend/resume integrates: `SuspendedRun.state.responseId` is
+captured at the suspension point and `resumeTools` threads it back
+through `previousResponseId` so the model picks up exactly where
+it paused — even when the underlying request is sent minutes or
+days later.
+
+The pointer is silently ignored by every other provider. Apps that
+target multiple providers with the same options object don't have
+to special-case.
+
 ## What's NOT in V1
 
-- **Structured output via Responses API** — `generate()`, `runWithToolsAndSchema()`, `streamWithToolsAndSchema()` throw `BrainError`. Apps that want json_schema structured output route to the chat completions provider (driver `'openai'`); it does the same thing more cleanly.
 - **`file_search`, `computer_use`, `image_generation`** server tools — each is its own slice when an app needs it.
-- **`previous_response_id` stateful conversations** — the framework manages conversation history client-side per `Message[]`.
 - **Reasoning summaries** — `gpt-5` and o-series models emit reasoning items in the response; the framework doesn't surface them as a typed block yet. Apps read from `result.raw`.
 
 ## When to pick which OpenAI provider
@@ -141,7 +215,7 @@ V1 doesn't surface server-tool execution events as `AgentStreamEvent`s — apps 
 | You want… | Pick |
 |---|---|
 | Plain chat / function calling | `'openai'` |
-| Structured output (json_schema) | `'openai'` |
+| Structured output (json_schema) | either — both wire to `text.format` (Responses) / `response_format` (chat) with `strict: true` |
 | Streaming | either — pick `'openai'` unless you need server tools |
 | Server tools (web_search / code_interpreter) | `'openai-responses'` |
 | gpt-5 reasoning with `effort` knob | either — same translation on both |

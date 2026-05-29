@@ -40,7 +40,12 @@ import type {
   TranscribeOptions,
   TranscribeResult,
 } from './types.ts'
-import type { Provider, RunWithToolsOptions } from './provider.ts'
+import type {
+  Provider,
+  RunWithToolsOptions,
+  RunWithToolsOptionsWithSuspend,
+} from './provider.ts'
+import { appendResumeResults, type SuspendedRun, type SuspendedState, type ToolResultInput } from './suspended_run.ts'
 import type { Tool } from './tool.ts'
 import { DEFAULT_TIERS } from './brain_config.ts'
 
@@ -152,11 +157,21 @@ export class BrainManager {
    * implement `runWithTools` (V1: OpenAI / Gemini / DeepSeek providers
    * don't yet — only `AnthropicProvider`).
    */
+  runTools(
+    input: string | readonly Message[],
+    tools: readonly Tool[],
+    options: RunWithToolsOptionsWithSuspend,
+  ): Promise<AgentResult | SuspendedRun>
+  runTools(
+    input: string | readonly Message[],
+    tools: readonly Tool[],
+    options?: RunWithToolsOptions,
+  ): Promise<AgentResult>
   async runTools(
     input: string | readonly Message[],
     tools: readonly Tool[],
     options: RunWithToolsOptions = {},
-  ): Promise<AgentResult> {
+  ): Promise<AgentResult | SuspendedRun> {
     const provider = this.provider(options.provider)
     if (!provider.runWithTools) {
       throw new BrainError(
@@ -176,6 +191,42 @@ export class BrainManager {
   }
 
   /**
+   * Resume a previously-suspended tool-use loop. Takes the
+   * `SuspendedRun.state` snapshot plus the results the integrator
+   * gathered for each `pendingToolCalls` entry; appends a `tool_result`
+   * block per entry; re-enters `runTools` so the model can continue
+   * (potentially suspending again on the next tool).
+   *
+   * Mid-batch invariant: every pending call MUST get a result —
+   * otherwise the provider rejects the next request because the
+   * assistant turn's `tool_use` blocks are no longer balanced.
+   * `resumeTools` throws `BrainError` when results are missing.
+   *
+   * The `previousResponseId` carried on the snapshot (when the
+   * provider supports stateful conversations) is threaded back via
+   * `options.previousResponseId` automatically — per-call
+   * `options.previousResponseId` wins if supplied explicitly.
+   */
+  async resumeTools(
+    state: SuspendedState,
+    results: readonly ToolResultInput[],
+    tools: readonly Tool[],
+    options: RunWithToolsOptions = {},
+  ): Promise<AgentResult | SuspendedRun> {
+    const resumed = appendResumeResults(state, results)
+    const merged: RunWithToolsOptions = { ...options }
+    if (merged.previousResponseId === undefined && state.responseId !== undefined) {
+      merged.previousResponseId = state.responseId
+    }
+    const out = await this.runTools(
+      resumed,
+      tools,
+      merged as RunWithToolsOptionsWithSuspend,
+    )
+    return mergeResumeCounters(out, state)
+  }
+
+  /**
    * Streaming variant of `generateWithTools`. Yields
    * `AgentStreamEvent<T>`s as the loop progresses; the terminal
    * `stop` event carries the parsed value + raw JSON text. Throws
@@ -189,6 +240,7 @@ export class BrainManager {
     tools: readonly Tool[],
     options: RunWithToolsOptions = {},
   ): AsyncIterable<AgentStreamEvent<T>> {
+    rejectShouldSuspend(options, 'streamGenerateWithTools')
     const provider = this.provider(options.provider)
     if (!provider.streamWithToolsAndSchema) {
       throw new BrainError(
@@ -220,6 +272,7 @@ export class BrainManager {
     tools: readonly Tool[],
     options: RunWithToolsOptions = {},
   ): Promise<AgentGenerateResult<T>> {
+    rejectShouldSuspend(options, 'generateWithTools')
     const provider = this.provider(options.provider)
     if (!provider.runWithToolsAndSchema) {
       throw new BrainError(
@@ -250,6 +303,7 @@ export class BrainManager {
     tools: readonly Tool[],
     options: RunWithToolsOptions = {},
   ): AsyncIterable<AgentStreamEvent> {
+    rejectShouldSuspend(options, 'streamTools')
     const provider = this.provider(options.provider)
     if (!provider.streamWithTools) {
       throw new BrainError(
@@ -410,4 +464,67 @@ function normalizeInput(input: string | readonly Message[]): readonly Message[] 
     return [{ role: 'user', content: input }]
   }
   return input
+}
+
+/**
+ * V1 scope guard. `shouldSuspend` is wired only into the non-
+ * streaming `runWithTools` loop; the streaming and schema variants
+ * don't yet model pause / resume, so silently ignoring would be
+ * worse than throwing. Apps that need both should run tools first
+ * (suspending as needed), then call `generate` for the structured
+ * summary in a separate step.
+ */
+/**
+ * Carry forward the pre-suspension iteration count + token usage so
+ * `result.iterations` / `result.usage` reflect the full run, not
+ * just the post-resume portion. When the resumed call suspends
+ * again, the new state's iterations + usage also get the carry-
+ * forward so apps see a running total across an arbitrary number
+ * of suspension cycles.
+ */
+function mergeResumeCounters(
+  out: AgentResult | SuspendedRun,
+  state: SuspendedState,
+): AgentResult | SuspendedRun {
+  // +1 accounts for the suspended round itself — at suspension time
+  // the loop hadn't yet incremented `iterations` (we paused mid-
+  // batch, before tool execution). Supplying results to resume
+  // effectively completes that round.
+  const carryIter = state.iterations + 1
+  if ('status' in out) {
+    return {
+      ...out,
+      state: {
+        ...out.state,
+        iterations: out.state.iterations + carryIter,
+        usage: addUsage(out.state.usage, state.usage),
+      },
+    }
+  }
+  return {
+    ...out,
+    iterations: out.iterations + carryIter,
+    usage: addUsage(out.usage, state.usage),
+  }
+}
+
+function addUsage(
+  a: SuspendedState['usage'],
+  b: SuspendedState['usage'],
+): SuspendedState['usage'] {
+  return {
+    inputTokens: a.inputTokens + b.inputTokens,
+    outputTokens: a.outputTokens + b.outputTokens,
+    cacheReadTokens: a.cacheReadTokens + b.cacheReadTokens,
+    cacheCreationTokens: a.cacheCreationTokens + b.cacheCreationTokens,
+  }
+}
+
+function rejectShouldSuspend(options: RunWithToolsOptions, entry: string): void {
+  if (options.shouldSuspend !== undefined) {
+    throw new BrainError(
+      `BrainManager.${entry}: \`shouldSuspend\` is only supported on \`runTools\` (the non-streaming + no-schema entrypoint) in V1. Run tools first with suspension, then call \`generate\` for the structured summary as a separate step.`,
+      { context: { entry } },
+    )
+  }
 }

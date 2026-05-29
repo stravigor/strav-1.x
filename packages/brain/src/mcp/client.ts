@@ -66,6 +66,15 @@ export class MCPClient {
   readonly server: MCPServer
   private readonly _client: Client
   private _connected = false
+  /**
+   * In-flight connect promise — set on the first concurrent
+   * `connect()` and cleared on settle. Subsequent callers that
+   * race against the first one await the same promise instead of
+   * each kicking off their own transport handshake. Necessary for
+   * pooled clients: a fresh `borrow()` followed by parallel
+   * `listTools()` + `callTool()` calls both hit the same connect.
+   */
+  private _connecting: Promise<void> | undefined
   private _transport: StreamableHTTPClientTransport | undefined
   private _authProvider: StoreBackedOAuthProvider | undefined
 
@@ -87,6 +96,14 @@ export class MCPClient {
 
   async connect(): Promise<void> {
     if (this._connected) return
+    if (this._connecting) return this._connecting
+    this._connecting = this._doConnect().finally(() => {
+      this._connecting = undefined
+    })
+    return this._connecting
+  }
+
+  private async _doConnect(): Promise<void> {
     const transport = this._buildTransport()
     this._transport = transport
     try {

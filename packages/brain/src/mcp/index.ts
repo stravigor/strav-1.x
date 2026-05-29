@@ -15,6 +15,7 @@ export {
   type MCPOAuthStore,
   MemoryOAuthStore,
 } from './oauth.ts'
+export { MCPClientPool, type MCPClientFactory } from './pool.ts'
 export {
   resolveMcpTools,
   type ResolveMcpToolsOptions,

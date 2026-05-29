@@ -27,4 +27,6 @@ export interface AgentGenerateResult<T = unknown> {
   stopReason: string
   /** Token usage from the single underlying `generate` call. */
   usage: ChatUsage
+  /** See `ChatResult.responseId`. */
+  responseId?: string
 }

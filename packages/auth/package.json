@@ -1,6 +1,6 @@
 {
   "name": "@strav/auth",
-  "version": "1.0.0-alpha.17",
+  "version": "1.0.0-alpha.18",
   "description": "Strav authentication — Hasher (argon2id), guards, ctx.auth, auth middleware",
   "type": "module",
   "main": "./src/index.ts",

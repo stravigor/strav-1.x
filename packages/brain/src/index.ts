@@ -10,7 +10,11 @@
 export { Agent } from './agent.ts'
 export type { AgentGenerateResult } from './agent_generate_result.ts'
 export type { AgentResult } from './agent_result.ts'
-export { AgentRunner, type AgentRunResult } from './agent_runner.ts'
+export {
+  AgentRunner,
+  type AgentRunMaybeSuspended,
+  type AgentRunResult,
+} from './agent_runner.ts'
 export type { AgentStreamEvent } from './agent_stream_event.ts'
 export {
   type AnthropicProviderConfig,
@@ -33,6 +37,7 @@ export {
 } from './brain_manager.ts'
 export { BrainProvider } from './brain_provider.ts'
 export { defineTool, type DefineToolSpec } from './define_tool.ts'
+export { MCPClientPool, type MCPClientFactory } from './mcp/pool.ts'
 export type { MCPServer, MCPServerToolConfig } from './mcp_server.ts'
 export type { OutputSchema } from './output_schema.ts'
 export { AnthropicProvider } from './providers/anthropic_provider.ts'
@@ -42,7 +47,18 @@ export { OllamaProvider } from './providers/ollama_provider.ts'
 export { OpenAICompatProvider } from './providers/openai_compat_provider.ts'
 export { OpenAIProvider } from './providers/openai_provider.ts'
 export { OpenAIResponsesProvider } from './providers/openai_responses_provider.ts'
-export type { Provider, RunWithToolsOptions } from './provider.ts'
+export type {
+  Provider,
+  RunWithToolsOptions,
+  RunWithToolsOptionsWithSuspend,
+} from './provider.ts'
+export {
+  appendResumeResults,
+  isSuspended,
+  type SuspendedRun,
+  type SuspendedState,
+  type ToolResultInput,
+} from './suspended_run.ts'
 export { Thread, type ThreadOptions, type ThreadState } from './thread.ts'
 export type { Tool, ToolContext } from './tool.ts'
 export { ToolExecutionError } from './tool_execution_error.ts'
@@ -50,6 +66,8 @@ export type {
   ChatOptions,
   ChatResult,
   ChatUsage,
+  CompactConfig,
+  CompactionBlock,
   ContentBlock,
   AudioBlock,
   AudioSource,

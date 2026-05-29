@@ -24,10 +24,11 @@
  *     against the Responses API. Local tools + MCP tools + server
  *     tools all combine.
  *   - `generate` / `runWithToolsAndSchema` /
- *     `streamWithToolsAndSchema` — throw `BrainError` with
- *     "structured output via Responses API is a follow-up slice"
- *     guidance. Apps that need structured output use
- *     `OpenAIProvider` (driver `'openai'`).
+ *     `streamWithToolsAndSchema` — structured output via the
+ *     Responses API's `text.format: { type: 'json_schema' }`. The
+ *     non-streaming `generate` is a single call; the schema-aware
+ *     loops emit `text.format` on every request and parse the
+ *     final assistant text into `value`.
  *
  * The Responses API's message shape (`input_items`) is different
  * from chat completions' `messages`, so this is a separate
@@ -43,8 +44,13 @@ import { BrainError } from '../brain_error.ts'
 import type { OpenAIResponsesProviderConfig } from '../brain_config.ts'
 import { resolveMcpTools, type ResolveMcpToolsOptions } from '../mcp/resolve_mcp_tools.ts'
 import type { MCPServer } from '../mcp_server.ts'
-import type { OutputSchema } from '../output_schema.ts'
-import type { Provider, RunWithToolsOptions } from '../provider.ts'
+import { parseGenerated, type OutputSchema } from '../output_schema.ts'
+import type {
+  Provider,
+  RunWithToolsOptions,
+  RunWithToolsOptionsWithSuspend,
+} from '../provider.ts'
+import type { SuspendedRun } from '../suspended_run.ts'
 import type { Tool } from '../tool.ts'
 import { runToolWithRecovery } from '../tool_runner.ts'
 import type {
@@ -70,6 +76,8 @@ export interface OpenAIResponsesProviderOptions {
   client?: OpenAI
   /** Internal seam — tests inject a stub MCP client factory. */
   mcpClientFactory?: ResolveMcpToolsOptions['clientFactory']
+  /** See `OpenAIProviderOptions.mcpPool` — same semantics. */
+  mcpPool?: ResolveMcpToolsOptions['pool']
 }
 
 /** Translation: framework `ServerTool` → Responses API tool entry. */
@@ -153,18 +161,22 @@ export class OpenAIResponsesProvider extends OpenAIProvider implements Provider 
 
   // ─── runWithTools / streamWithTools ─────────────────────────────────────
 
+  override runWithTools(
+    messages: readonly Message[],
+    tools: readonly Tool[],
+    options: RunWithToolsOptionsWithSuspend,
+  ): Promise<AgentResult | SuspendedRun>
+  override runWithTools(
+    messages: readonly Message[],
+    tools: readonly Tool[],
+    options?: RunWithToolsOptions,
+  ): Promise<AgentResult>
   override async runWithTools(
     messages: readonly Message[],
     tools: readonly Tool[],
     options: RunWithToolsOptions = {},
-  ): Promise<AgentResult> {
-    const mcpServers: readonly MCPServer[] = options.mcpServers ?? []
-    const resolved =
-      mcpServers.length > 0
-        ? await resolveMcpTools(mcpServers, {
-            ...(this.mcpClientFactory ? { clientFactory: this.mcpClientFactory } : {}),
-          })
-        : { tools: [] as Tool[], close: async () => {} }
+  ): Promise<AgentResult | SuspendedRun> {
+    const resolved = await this.resolveMcp(options.mcpServers ?? [])
     try {
       return await this._runResponsesLoop(messages, [...tools, ...resolved.tools], options)
     } finally {
@@ -176,7 +188,7 @@ export class OpenAIResponsesProvider extends OpenAIProvider implements Provider 
     messages: readonly Message[],
     tools: readonly Tool[],
     options: RunWithToolsOptions,
-  ): Promise<AgentResult> {
+  ): Promise<AgentResult | SuspendedRun> {
     const maxIterations = options.maxIterations ?? 10
     const toolMap = new Map<string, Tool>(tools.map((t) => [t.name, t]))
     const workingMessages: Message[] = [...messages]
@@ -202,17 +214,20 @@ export class OpenAIResponsesProvider extends OpenAIProvider implements Provider 
 
       if (toolCalls.length === 0) {
         const text = textFromOutput(response.output)
-        return {
+        const out: AgentResult = {
           text,
           messages: workingMessages,
           iterations,
           stopReason: response.status ?? 'completed',
           usage: aggregated,
         }
+        if (response.id) out.responseId = response.id
+        return out
       }
 
       const resultBlocks: ContentBlock[] = []
-      for (const call of toolCalls) {
+      for (let i = 0; i < toolCalls.length; i++) {
+        const call = toolCalls[i]!
         let parsedInput: unknown = {}
         let parseFailed: { content: string; isError: boolean } | undefined
         try {
@@ -224,6 +239,42 @@ export class OpenAIResponsesProvider extends OpenAIProvider implements Provider 
             err as Error,
             options,
           )
+        }
+        if (options.shouldSuspend && !parseFailed) {
+          const frameworkCall: ToolUseBlock = {
+            type: 'tool_use',
+            id: call.call_id,
+            name: call.name,
+            input: (parsedInput ?? {}) as Record<string, unknown>,
+          }
+          if (await options.shouldSuspend(frameworkCall, options.context)) {
+            const pending: ToolUseBlock[] = []
+            for (let j = i; j < toolCalls.length; j++) {
+              const c = toolCalls[j]!
+              let pInput: unknown = {}
+              try {
+                pInput = c.arguments ? JSON.parse(c.arguments) : {}
+              } catch {
+                pInput = c.arguments ?? {}
+              }
+              pending.push({
+                type: 'tool_use',
+                id: c.call_id,
+                name: c.name,
+                input: pInput as Record<string, unknown>,
+              })
+            }
+            return {
+              status: 'suspended',
+              pendingToolCalls: pending,
+              state: {
+                messages: workingMessages,
+                iterations,
+                usage: aggregated,
+                ...(response.id ? { responseId: response.id } : {}),
+              },
+            }
+          }
         }
         const { content, isError } = parseFailed ?? await runToolWithRecovery(
           toolMap.get(call.name),
@@ -244,13 +295,15 @@ export class OpenAIResponsesProvider extends OpenAIProvider implements Provider 
       iterations++
       if (iterations >= maxIterations) {
         const text = textFromOutput(response.output)
-        return {
+        const out: AgentResult = {
           text,
           messages: workingMessages,
           iterations,
           stopReason: 'max_iterations',
           usage: aggregated,
         }
+        if (response.id) out.responseId = response.id
+        return out
       }
     }
   }
@@ -260,13 +313,7 @@ export class OpenAIResponsesProvider extends OpenAIProvider implements Provider 
     tools: readonly Tool[],
     options: RunWithToolsOptions = {},
   ): AsyncIterable<AgentStreamEvent> {
-    const mcpServers: readonly MCPServer[] = options.mcpServers ?? []
-    const resolved =
-      mcpServers.length > 0
-        ? await resolveMcpTools(mcpServers, {
-            ...(this.mcpClientFactory ? { clientFactory: this.mcpClientFactory } : {}),
-          })
-        : { tools: [] as Tool[], close: async () => {} }
+    const resolved = await this.resolveMcp(options.mcpServers ?? [])
     try {
       yield* this._streamResponsesLoop(messages, [...tools, ...resolved.tools], options)
     } finally {
@@ -398,41 +445,291 @@ export class OpenAIResponsesProvider extends OpenAIProvider implements Provider 
     }
   }
 
-  // ─── Schema variants throw — deferred ──────────────────────────────────
+  // ─── generate / runWithToolsAndSchema / streamWithToolsAndSchema ────────
 
   override async generate<T>(
-    _messages: readonly Message[],
-    _schema: OutputSchema<T>,
-    _options: ChatOptions = {},
+    messages: readonly Message[],
+    schema: OutputSchema<T>,
+    options: ChatOptions = {},
   ): Promise<GenerateResult<T>> {
-    throw new BrainError(
-      'OpenAIResponsesProvider.generate: structured output via the Responses API is a follow-up slice. For json-schema structured output today, route the call to the chat completions provider (driver: "openai").',
-      { context: { provider: this.name } },
-    )
+    const params = this.buildResponsesParams(messages, options, [], schema)
+    const response = await this.client.responses.create(params, reqOpts(options))
+    const text = textFromOutput(response.output)
+    const value = parseGenerated(text, schema)
+    const result: GenerateResult<T, OpenAI.Responses.Response> = {
+      value,
+      text,
+      model: response.model ?? (params.model as string),
+      stopReason: response.status ?? null,
+      usage: toUsage(response.usage),
+      raw: response,
+    }
+    if (response.id) result.responseId = response.id
+    return result
   }
 
   override async runWithToolsAndSchema<T>(
-    _messages: readonly Message[],
-    _tools: readonly Tool[],
-    _schema: OutputSchema<T>,
-    _options?: RunWithToolsOptions,
+    messages: readonly Message[],
+    tools: readonly Tool[],
+    schema: OutputSchema<T>,
+    options: RunWithToolsOptions = {},
   ): Promise<AgentGenerateResult<T>> {
-    throw new BrainError(
-      'OpenAIResponsesProvider.runWithToolsAndSchema: combined tools + schema on the Responses API is a follow-up slice. Run runTools + generate as separate calls, or route to the chat completions provider for this combination.',
-      { context: { provider: this.name } },
-    )
+    const resolved = await this.resolveMcp(options.mcpServers ?? [])
+    try {
+      return await this._runResponsesLoopWithSchema(
+        messages,
+        [...tools, ...resolved.tools],
+        schema,
+        options,
+      )
+    } finally {
+      await resolved.close()
+    }
+  }
+
+  private async _runResponsesLoopWithSchema<T>(
+    messages: readonly Message[],
+    tools: readonly Tool[],
+    schema: OutputSchema<T>,
+    options: RunWithToolsOptions,
+  ): Promise<AgentGenerateResult<T>> {
+    const maxIterations = options.maxIterations ?? 10
+    const toolMap = new Map<string, Tool>(tools.map((t) => [t.name, t]))
+    const workingMessages: Message[] = [...messages]
+    const aggregated: ChatUsage = {
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      cacheCreationTokens: 0,
+    }
+    let iterations = 0
+
+    while (true) {
+      checkAborted(options.signal)
+      const params = this.buildResponsesParams(workingMessages, options, tools, schema)
+      const response = await this.client.responses.create(params, reqOpts(options))
+      addUsage(aggregated, response.usage)
+
+      const assistantBlocks = fromResponsesOutput(response.output)
+      const toolCalls = response.output.filter(
+        (o): o is OpenAI.Responses.ResponseFunctionToolCall => o.type === 'function_call',
+      )
+      workingMessages.push({ role: 'assistant', content: assistantBlocks })
+
+      if (toolCalls.length === 0) {
+        const text = textFromOutput(response.output)
+        const value = parseGenerated(text, schema)
+        const out: AgentGenerateResult<T> = {
+          value,
+          text,
+          messages: workingMessages,
+          iterations,
+          stopReason: response.status ?? 'completed',
+          usage: aggregated,
+        }
+        if (response.id) out.responseId = response.id
+        return out
+      }
+
+      const resultBlocks: ContentBlock[] = []
+      for (const call of toolCalls) {
+        let parsedInput: unknown = {}
+        let parseFailed: { content: string; isError: boolean } | undefined
+        try {
+          parsedInput = call.arguments ? JSON.parse(call.arguments) : {}
+        } catch (err) {
+          parseFailed = await tryRecoverParseError(
+            call.name,
+            call.call_id,
+            err as Error,
+            options,
+          )
+        }
+        const { content, isError } = parseFailed ?? await runToolWithRecovery(
+          toolMap.get(call.name),
+          call.name,
+          call.call_id,
+          parsedInput,
+          options,
+        )
+        resultBlocks.push({
+          type: 'tool_result',
+          toolUseId: call.call_id,
+          content,
+          ...(isError ? { isError: true } : {}),
+        } satisfies ToolResultBlock)
+      }
+      workingMessages.push({ role: 'user', content: resultBlocks })
+
+      iterations++
+      if (iterations >= maxIterations) {
+        const text = textFromOutput(response.output)
+        const value = parseGenerated(text, schema)
+        const out: AgentGenerateResult<T> = {
+          value,
+          text,
+          messages: workingMessages,
+          iterations,
+          stopReason: 'max_iterations',
+          usage: aggregated,
+        }
+        if (response.id) out.responseId = response.id
+        return out
+      }
+    }
   }
 
   override async *streamWithToolsAndSchema<T>(
-    _messages: readonly Message[],
-    _tools: readonly Tool[],
-    _schema: OutputSchema<T>,
-    _options?: RunWithToolsOptions,
+    messages: readonly Message[],
+    tools: readonly Tool[],
+    schema: OutputSchema<T>,
+    options: RunWithToolsOptions = {},
   ): AsyncIterable<AgentStreamEvent<T>> {
-    throw new BrainError(
-      'OpenAIResponsesProvider.streamWithToolsAndSchema: streaming + tools + schema on the Responses API is a follow-up slice. Use streamTools without schema, or route to the chat completions provider.',
-      { context: { provider: this.name } },
-    )
+    const resolved = await this.resolveMcp(options.mcpServers ?? [])
+    try {
+      yield* this._streamResponsesLoopWithSchema(
+        messages,
+        [...tools, ...resolved.tools],
+        schema,
+        options,
+      )
+    } finally {
+      await resolved.close()
+    }
+  }
+
+  private async *_streamResponsesLoopWithSchema<T>(
+    messages: readonly Message[],
+    tools: readonly Tool[],
+    schema: OutputSchema<T>,
+    options: RunWithToolsOptions,
+  ): AsyncIterable<AgentStreamEvent<T>> {
+    const maxIterations = options.maxIterations ?? 10
+    const toolMap = new Map<string, Tool>(tools.map((t) => [t.name, t]))
+    const workingMessages: Message[] = [...messages]
+    const aggregated: ChatUsage = {
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      cacheCreationTokens: 0,
+    }
+    let iterations = 0
+
+    while (true) {
+      checkAborted(options.signal)
+      yield { type: 'iteration_start', iteration: iterations }
+
+      const params: OpenAI.Responses.ResponseCreateParamsStreaming = {
+        ...this.buildResponsesParams(workingMessages, options, tools, schema),
+        stream: true,
+      }
+      const stream = await this.client.responses.create(params, reqOpts(options))
+      let finishReason: string | null = null
+      let finalResponse: OpenAI.Responses.Response | undefined
+
+      for await (const event of stream) {
+        if (event.type === 'response.output_text.delta') {
+          const delta = (event as { delta: string }).delta
+          if (delta && delta.length > 0) yield { type: 'text', delta }
+        } else if (event.type === 'response.completed') {
+          const completed = (event as { response: OpenAI.Responses.Response }).response
+          finalResponse = completed
+          finishReason = completed.status ?? null
+        }
+      }
+
+      yield { type: 'iteration_end', iteration: iterations, stopReason: finishReason }
+
+      if (!finalResponse) {
+        // Stream ended without a completion event — no text to parse;
+        // surface the best stop we have. We can't synthesize a `value`
+        // without text, so degrade to the base stop shape.
+        yield {
+          type: 'stop',
+          stopReason: finishReason ?? 'incomplete',
+          iterations,
+          usage: aggregated,
+          messages: workingMessages,
+        } as AgentStreamEvent<T>
+        return
+      }
+
+      addUsage(aggregated, finalResponse.usage)
+      const assistantBlocks = fromResponsesOutput(finalResponse.output)
+      workingMessages.push({ role: 'assistant', content: assistantBlocks })
+
+      const toolCalls = finalResponse.output.filter(
+        (o): o is OpenAI.Responses.ResponseFunctionToolCall => o.type === 'function_call',
+      )
+      if (toolCalls.length === 0) {
+        const text = textFromOutput(finalResponse.output)
+        const value = parseGenerated(text, schema)
+        yield {
+          type: 'stop',
+          stopReason: finishReason ?? 'completed',
+          iterations,
+          usage: aggregated,
+          messages: workingMessages,
+          value,
+          text,
+        } as AgentStreamEvent<T>
+        return
+      }
+
+      const resultBlocks: ContentBlock[] = []
+      for (const call of toolCalls) {
+        let parsedInput: unknown = {}
+        let parseFailed: { content: string; isError: boolean } | undefined
+        try {
+          parsedInput = call.arguments ? JSON.parse(call.arguments) : {}
+        } catch (err) {
+          parseFailed = await tryRecoverParseError(
+            call.name,
+            call.call_id,
+            err as Error,
+            options,
+          )
+        }
+        yield { type: 'tool_use', id: call.call_id, name: call.name, input: parsedInput }
+        const { content, isError } = parseFailed ?? await runToolWithRecovery(
+          toolMap.get(call.name),
+          call.name,
+          call.call_id,
+          parsedInput,
+          options,
+        )
+        resultBlocks.push({
+          type: 'tool_result',
+          toolUseId: call.call_id,
+          content,
+          ...(isError ? { isError: true } : {}),
+        } satisfies ToolResultBlock)
+        yield {
+          type: 'tool_result',
+          id: call.call_id,
+          name: call.name,
+          content,
+          isError,
+        }
+      }
+      workingMessages.push({ role: 'user', content: resultBlocks })
+
+      iterations++
+      if (iterations >= maxIterations) {
+        const text = textFromOutput(finalResponse.output)
+        const value = parseGenerated(text, schema)
+        yield {
+          type: 'stop',
+          stopReason: 'max_iterations',
+          iterations,
+          usage: aggregated,
+          messages: workingMessages,
+          value,
+          text,
+        } as AgentStreamEvent<T>
+        return
+      }
+    }
   }
 
   // ─── Param translation ──────────────────────────────────────────────────
@@ -441,6 +738,7 @@ export class OpenAIResponsesProvider extends OpenAIProvider implements Provider 
     messages: readonly Message[],
     options: ChatOptions,
     tools: readonly Tool[],
+    schema?: OutputSchema<unknown>,
   ): OpenAI.Responses.ResponseCreateParamsNonStreaming {
     const model = options.model ?? this.defaultModel
     const params: OpenAI.Responses.ResponseCreateParamsNonStreaming = {
@@ -450,6 +748,9 @@ export class OpenAIResponsesProvider extends OpenAIProvider implements Provider 
         return Array.isArray(r) ? r : [r]
       }) as unknown as OpenAI.Responses.ResponseInput,
       max_output_tokens: options.maxTokens ?? this.defaultMaxTokens,
+    }
+    if (options.previousResponseId !== undefined) {
+      params.previous_response_id = options.previousResponseId
     }
     const systemText = systemPromptText(options.system)
     if (systemText.length > 0) params.instructions = systemText
@@ -471,6 +772,18 @@ export class OpenAIResponsesProvider extends OpenAIProvider implements Provider 
       params.tools = toolEntries as unknown as OpenAI.Responses.ResponseCreateParams['tools']
     }
 
+    if (schema !== undefined) {
+      params.text = {
+        format: {
+          type: 'json_schema',
+          name: schema.name,
+          schema: schema.jsonSchema as { [key: string]: unknown },
+          strict: true,
+          ...(schema.description !== undefined ? { description: schema.description } : {}),
+        },
+      }
+    }
+
     // Reasoning controls — gpt-5 and o-series only. Emit when set;
     // non-reasoning models reject.
     if (options.effort !== undefined) {
@@ -488,13 +801,15 @@ export class OpenAIResponsesProvider extends OpenAIProvider implements Provider 
     response: OpenAI.Responses.Response,
     requestedModel: string,
   ): ChatResult<OpenAI.Responses.Response> {
-    return {
+    const result: ChatResult<OpenAI.Responses.Response> = {
       text: textFromOutput(response.output),
       model: response.model ?? requestedModel,
       stopReason: response.status ?? null,
       usage: toUsage(response.usage),
       raw: response,
     }
+    if (response.id) result.responseId = response.id
+    return result
   }
 }
 

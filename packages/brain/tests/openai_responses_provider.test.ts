@@ -11,7 +11,8 @@
  *   - Server tools translate to Responses API types
  *     (`web_search`, `code_interpreter`) — not the chat
  *     completions tools format.
- *   - Schema variants throw with "deferred" guidance.
+ *   - Structured output via `text.format: { type: 'json_schema' }`:
+ *     `generate`, `runWithToolsAndSchema`, `streamWithToolsAndSchema`.
  *
  * Stubs the SDK client; no network calls.
  */
@@ -255,48 +256,183 @@ describe('OpenAIResponsesProvider.runWithTools()', () => {
   })
 })
 
-// ─── Schema variants throw — deferred ──────────────────────────────────
+// ─── generate / runWithToolsAndSchema — structured output ──────────────
 
-describe('OpenAIResponsesProvider — schema variants throw', () => {
-  test('generate throws with "follow-up slice" guidance', async () => {
-    const { client } = makeFakeClient([])
+describe('OpenAIResponsesProvider — structured output', () => {
+  const personSchema = {
+    name: 'person',
+    description: 'a person',
+    jsonSchema: {
+      type: 'object',
+      properties: { name: { type: 'string' }, age: { type: 'number' } },
+      required: ['name', 'age'],
+      additionalProperties: false,
+    },
+  }
+
+  test('generate emits text.format json_schema and parses the result', async () => {
+    const { client, calls } = makeFakeClient([
+      makeResponse({ text: '{"name":"Liva","age":33}' }),
+    ])
+    const provider = makeProvider(client)
+    const result = await provider.generate(
+      [{ role: 'user', content: 'who?' }],
+      personSchema,
+    )
+
+    expect(result.value).toEqual({ name: 'Liva', age: 33 })
+    expect(result.text).toBe('{"name":"Liva","age":33}')
+    const params = calls[0]?.params as { text?: { format?: Record<string, unknown> } }
+    expect(params.text?.format).toEqual({
+      type: 'json_schema',
+      name: 'person',
+      schema: personSchema.jsonSchema,
+      strict: true,
+      description: 'a person',
+    })
+  })
+
+  test('generate rejects when response is not valid JSON', async () => {
+    const { client } = makeFakeClient([makeResponse({ text: 'not json' })])
     const provider = makeProvider(client)
     await expect(
-      provider.generate(
-        [{ role: 'user', content: 'q' }],
-        { name: 's', jsonSchema: { type: 'object' } },
-      ),
+      provider.generate([{ role: 'user', content: 'q' }], personSchema),
     ).rejects.toBeInstanceOf(BrainError)
   })
 
-  test('runWithToolsAndSchema throws', async () => {
-    const { client } = makeFakeClient([])
-    const provider = makeProvider(client)
-    await expect(
-      provider.runWithToolsAndSchema(
-        [{ role: 'user', content: 'q' }],
-        [],
-        { name: 's', jsonSchema: { type: 'object' } },
-      ),
-    ).rejects.toBeInstanceOf(BrainError)
-  })
-
-  test('streamWithToolsAndSchema throws on first iteration', async () => {
-    const { client } = makeFakeClient([])
-    const provider = makeProvider(client)
-    let thrown: unknown
-    try {
-      for await (const _e of provider.streamWithToolsAndSchema(
-        [{ role: 'user', content: 'q' }],
-        [],
-        { name: 's', jsonSchema: { type: 'object' } },
-      )) {
-        // drain
-      }
-    } catch (e) {
-      thrown = e
+  test('generate runs schema.parse when provided', async () => {
+    const schema = {
+      ...personSchema,
+      parse(v: unknown) {
+        const p = v as { name: string; age: number }
+        if (p.age < 0) throw new Error('negative age')
+        return p
+      },
     }
-    expect(thrown).toBeInstanceOf(BrainError)
+    const { client } = makeFakeClient([
+      makeResponse({ text: '{"name":"A","age":-1}' }),
+    ])
+    const provider = makeProvider(client)
+    await expect(
+      provider.generate([{ role: 'user', content: 'q' }], schema),
+    ).rejects.toBeInstanceOf(BrainError)
+  })
+
+  test('runWithToolsAndSchema loops tools, parses final json, sets text.format every call', async () => {
+    const tool = defineTool({
+      name: 'lookup',
+      description: 'looks up',
+      inputSchema: { type: 'object' },
+      execute: async () => 'Liva, 33',
+    })
+    const { client, calls } = makeFakeClient([
+      makeResponse({
+        toolCalls: [{ callId: 'c1', name: 'lookup', arguments: '{}' }],
+      }),
+      makeResponse({ text: '{"name":"Liva","age":33}' }),
+    ])
+    const provider = makeProvider(client)
+    const result = await provider.runWithToolsAndSchema(
+      [{ role: 'user', content: 'q' }],
+      [tool],
+      personSchema,
+    )
+
+    expect(result.value).toEqual({ name: 'Liva', age: 33 })
+    expect(result.text).toBe('{"name":"Liva","age":33}')
+    expect(result.iterations).toBe(1)
+    // text.format is set on every call in the loop.
+    for (const c of calls) {
+      const p = c.params as { text?: { format?: { type?: string } } }
+      expect(p.text?.format?.type).toBe('json_schema')
+    }
+  })
+})
+
+// ─── streamWithToolsAndSchema — schema + streaming ─────────────────────
+
+describe('OpenAIResponsesProvider.streamWithToolsAndSchema()', () => {
+  const personSchema = {
+    name: 'person',
+    jsonSchema: {
+      type: 'object',
+      properties: { name: { type: 'string' } },
+      required: ['name'],
+      additionalProperties: false,
+    },
+  }
+
+  test('emits text deltas then a terminal stop with value + text', async () => {
+    const completed = {
+      type: 'response.completed',
+      response: {
+        status: 'completed',
+        output: [
+          {
+            type: 'message',
+            id: 'msg_1',
+            role: 'assistant',
+            status: 'completed',
+            content: [
+              { type: 'output_text', text: '{"name":"Liva"}', annotations: [], logprobs: [] },
+            ],
+          },
+        ],
+        usage: {
+          input_tokens: 4,
+          output_tokens: 2,
+          total_tokens: 6,
+          input_tokens_details: { cached_tokens: 0 },
+          output_tokens_details: { reasoning_tokens: 0 },
+        },
+      },
+    }
+    const streamEvents = [
+      { type: 'response.output_text.delta', delta: '{"name":' },
+      { type: 'response.output_text.delta', delta: '"Liva"}' },
+      completed,
+    ]
+    const calls: Array<{ params: OpenAI.Responses.ResponseCreateParams }> = []
+    const client = {
+      responses: {
+        create: async (params: OpenAI.Responses.ResponseCreateParams) => {
+          calls.push({ params })
+          return {
+            async *[Symbol.asyncIterator]() {
+              for (const e of streamEvents) yield e
+            },
+          }
+        },
+      },
+    } as unknown as OpenAI
+    const provider = makeProvider(client)
+    const events: Array<Record<string, unknown>> = []
+    for await (const e of provider.streamWithToolsAndSchema(
+      [{ role: 'user', content: 'q' }],
+      [],
+      personSchema,
+    )) {
+      events.push(e as unknown as Record<string, unknown>)
+    }
+    expect(events.map((e) => e.type as string)).toEqual([
+      'iteration_start',
+      'text',
+      'text',
+      'iteration_end',
+      'stop',
+    ])
+    const stop = events[events.length - 1] as {
+      type: 'stop'
+      value: { name: string }
+      text: string
+      stopReason: string
+    }
+    expect(stop.value).toEqual({ name: 'Liva' })
+    expect(stop.text).toBe('{"name":"Liva"}')
+    // text.format must be set on the streaming request too.
+    const p = calls[0]?.params as { text?: { format?: { type?: string } }; stream?: boolean }
+    expect(p.stream).toBe(true)
+    expect(p.text?.format?.type).toBe('json_schema')
   })
 })
 

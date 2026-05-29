@@ -57,7 +57,12 @@ import type { AgentStreamEvent } from '../agent_stream_event.ts'
 import { resolveMcpTools, type ResolveMcpToolsOptions } from '../mcp/resolve_mcp_tools.ts'
 import { parseGenerated, type OutputSchema } from '../output_schema.ts'
 import { recoverOrThrow, runToolWithRecovery } from '../tool_runner.ts'
-import type { Provider, RunWithToolsOptions } from '../provider.ts'
+import type {
+  Provider,
+  RunWithToolsOptions,
+  RunWithToolsOptionsWithSuspend,
+} from '../provider.ts'
+import type { SuspendedRun } from '../suspended_run.ts'
 import type { Tool } from '../tool.ts'
 import { ToolExecutionError } from '../tool_execution_error.ts'
 import type {
@@ -92,6 +97,16 @@ export interface OpenAIProviderOptions {
    * unset; the provider uses the default `MCPClient`.
    */
   mcpClientFactory?: ResolveMcpToolsOptions['clientFactory']
+  /**
+   * Optional MCP connection pool. When set, every `runWithTools`
+   * call (and its schema / streaming variants) borrows MCP clients
+   * from the pool instead of constructing fresh ones — and the
+   * per-call cleanup becomes a no-op so transports survive across
+   * calls. Apps construct one pool at boot and pass it to every
+   * provider that needs local MCP; pool ownership stays on the app
+   * via `pool.close()` at shutdown.
+   */
+  mcpPool?: ResolveMcpToolsOptions['pool']
 }
 
 export class OpenAIProvider implements Provider {
@@ -108,6 +123,7 @@ export class OpenAIProvider implements Provider {
   protected readonly defaultEmbedModel: string
   protected readonly defaultTranscribeModel: string
   protected readonly mcpClientFactory?: ResolveMcpToolsOptions['clientFactory']
+  protected readonly mcpPool?: ResolveMcpToolsOptions['pool']
 
   constructor(
     name: string,
@@ -120,6 +136,7 @@ export class OpenAIProvider implements Provider {
     this.defaultEmbedModel = config.defaultEmbedModel ?? DEFAULT_OPENAI_EMBED_MODEL
     this.defaultTranscribeModel = config.defaultTranscribeModel ?? DEFAULT_OPENAI_TRANSCRIBE_MODEL
     this.mcpClientFactory = options.mcpClientFactory
+    this.mcpPool = options.mcpPool
     this.client =
       options.client ??
       new OpenAI({
@@ -164,18 +181,22 @@ export class OpenAIProvider implements Provider {
     }
   }
 
+  runWithTools(
+    messages: readonly Message[],
+    tools: readonly Tool[],
+    options: RunWithToolsOptionsWithSuspend,
+  ): Promise<AgentResult | SuspendedRun>
+  runWithTools(
+    messages: readonly Message[],
+    tools: readonly Tool[],
+    options?: RunWithToolsOptions,
+  ): Promise<AgentResult>
   async runWithTools(
     messages: readonly Message[],
     tools: readonly Tool[],
     options: RunWithToolsOptions = {},
-  ): Promise<AgentResult> {
-    const mcpServers: readonly MCPServer[] = options.mcpServers ?? []
-    const resolved =
-      mcpServers.length > 0
-        ? await resolveMcpTools(mcpServers, {
-            ...(this.mcpClientFactory ? { clientFactory: this.mcpClientFactory } : {}),
-          })
-        : { tools: [] as Tool[], close: async () => {} }
+  ): Promise<AgentResult | SuspendedRun> {
+    const resolved = await this.resolveMcp(options.mcpServers ?? [])
     try {
       return await this._runLoop(messages, [...tools, ...resolved.tools], options)
     } finally {
@@ -187,7 +208,7 @@ export class OpenAIProvider implements Provider {
     messages: readonly Message[],
     tools: readonly Tool[],
     options: RunWithToolsOptions,
-  ): Promise<AgentResult> {
+  ): Promise<AgentResult | SuspendedRun> {
     const maxIterations = options.maxIterations ?? 10
     const toolMap = new Map<string, Tool>(tools.map((t) => [t.name, t]))
     const workingMessages: Message[] = [...messages]
@@ -230,7 +251,8 @@ export class OpenAIProvider implements Provider {
       }
 
       const resultBlocks: ContentBlock[] = []
-      for (const call of toolCalls) {
+      for (let i = 0; i < toolCalls.length; i++) {
+        const call = toolCalls[i]!
         if (call.type !== 'function') continue
         let parsedInput: unknown
         let parseFailed: { content: string; isError: boolean } | undefined
@@ -245,6 +267,38 @@ export class OpenAIProvider implements Provider {
             ),
             options,
           )
+        }
+        if (options.shouldSuspend && !parseFailed) {
+          const frameworkCall: ToolUseBlock = {
+            type: 'tool_use',
+            id: call.id,
+            name: call.function.name,
+            input: (parsedInput ?? {}) as Record<string, unknown>,
+          }
+          if (await options.shouldSuspend(frameworkCall, options.context)) {
+            const pending: ToolUseBlock[] = []
+            for (let j = i; j < toolCalls.length; j++) {
+              const c = toolCalls[j]!
+              if (c.type !== 'function') continue
+              let pInput: unknown = {}
+              try {
+                pInput = c.function.arguments ? JSON.parse(c.function.arguments) : {}
+              } catch {
+                pInput = c.function.arguments ?? {}
+              }
+              pending.push({
+                type: 'tool_use',
+                id: c.id,
+                name: c.function.name,
+                input: pInput as Record<string, unknown>,
+              })
+            }
+            return {
+              status: 'suspended',
+              pendingToolCalls: pending,
+              state: { messages: workingMessages, iterations, usage: aggregated },
+            }
+          }
         }
         const { content, isError } = parseFailed
           ?? (await runToolWithRecovery(
@@ -282,13 +336,7 @@ export class OpenAIProvider implements Provider {
     schema: OutputSchema<T>,
     options: RunWithToolsOptions = {},
   ): Promise<AgentGenerateResult<T>> {
-    const mcpServers: readonly MCPServer[] = options.mcpServers ?? []
-    const resolved =
-      mcpServers.length > 0
-        ? await resolveMcpTools(mcpServers, {
-            ...(this.mcpClientFactory ? { clientFactory: this.mcpClientFactory } : {}),
-          })
-        : { tools: [] as Tool[], close: async () => {} }
+    const resolved = await this.resolveMcp(options.mcpServers ?? [])
     try {
       return await this._runLoopWithSchema([...tools, ...resolved.tools], messages, schema, options)
     } finally {
@@ -404,13 +452,7 @@ export class OpenAIProvider implements Provider {
     tools: readonly Tool[],
     options: RunWithToolsOptions = {},
   ): AsyncIterable<AgentStreamEvent> {
-    const mcpServers: readonly MCPServer[] = options.mcpServers ?? []
-    const resolved =
-      mcpServers.length > 0
-        ? await resolveMcpTools(mcpServers, {
-            ...(this.mcpClientFactory ? { clientFactory: this.mcpClientFactory } : {}),
-          })
-        : { tools: [] as Tool[], close: async () => {} }
+    const resolved = await this.resolveMcp(options.mcpServers ?? [])
     try {
       yield* this._streamLoop(messages, [...tools, ...resolved.tools], options)
     } finally {
@@ -598,13 +640,7 @@ export class OpenAIProvider implements Provider {
     schema: OutputSchema<T>,
     options: RunWithToolsOptions = {},
   ): AsyncIterable<AgentStreamEvent<T>> {
-    const mcpServers: readonly MCPServer[] = options.mcpServers ?? []
-    const resolved =
-      mcpServers.length > 0
-        ? await resolveMcpTools(mcpServers, {
-            ...(this.mcpClientFactory ? { clientFactory: this.mcpClientFactory } : {}),
-          })
-        : { tools: [] as Tool[], close: async () => {} }
+    const resolved = await this.resolveMcp(options.mcpServers ?? [])
     try {
       yield* this._streamLoopWithSchema(
         [...tools, ...resolved.tools],
@@ -895,6 +931,25 @@ export class OpenAIProvider implements Provider {
       usage: toUsage(response.usage),
       raw: response,
     }
+  }
+
+  /**
+   * Single resolve-MCP entry point used by every tool-loop variant.
+   * Threads both the test-only `clientFactory` and the optional
+   * `mcpPool` through. Caller invokes `resolved.close()` in
+   * `finally`; that's a no-op when the pool owns the lifetime.
+   */
+  protected resolveMcp(servers: readonly MCPServer[]): Promise<{
+    tools: Tool[]
+    close: () => Promise<void>
+  }> {
+    if (servers.length === 0) {
+      return Promise.resolve({ tools: [], close: async () => {} })
+    }
+    return resolveMcpTools(servers, {
+      ...(this.mcpClientFactory ? { clientFactory: this.mcpClientFactory } : {}),
+      ...(this.mcpPool ? { pool: this.mcpPool } : {}),
+    })
   }
 
   // ─── Param translation ──────────────────────────────────────────────────

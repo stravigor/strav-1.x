@@ -28,12 +28,18 @@ import type { AgentResult } from '../agent_result.ts'
 import type { AnthropicProviderConfig } from '../brain_config.ts'
 import { DEFAULT_MODEL } from '../brain_config.ts'
 import { BrainError } from '../brain_error.ts'
-import type { Provider, RunWithToolsOptions } from '../provider.ts'
+import type {
+  Provider,
+  RunWithToolsOptions,
+  RunWithToolsOptionsWithSuspend,
+} from '../provider.ts'
+import type { SuspendedRun } from '../suspended_run.ts'
 import type { Tool } from '../tool.ts'
 import type {
   ChatOptions,
   ChatResult,
   ChatUsage,
+  CompactionBlock,
   ContentBlock,
   GenerateResult,
   MCPToolResultBlock,
@@ -82,7 +88,13 @@ export class AnthropicProvider implements Provider {
 
   async chat(messages: readonly Message[], options: ChatOptions = {}): Promise<ChatResult> {
     const params = this.buildParams(messages, options)
-    const response = await this.client.messages.create(params, reqOpts(options))
+    const useBeta = needsBetaRouting(params)
+    const response = useBeta
+      ? ((await this.client.beta.messages.create(
+          params as unknown as Anthropic.Beta.Messages.MessageCreateParamsNonStreaming,
+          reqOpts(options),
+        )) as unknown as Anthropic.Message)
+      : await this.client.messages.create(params, reqOpts(options))
     return this.toChatResult(response)
   }
 
@@ -91,7 +103,12 @@ export class AnthropicProvider implements Provider {
     options: ChatOptions = {},
   ): AsyncIterable<StreamEvent> {
     const params = this.buildParams(messages, options)
-    const stream = this.client.messages.stream(params, reqOpts(options))
+    const stream = needsBetaRouting(params)
+      ? this.client.beta.messages.stream(
+          params as unknown as Anthropic.Beta.Messages.MessageCreateParamsStreaming,
+          reqOpts(options),
+        )
+      : this.client.messages.stream(params, reqOpts(options))
     for await (const event of stream) {
       if (
         event.type === 'content_block_delta' &&
@@ -137,11 +154,21 @@ export class AnthropicProvider implements Provider {
    * `tools` array each turn. Apps that care about cache hits keep
    * the tool list stable across runs.
    */
+  runWithTools(
+    messages: readonly Message[],
+    tools: readonly Tool[],
+    options: RunWithToolsOptionsWithSuspend,
+  ): Promise<AgentResult | SuspendedRun>
+  runWithTools(
+    messages: readonly Message[],
+    tools: readonly Tool[],
+    options?: RunWithToolsOptions,
+  ): Promise<AgentResult>
   async runWithTools(
     messages: readonly Message[],
     tools: readonly Tool[],
     options: RunWithToolsOptions = {},
-  ): Promise<AgentResult> {
+  ): Promise<AgentResult | SuspendedRun> {
     const maxIterations = options.maxIterations ?? 10
     const toolMap = new Map<string, Tool>(tools.map((t) => [t.name, t]))
     const workingMessages: Message[] = [...messages]
@@ -186,7 +213,6 @@ export class AnthropicProvider implements Provider {
 
       // Declare MCP servers + flip to the beta surface when in use.
       // Anthropic's MCP connector requires `mcp-client-2025-11-20`.
-      let response: Anthropic.Message
       if (useMcpBeta) {
         params.mcp_servers = mcpServers.map((s) => {
           const def: Anthropic.Beta.Messages.BetaRequestMCPServerURLDefinition = {
@@ -201,13 +227,15 @@ export class AnthropicProvider implements Provider {
         ;(params as { betas?: string[] }).betas = baseBetas.includes('mcp-client-2025-11-20')
           ? [...baseBetas]
           : [...baseBetas, 'mcp-client-2025-11-20']
-        response = (await this.client.beta.messages.create(
-          params as unknown as Anthropic.Beta.Messages.MessageCreateParamsNonStreaming,
-          reqOpts(options),
-        )) as unknown as Anthropic.Message
-      } else {
-        response = await this.client.messages.create(params, reqOpts(options))
       }
+      // Route via beta when either MCP servers OR compaction are in
+      // play — both live on the beta surface.
+      const response: Anthropic.Message = needsBetaRouting(params)
+        ? ((await this.client.beta.messages.create(
+            params as unknown as Anthropic.Beta.Messages.MessageCreateParamsNonStreaming,
+            reqOpts(options),
+          )) as unknown as Anthropic.Message)
+        : await this.client.messages.create(params, reqOpts(options))
       addUsage(aggregated, response.usage)
       lastStopReason = response.stop_reason ?? null
 
@@ -236,7 +264,28 @@ export class AnthropicProvider implements Provider {
         (b): b is Anthropic.ToolUseBlock => b.type === 'tool_use',
       )
       const resultBlocks: ContentBlock[] = []
-      for (const block of toolUseBlocks) {
+      for (let i = 0; i < toolUseBlocks.length; i++) {
+        const block = toolUseBlocks[i]!
+        if (options.shouldSuspend) {
+          const frameworkCall: ToolUseBlock = {
+            type: 'tool_use',
+            id: block.id,
+            name: block.name,
+            input: block.input as Record<string, unknown>,
+          }
+          if (await options.shouldSuspend(frameworkCall, options.context)) {
+            return {
+              status: 'suspended',
+              pendingToolCalls: toolUseBlocks.slice(i).map((b) => ({
+                type: 'tool_use',
+                id: b.id,
+                name: b.name,
+                input: b.input as Record<string, unknown>,
+              })),
+              state: { messages: workingMessages, iterations, usage: aggregated },
+            }
+          }
+        }
         const { content, isError } = await runToolWithRecovery(
           toolMap.get(block.name),
           block.name,
@@ -314,7 +363,6 @@ export class AnthropicProvider implements Provider {
         format: { type: 'json_schema', schema: schema.jsonSchema },
       }
 
-      let response: Anthropic.Message
       if (useMcpBeta) {
         params.mcp_servers = mcpServers.map((s) => {
           const def: Anthropic.Beta.Messages.BetaRequestMCPServerURLDefinition = {
@@ -329,13 +377,13 @@ export class AnthropicProvider implements Provider {
         ;(params as { betas?: string[] }).betas = baseBetas.includes('mcp-client-2025-11-20')
           ? [...baseBetas]
           : [...baseBetas, 'mcp-client-2025-11-20']
-        response = (await this.client.beta.messages.create(
-          params as unknown as Anthropic.Beta.Messages.MessageCreateParamsNonStreaming,
-          reqOpts(options),
-        )) as unknown as Anthropic.Message
-      } else {
-        response = await this.client.messages.create(params, reqOpts(options))
       }
+      const response: Anthropic.Message = needsBetaRouting(params)
+        ? ((await this.client.beta.messages.create(
+            params as unknown as Anthropic.Beta.Messages.MessageCreateParamsNonStreaming,
+            reqOpts(options),
+          )) as unknown as Anthropic.Message)
+        : await this.client.messages.create(params, reqOpts(options))
       addUsage(aggregated, response.usage)
       lastStopReason = response.stop_reason ?? null
 
@@ -454,7 +502,7 @@ export class AnthropicProvider implements Provider {
           : [...baseBetas, 'mcp-client-2025-11-20']
       }
 
-      const stream = useMcpBeta
+      const stream = needsBetaRouting(params)
         ? this.client.beta.messages.stream(
             params as unknown as Anthropic.Beta.Messages.MessageCreateParamsStreaming,
             reqOpts(options),
@@ -619,7 +667,7 @@ export class AnthropicProvider implements Provider {
           : [...baseBetas, 'mcp-client-2025-11-20']
       }
 
-      const stream = useMcpBeta
+      const stream = needsBetaRouting(params)
         ? this.client.beta.messages.stream(
             params as unknown as Anthropic.Beta.Messages.MessageCreateParamsStreaming,
             reqOpts(options),
@@ -782,7 +830,26 @@ export class AnthropicProvider implements Provider {
       ;(params as { cache_control?: { type: 'ephemeral' } }).cache_control = EPHEMERAL_CACHE
     }
 
-    const betas = mergeBetas(this.betas, options.betas)
+    // Compaction — emits the beta `edits` entry + flips the
+    // `compact-2026-01-12` beta header so the request goes through
+    // the SDK's beta surface (same routing as MCP).
+    const baseBetas = mergeBetas(this.betas, options.betas)
+    const betas = options.compact !== undefined
+      ? mergeBetas(baseBetas, [COMPACT_BETA])
+      : baseBetas
+    if (options.compact !== undefined) {
+      const edit: Record<string, unknown> = { type: COMPACT_EDIT_TYPE }
+      if (options.compact.trigger !== undefined) {
+        edit.trigger = { type: 'input_tokens', value: options.compact.trigger }
+      }
+      if (options.compact.instructions !== undefined) {
+        edit.instructions = options.compact.instructions
+      }
+      if (options.compact.pauseAfterCompaction !== undefined) {
+        edit.pause_after_compaction = options.compact.pauseAfterCompaction
+      }
+      ;(params as { edits?: unknown[] }).edits = [edit]
+    }
     if (betas.length > 0) {
       ;(params as { betas?: readonly string[] }).betas = betas
     }
@@ -799,17 +866,47 @@ export class AnthropicProvider implements Provider {
       .filter((b): b is Anthropic.TextBlock => b.type === 'text')
       .map((b) => b.text)
       .join('')
-    return {
+    const result: ChatResult<Anthropic.Message> = {
       text,
       model: message.model,
       stopReason: message.stop_reason,
       usage: toUsage(message.usage),
       raw: message,
     }
+    // Surface structured content when the turn carries blocks
+    // beyond plain text (compaction today; reasoning blocks in a
+    // future slice). Apps that persist conversations push this
+    // onto the message history so round-trippable blocks survive
+    // subsequent requests.
+    const blocks = fromAnthropicContent(message.content)
+    if (blocks.some((b) => b.type !== 'text')) {
+      result.content = blocks
+    }
+    return result
   }
 }
 
 // ─── Shape converters ─────────────────────────────────────────────────────
+
+/** Compaction beta — required header + `edits[].type` for `compact-2026-01-12`. */
+const COMPACT_BETA = 'compact-2026-01-12'
+const COMPACT_EDIT_TYPE = 'compact_20260112'
+
+/**
+ * Whether the request needs to flow through `client.beta.messages.create`
+ * instead of the stable surface. Triggered by:
+ *
+ *   - `edits[]` (compaction).
+ *   - `mcp_servers[]` (server-side MCP).
+ *
+ * Tests typically stub `client.messages.create`; the beta path uses the
+ * stub that lives at `client.beta.messages.create`.
+ */
+function needsBetaRouting(params: Anthropic.MessageCreateParamsNonStreaming): boolean {
+  const p = params as { edits?: unknown[]; mcp_servers?: unknown[] }
+  return (p.edits !== undefined && p.edits.length > 0)
+    || (p.mcp_servers !== undefined && p.mcp_servers.length > 0)
+}
 
 /** Build the request-options bag forwarded to the SDK. Only `signal` for now. */
 function reqOpts(options: { signal?: AbortSignal }): { signal?: AbortSignal } | undefined {
@@ -904,6 +1001,19 @@ function toMessageParam(message: Message): Anthropic.MessageParam {
             "AnthropicProvider: audio blocks are not supported. Anthropic's SDK does not expose an audio block type for chat messages. Route audio workloads to Gemini, or transcribe upstream and pass the text.",
             { context: { provider: 'anthropic' } },
           )
+        }
+        if (block.type === 'compaction') {
+          // Round-trip the compaction block verbatim — the server uses
+          // the opaque `encrypted_content` to stitch prior compactions
+          // together; mutating either field would invalidate the
+          // history. Untyped on the stable SDK surface; cast through
+          // the beta type shape.
+          const param: Record<string, unknown> = { type: 'compaction' }
+          if (block.content !== null) param.content = block.content
+          if (block.encryptedContent !== null) {
+            param.encrypted_content = block.encryptedContent
+          }
+          return param as unknown as Anthropic.ContentBlockParam
         }
         const text: Anthropic.TextBlockParam = { type: 'text', text: block.text }
         if (block.cache) text.cache_control = EPHEMERAL_CACHE
@@ -1071,6 +1181,13 @@ function fromAnthropicContent(
       }
       if (r.is_error) result.isError = true
       out.push(result)
+    } else if (block.type === 'compaction') {
+      const c = block as { content?: string | null; encrypted_content?: string | null }
+      out.push({
+        type: 'compaction',
+        content: c.content ?? null,
+        encryptedContent: c.encrypted_content ?? null,
+      } satisfies CompactionBlock)
     }
   }
   return out

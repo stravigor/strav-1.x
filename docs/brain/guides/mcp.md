@@ -201,7 +201,7 @@ Behavior:
 - **Transport.** Streamable HTTP (the current MCP transport). Legacy SSE-only endpoints aren't supported.
 - **Tool namespacing.** Discovered tools are exposed to the model as `<server>__<tool>` (e.g. `linear__list_issues`). The framework strips the prefix before invoking the server, so MCP servers see their tool names unchanged.
 - **Iteration cost.** Unlike the Anthropic server-side path, each MCP tool call *does* cost an iteration — the framework round-trips through your process between the model's tool request and the next model turn. Bump `RunWithToolsOptions.maxIterations` if you expect long MCP chains.
-- **Lifecycle.** Transports are opened at the start of the run and closed in a `finally` once the loop exits. No connection pooling in V1.
+- **Lifecycle.** Default: transports are opened at the start of the run and closed in a `finally` once the loop exits. For long-running workers, opt into a pool (next section) to keep connections alive across calls.
 - **Auth.** Two paths:
   - `MCPServer.authorizationToken` → static `Authorization: Bearer <token>`. Fine for self-hosted servers where you control the token.
   - `MCPServer.oauth` → authorization-code-with-PKCE flow. The framework drives discovery + dynamic client registration + the redirect + the token exchange. See **OAuth** below.
@@ -219,6 +219,56 @@ const tools = await client.listTools()
 const { content, isError } = await client.callTool('list_issues', { limit: 3 })
 await client.close()
 ```
+
+## Connection pooling — `MCPClientPool`
+
+Default `MCPClient` lifecycle is connect-per-call: every `runTools` invocation handshakes a fresh Streamable HTTP transport, lists tools, runs the loop, closes. Fine for one-shot CLI scripts; expensive for long-running workers (chat servers, background processors) that fire many MCP-enabled requests against the same servers.
+
+The fix is **`MCPClientPool`** — a long-lived, per-(server name, URL) cache of connected clients. Hand the pool to your providers at construction; the framework borrows from it on every call instead of constructing fresh.
+
+```ts
+import { MCPClientPool, OpenAIProvider, GeminiProvider } from '@strav/brain'
+
+const pool = new MCPClientPool()
+
+const openai = new OpenAIProvider(
+  'openai',
+  { driver: 'openai', apiKey: env('OPENAI_API_KEY') },
+  { mcpPool: pool },
+)
+const gemini = new GeminiProvider(
+  'gemini',
+  { driver: 'google', apiKey: env('GEMINI_API_KEY') },
+  { mcpPool: pool },
+)
+
+const brain = new BrainManager({
+  default: 'openai',
+  providers: { openai, gemini },
+})
+
+// ... handle many requests over the worker's lifetime ...
+
+// On graceful shutdown:
+await pool.close()
+```
+
+Behavior:
+
+- **Lazy connect.** The first `borrow(server)` returns a constructed-but-not-yet-connected `MCPClient`. The first `listTools` / `callTool` call on it triggers the handshake; subsequent calls reuse the same transport.
+- **Concurrency-safe.** `MCPClient.connect()` dedupes in-flight handshakes — multiple parallel borrows of the same server end up awaiting one connect, not racing.
+- **`close` is a no-op when pooled.** `resolveMcpTools` skips per-call cleanup since the pool owns the lifetime. Only `pool.close()` actually shuts transports down.
+- **Eviction.** Call `pool.evict(server)` to drop and close one client — useful after a re-auth flow or a transient failure where the connection state is suspect. Subsequent borrows construct a fresh client.
+- **Key.** `(server.name, server.url)` — two `MCPServer` configs that differ in URL get distinct pooled clients even if they share a name.
+
+When NOT to pool:
+
+- **One-shot scripts.** The overhead of a single handshake at startup vs at request time is the same; pooling adds nothing.
+- **Per-tenant MCP servers** keyed dynamically. The pool's key is `(name, url)`; if your app talks to N tenant-specific servers, the cache could grow unboundedly. Either evict aggressively on tenant churn, or skip the pool entirely for those workloads.
+
+Pool support is provider-side, not request-side: every `runTools` call from a provider with `mcpPool: pool` automatically uses it. There's no per-call opt-out — if you need fresh connections occasionally, call `pool.evict(server)` first.
+
+The Anthropic provider doesn't need the pool: Anthropic's server-side MCP path runs the MCP connector on the backend, not in the framework, so there's no client connection to pool.
 
 ## OAuth — `MCPServer.oauth`
 

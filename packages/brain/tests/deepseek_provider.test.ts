@@ -8,8 +8,10 @@
  *   - `generate` uses `response_format.json_object` and injects
  *     the JSON Schema into the system prompt; client-side
  *     `parseGenerated` validates the result.
- *   - `runWithToolsAndSchema` / `streamWithToolsAndSchema` throw
- *     `BrainError` (combined tools+schema deferred).
+ *   - `runWithToolsAndSchema` / `streamWithToolsAndSchema` use the
+ *     tool-forcing pattern (synthetic `respond_with_*` tool whose
+ *     parameters = schema.jsonSchema; model's args become the
+ *     parsed value).
  *   - Inherits all OpenAI-compatible behavior — chat() / runWithTools()
  *     work identically by passing through.
  */
@@ -173,10 +175,83 @@ describe('DeepSeekProvider.generate', () => {
   })
 })
 
-// ─── Combined schema methods throw ───────────────────────────────────────
+// ─── runWithToolsAndSchema — tool-forcing ────────────────────────────────
 
-describe('DeepSeekProvider — combined schema methods throw', () => {
-  test('runWithToolsAndSchema throws', async () => {
+describe('DeepSeekProvider — runWithToolsAndSchema (tool-forcing)', () => {
+  test('model calls respond_with_<schema> → args become parsed value', async () => {
+    const { client, calls } = makeFakeClient([
+      makeCompletion({
+        toolCalls: [
+          {
+            id: 'call_final',
+            name: 'respond_with_city_answer',
+            arguments: '{"city":"Paris","population":2102650}',
+          },
+        ],
+        finishReason: 'tool_calls',
+      }),
+    ])
+    const provider = new DeepSeekProvider(
+      'deepseek',
+      { driver: 'deepseek', apiKey: 'sk-test' },
+      { client },
+    )
+    const result = await provider.runWithToolsAndSchema!(
+      [{ role: 'user', content: 'capital of France?' }],
+      [],
+      citySchema,
+    )
+    expect(result.value).toEqual({ city: 'Paris', population: 2102650 })
+    // The synthetic tool was injected into the request.
+    const sentTools = calls[0]?.params.tools as Array<{ function?: { name: string } }>
+    expect(sentTools).toBeDefined()
+    expect(sentTools.some((t) => t.function?.name === 'respond_with_city_answer')).toBe(true)
+  })
+
+  test('regular tools run first, then respond_with terminates the loop', async () => {
+    const lookup = defineTool({
+      name: 'lookup',
+      description: 'looks up info',
+      inputSchema: { type: 'object' },
+      execute: async () => 'Paris has 2.1M people',
+    })
+    const { client } = makeFakeClient([
+      makeCompletion({
+        toolCalls: [{ id: 'a', name: 'lookup', arguments: '{}' }],
+        finishReason: 'tool_calls',
+      }),
+      makeCompletion({
+        toolCalls: [
+          {
+            id: 'b',
+            name: 'respond_with_city_answer',
+            arguments: '{"city":"Paris","population":2100000}',
+          },
+        ],
+        finishReason: 'tool_calls',
+      }),
+    ])
+    const provider = new DeepSeekProvider(
+      'deepseek',
+      { driver: 'deepseek', apiKey: 'sk-test' },
+      { client },
+    )
+    const result = await provider.runWithToolsAndSchema!(
+      [{ role: 'user', content: 'q' }],
+      [lookup],
+      citySchema,
+    )
+    expect(result.value).toEqual({ city: 'Paris', population: 2100000 })
+    expect(result.iterations).toBe(1)
+  })
+
+  test('user tool named respond_with_<schema> → BrainError on collision', async () => {
+    const collide = defineTool({
+      name: 'respond_with_city_answer',
+      description: 'x',
+      inputSchema: { type: 'object' },
+      execute: async () => 'x',
+    })
     const { client } = makeFakeClient([])
     const provider = new DeepSeekProvider(
       'deepseek',
@@ -184,12 +259,134 @@ describe('DeepSeekProvider — combined schema methods throw', () => {
       { client },
     )
     await expect(
-      provider.runWithToolsAndSchema!([{ role: 'user', content: 'q' }], [], citySchema),
+      provider.runWithToolsAndSchema!(
+        [{ role: 'user', content: 'q' }],
+        [collide],
+        citySchema,
+      ),
     ).rejects.toBeInstanceOf(BrainError)
   })
 
-  test('streamWithToolsAndSchema throws on first iteration', async () => {
-    const { client } = makeFakeClient([])
+  test('model returns plain text without calling respond_with → BrainError', async () => {
+    const { client } = makeFakeClient([
+      makeCompletion({ content: 'Paris', finishReason: 'stop' }),
+    ])
+    const provider = new DeepSeekProvider(
+      'deepseek',
+      { driver: 'deepseek', apiKey: 'sk-test' },
+      { client },
+    )
+    await expect(
+      provider.runWithToolsAndSchema!(
+        [{ role: 'user', content: 'q' }],
+        [],
+        citySchema,
+      ),
+    ).rejects.toBeInstanceOf(BrainError)
+  })
+})
+
+describe('DeepSeekProvider — streamWithToolsAndSchema (tool-forcing)', () => {
+  test('streams text then a terminal stop event carrying value + text', async () => {
+    // Simulate a single iteration where the model emits a respond_with
+    // tool call (no plain text content).
+    const streamEvents = [
+      {
+        choices: [
+          {
+            index: 0,
+            delta: {
+              tool_calls: [
+                {
+                  index: 0,
+                  id: 'call_final',
+                  type: 'function',
+                  function: {
+                    name: 'respond_with_city_answer',
+                    arguments: '{"city":"Paris",',
+                  },
+                },
+              ],
+            },
+            finish_reason: null,
+          },
+        ],
+      },
+      {
+        choices: [
+          {
+            index: 0,
+            delta: {
+              tool_calls: [
+                {
+                  index: 0,
+                  function: { arguments: '"population":2100000}' },
+                },
+              ],
+            },
+            finish_reason: 'tool_calls',
+          },
+        ],
+      },
+      { choices: [], usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } },
+    ]
+    const client = {
+      chat: {
+        completions: {
+          create: async () => ({
+            async *[Symbol.asyncIterator]() {
+              for (const e of streamEvents) yield e
+            },
+          }),
+        },
+      },
+    } as unknown as OpenAI
+    const provider = new DeepSeekProvider(
+      'deepseek',
+      { driver: 'deepseek', apiKey: 'sk-test' },
+      { client },
+    )
+    const events: Array<Record<string, unknown>> = []
+    for await (const e of provider.streamWithToolsAndSchema!(
+      [{ role: 'user', content: 'q' }],
+      [],
+      citySchema,
+    )) {
+      events.push(e as unknown as Record<string, unknown>)
+    }
+    const stop = events.find((e) => e.type === 'stop') as {
+      value: Answer
+      text: string
+    }
+    expect(stop.value).toEqual({ city: 'Paris', population: 2100000 })
+    // tool_use_start / tool_use_delta should NOT have been emitted
+    // for the synthetic respond_with tool — apps shouldn't see it
+    // in the stream as a normal tool call.
+    expect(events.some((e) => e.type === 'tool_use_start')).toBe(false)
+    expect(events.some((e) => e.type === 'tool_use_delta')).toBe(false)
+  })
+
+  test('stream that never calls respond_with throws BrainError', async () => {
+    const streamEvents = [
+      {
+        choices: [{ index: 0, delta: { content: 'just text' }, finish_reason: null }],
+      },
+      {
+        choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
+        usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+      },
+    ]
+    const client = {
+      chat: {
+        completions: {
+          create: async () => ({
+            async *[Symbol.asyncIterator]() {
+              for (const e of streamEvents) yield e
+            },
+          }),
+        },
+      },
+    } as unknown as OpenAI
     const provider = new DeepSeekProvider(
       'deepseek',
       { driver: 'deepseek', apiKey: 'sk-test' },

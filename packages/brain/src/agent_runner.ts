@@ -26,8 +26,17 @@ import type { AgentStreamEvent } from './agent_stream_event.ts'
 import type { BrainManager } from './brain_manager.ts'
 import { BrainError } from './brain_error.ts'
 import type { OutputSchema } from './output_schema.ts'
-import type { ChatOptions, Message } from './types.ts'
+import type {
+  ChatOptions,
+  Message,
+  ToolUseBlock,
+} from './types.ts'
 import type { RunWithToolsOptions } from './provider.ts'
+import type {
+  SuspendedRun,
+  SuspendedState,
+  ToolResultInput,
+} from './suspended_run.ts'
 
 /**
  * Conditional return shape for `AgentRunner.run()`. With the default
@@ -42,15 +51,46 @@ import type { RunWithToolsOptions } from './provider.ts'
  */
 export type AgentRunResult<T> = [T] extends [never] ? AgentResult : AgentGenerateResult<T>
 
-export class AgentRunner<T = never> {
+/**
+ * Conditional return shape that flips when the runner has opted in
+ * to suspension via `.suspend(gate)`. The phantom `S` generic on
+ * `AgentRunner<T, S>` carries the bit; `S extends true` widens the
+ * union so callers must narrow with `isSuspended(...)` before
+ * touching `result.value` / `result.text`.
+ */
+export type AgentRunMaybeSuspended<T, S extends boolean> = [S] extends [true]
+  ? AgentRunResult<T> | SuspendedRun
+  : AgentRunResult<T>
+
+export class AgentRunner<T = never, S extends boolean = false> {
   private prompt: string | undefined
   private contextBag: Record<string, unknown> = {}
   private schema: OutputSchema<T> | undefined
+  private suspendGate:
+    | ((call: ToolUseBlock, context?: Record<string, unknown>) => boolean | Promise<boolean>)
+    | undefined
 
   constructor(
     private readonly brain: BrainManager,
     private readonly agent: Agent<unknown>,
   ) {}
+
+  /**
+   * Install a human-in-the-loop gate. Called before each tool
+   * execution inside the agent loop; when it returns `true`, the
+   * run pauses and `.run()` resolves with a `SuspendedRun` instead
+   * of `AgentResult`. Apps obtain results out-of-band and call
+   * `.resume(state, results)` to continue.
+   *
+   * Throws `BrainError` if the runner is also in structured-output
+   * mode (`.output(schema)`) — schema + suspend is a deferred slice.
+   */
+  suspend(
+    gate: (call: ToolUseBlock, context?: Record<string, unknown>) => boolean | Promise<boolean>,
+  ): AgentRunner<T, true> {
+    this.suspendGate = gate
+    return this as unknown as AgentRunner<T, true>
+  }
 
   /** Set the user input. Required before `run()`. */
   input(text: string): this {
@@ -127,9 +167,14 @@ export class AgentRunner<T = never> {
     >
   }
 
-  async run(): Promise<AgentRunResult<T>> {
+  async run(): Promise<AgentRunMaybeSuspended<T, S>> {
     if (this.prompt === undefined) {
       throw new BrainError('AgentRunner.run: input() must be called before run().')
+    }
+    if (this.suspendGate !== undefined && this.schema !== undefined) {
+      throw new BrainError(
+        'AgentRunner.run: `.suspend(...)` and `.output(schema)` cannot be combined in V1 — the schema variants don\'t yet model pause/resume. Run tools first with suspension, then call brain.generate(...) on the result for the structured summary.',
+      )
     }
     const messages: Message[] = [{ role: 'user', content: this.prompt }]
 
@@ -172,8 +217,39 @@ export class AgentRunner<T = never> {
       context: this.contextBag,
     }
     if (this.agent.mcpServers.length > 0) options.mcpServers = this.agent.mcpServers
+    if (this.suspendGate !== undefined) options.shouldSuspend = this.suspendGate
     const result = await this.brain.runTools(messages, this.agent.tools, options)
-    return result as AgentRunResult<T>
+    return result as AgentRunMaybeSuspended<T, S>
+  }
+
+  /**
+   * Resume a previously-suspended run. Takes the `SuspendedRun.state`
+   * snapshot and the results gathered for each `pendingToolCalls`
+   * entry; the loop continues from where it paused.
+   *
+   * The runner's `suspend()` gate carries over so the same
+   * approval logic applies to any further tool calls — pass a
+   * fresh gate via `suspend()` before `resume()` to change the
+   * policy.
+   */
+  async resume(
+    state: SuspendedState,
+    results: readonly ToolResultInput[],
+  ): Promise<AgentRunMaybeSuspended<T, true>> {
+    if (this.schema !== undefined) {
+      throw new BrainError(
+        'AgentRunner.resume: structured-output runners cannot be resumed in V1 — `.output(schema)` is incompatible with pause/resume.',
+      )
+    }
+    const options: RunWithToolsOptions = {
+      ...this.buildChatOptions(),
+      maxIterations: this.agent.maxIterations,
+      context: this.contextBag,
+    }
+    if (this.agent.mcpServers.length > 0) options.mcpServers = this.agent.mcpServers
+    if (this.suspendGate !== undefined) options.shouldSuspend = this.suspendGate
+    const result = await this.brain.resumeTools(state, results, this.agent.tools, options)
+    return result as AgentRunMaybeSuspended<T, true>
   }
 
   private buildChatOptions(): ChatOptions {

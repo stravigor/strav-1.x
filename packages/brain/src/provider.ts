@@ -17,6 +17,7 @@ import type { AgentResult } from './agent_result.ts'
 import type { AgentStreamEvent } from './agent_stream_event.ts'
 import type { MCPServer } from './mcp_server.ts'
 import type { OutputSchema } from './output_schema.ts'
+import type { SuspendedRun } from './suspended_run.ts'
 import type { Tool } from './tool.ts'
 import type { ToolExecutionError } from './tool_execution_error.ts'
 import type {
@@ -28,6 +29,7 @@ import type {
   GenerateResult,
   Message,
   StreamEvent,
+  ToolUseBlock,
   TranscribeOptions,
   TranscribeResult,
 } from './types.ts'
@@ -69,6 +71,39 @@ export interface RunWithToolsOptions extends ChatOptions {
    * ```
    */
   onToolError?(error: ToolExecutionError): string | undefined
+  /**
+   * Human-in-the-loop gate. Called before each tool execution; when
+   * it returns `true`, the loop suspends and `runWithTools` returns
+   * a `SuspendedRun` carrying the pending tool calls + a JSON-
+   * serializable snapshot of the loop state. Apps obtain results
+   * out-of-band (human approval, queued worker, external system,
+   * ...) and call `brain.resumeTools(state, results, tools, options)`
+   * to continue.
+   *
+   * Mid-batch invariant: if a tool call inside a multi-call batch
+   * triggers suspension, the framework also captures all unexecuted
+   * siblings from the same assistant turn — the provider's
+   * `tool_use` / `tool_result` pairing must stay balanced on resume.
+   *
+   * V1 scope: only honored on non-streaming `runWithTools`. Pass it
+   * to `streamWithTools`, `runWithToolsAndSchema`, or
+   * `streamWithToolsAndSchema` and the framework throws `BrainError`
+   * — those entrypoints don't yet model the pause/resume protocol.
+   */
+  shouldSuspend?(
+    call: ToolUseBlock,
+    context?: Record<string, unknown>,
+  ): boolean | Promise<boolean>
+}
+
+/**
+ * Same as `RunWithToolsOptions` but with `shouldSuspend` required.
+ * Used to narrow the return type of `runWithTools` overloads — when
+ * apps opt in to the human-in-the-loop gate, the result widens to
+ * `AgentResult | SuspendedRun`; otherwise it's just `AgentResult`.
+ */
+export type RunWithToolsOptionsWithSuspend = RunWithToolsOptions & {
+  shouldSuspend: NonNullable<RunWithToolsOptions['shouldSuspend']>
 }
 
 export interface Provider {
@@ -113,7 +148,7 @@ export interface Provider {
     messages: readonly Message[],
     tools: readonly Tool[],
     options?: RunWithToolsOptions,
-  ): Promise<AgentResult>
+  ): Promise<AgentResult | SuspendedRun>
 
   /**
    * Structured output. Sends `messages` to the model with a

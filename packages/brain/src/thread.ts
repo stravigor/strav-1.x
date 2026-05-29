@@ -35,6 +35,14 @@ export interface ThreadState {
   messages: Message[]
   system?: SystemPrompt
   options?: ChatOptions
+  /**
+   * Last provider response id captured by `send(...)` — restored on
+   * `fromJSON` so subsequent sends thread it via
+   * `ChatOptions.previousResponseId` automatically. Only ever set
+   * when the underlying provider surfaces `responseId` (OpenAI
+   * Responses API today).
+   */
+  lastResponseId?: string
 }
 
 export class Thread {
@@ -42,6 +50,13 @@ export class Thread {
   readonly messages: Message[] = []
   readonly system?: SystemPrompt
   readonly options?: ChatOptions
+  /**
+   * Last response id returned by the provider on this thread. Used to
+   * thread stateful-conversation hints (OpenAI Responses API) into
+   * the next `send(...)` so apps don't have to manage it manually.
+   * `undefined` for providers that don't surface a response id.
+   */
+  lastResponseId?: string
   private readonly brain: BrainManager
 
   constructor(brain: BrainManager, opts: ThreadOptions = {}) {
@@ -54,6 +69,11 @@ export class Thread {
    * Append a user turn, call the model, append the assistant reply,
    * and return the reply text. Per-call options override the
    * thread's defaults; `system` always comes from the thread.
+   *
+   * When the underlying provider supports stateful conversations
+   * (OpenAI Responses API), `previousResponseId` is auto-threaded
+   * from the prior turn — apps don't need to manage it. Per-call
+   * `options.previousResponseId` wins if supplied explicitly.
    */
   async send(text: string, options: ChatOptions = {}): Promise<string> {
     this.messages.push({ role: 'user', content: text })
@@ -65,8 +85,25 @@ export class Thread {
       // mid-thread by changing the system prompt every turn.
       ...(this.system !== undefined ? { system: this.system } : {}),
     }
+    if (
+      merged.previousResponseId === undefined &&
+      this.lastResponseId !== undefined
+    ) {
+      merged.previousResponseId = this.lastResponseId
+    }
     const result = await this.brain.chat(this.messages, merged)
-    this.messages.push({ role: 'assistant', content: result.text })
+    // Preserve structured assistant content when present (compaction
+    // blocks today; reasoning blocks later). Round-tripping these
+    // back to the provider on subsequent sends is what makes
+    // server-side compaction actually save tokens — once a turn
+    // carries a `compaction` block, the older raw turns drop out
+    // and the model only re-reads the summary.
+    if (result.content !== undefined && result.content.length > 0) {
+      this.messages.push({ role: 'assistant', content: result.content })
+    } else {
+      this.messages.push({ role: 'assistant', content: result.text })
+    }
+    if (result.responseId !== undefined) this.lastResponseId = result.responseId
     return result.text
   }
 
@@ -80,6 +117,7 @@ export class Thread {
     const state: ThreadState = { messages: [...this.messages] }
     if (this.system !== undefined) state.system = this.system
     if (this.options !== undefined) state.options = this.options
+    if (this.lastResponseId !== undefined) state.lastResponseId = this.lastResponseId
     return state
   }
 
@@ -94,6 +132,7 @@ export class Thread {
     if (state.options !== undefined) options.options = state.options
     const thread = new Thread(brain, options)
     for (const m of state.messages) thread.messages.push(m)
+    if (state.lastResponseId !== undefined) thread.lastResponseId = state.lastResponseId
     return thread
   }
 }

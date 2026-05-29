@@ -73,7 +73,12 @@ import type {
 import { resolveMcpTools, type ResolveMcpToolsOptions } from '../mcp/resolve_mcp_tools.ts'
 import { parseGenerated, type OutputSchema } from '../output_schema.ts'
 import { runToolWithRecovery } from '../tool_runner.ts'
-import type { Provider, RunWithToolsOptions } from '../provider.ts'
+import type {
+  Provider,
+  RunWithToolsOptions,
+  RunWithToolsOptionsWithSuspend,
+} from '../provider.ts'
+import type { SuspendedRun } from '../suspended_run.ts'
 import type { Tool } from '../tool.ts'
 import type {
   ChatOptions,
@@ -119,6 +124,8 @@ export interface GeminiProviderOptions {
   client?: { models: GeminiModelsClient }
   /** Internal seam — tests inject a stub MCP client factory. */
   mcpClientFactory?: ResolveMcpToolsOptions['clientFactory']
+  /** See `OpenAIProviderOptions.mcpPool` — same semantics. */
+  mcpPool?: ResolveMcpToolsOptions['pool']
 }
 
 export class GeminiProvider implements Provider {
@@ -128,6 +135,7 @@ export class GeminiProvider implements Provider {
   private readonly defaultMaxTokens: number
   private readonly defaultEmbedModel: string
   private readonly mcpClientFactory?: ResolveMcpToolsOptions['clientFactory']
+  private readonly mcpPool?: ResolveMcpToolsOptions['pool']
 
   constructor(name: string, config: GeminiProviderConfig, options: GeminiProviderOptions = {}) {
     this.name = name
@@ -135,6 +143,7 @@ export class GeminiProvider implements Provider {
     this.defaultMaxTokens = config.defaultMaxTokens ?? 4096
     this.defaultEmbedModel = config.defaultEmbedModel ?? DEFAULT_GEMINI_EMBED_MODEL
     this.mcpClientFactory = options.mcpClientFactory
+    this.mcpPool = options.mcpPool
     if (options.client) {
       this.models = options.client.models
     } else {
@@ -273,18 +282,42 @@ export class GeminiProvider implements Provider {
     }
   }
 
+  /**
+   * Resolve MCP tool descriptors for `servers`, threading the
+   * provider's optional `clientFactory` (test seam) and `mcpPool`
+   * (long-lived connections) through. Caller invokes
+   * `resolved.close()` in `finally` — a no-op when the pool owns
+   * lifetimes.
+   */
+  private resolveMcp(servers: readonly MCPServer[]): Promise<{
+    tools: Tool[]
+    close: () => Promise<void>
+  }> {
+    if (servers.length === 0) {
+      return Promise.resolve({ tools: [], close: async () => {} })
+    }
+    return resolveMcpTools(servers, {
+      ...(this.mcpClientFactory ? { clientFactory: this.mcpClientFactory } : {}),
+      ...(this.mcpPool ? { pool: this.mcpPool } : {}),
+    })
+  }
+
+  runWithTools(
+    messages: readonly Message[],
+    tools: readonly Tool[],
+    options: RunWithToolsOptionsWithSuspend,
+  ): Promise<AgentResult | SuspendedRun>
+  runWithTools(
+    messages: readonly Message[],
+    tools: readonly Tool[],
+    options?: RunWithToolsOptions,
+  ): Promise<AgentResult>
   async runWithTools(
     messages: readonly Message[],
     tools: readonly Tool[],
     options: RunWithToolsOptions = {},
-  ): Promise<AgentResult> {
-    const mcpServers: readonly MCPServer[] = options.mcpServers ?? []
-    const resolved =
-      mcpServers.length > 0
-        ? await resolveMcpTools(mcpServers, {
-            ...(this.mcpClientFactory ? { clientFactory: this.mcpClientFactory } : {}),
-          })
-        : { tools: [] as Tool[], close: async () => {} }
+  ): Promise<AgentResult | SuspendedRun> {
+    const resolved = await this.resolveMcp(options.mcpServers ?? [])
     try {
       return await this._runLoop(messages, [...tools, ...resolved.tools], options)
     } finally {
@@ -296,7 +329,7 @@ export class GeminiProvider implements Provider {
     messages: readonly Message[],
     tools: readonly Tool[],
     options: RunWithToolsOptions,
-  ): Promise<AgentResult> {
+  ): Promise<AgentResult | SuspendedRun> {
     const maxIterations = options.maxIterations ?? 10
     const toolMap = new Map<string, Tool>(tools.map((t) => [t.name, t]))
     const workingMessages: Message[] = [...messages]
@@ -339,7 +372,15 @@ export class GeminiProvider implements Provider {
       }
 
       const resultBlocks: ContentBlock[] = []
-      for (const call of toolUses) {
+      for (let i = 0; i < toolUses.length; i++) {
+        const call = toolUses[i]!
+        if (options.shouldSuspend && await options.shouldSuspend(call, options.context)) {
+          return {
+            status: 'suspended',
+            pendingToolCalls: toolUses.slice(i),
+            state: { messages: workingMessages, iterations, usage: aggregated },
+          }
+        }
         const { content, isError } = await runToolWithRecovery(
           toolMap.get(call.name),
           call.name,
@@ -375,13 +416,7 @@ export class GeminiProvider implements Provider {
     schema: OutputSchema<T>,
     options: RunWithToolsOptions = {},
   ): Promise<AgentGenerateResult<T>> {
-    const mcpServers: readonly MCPServer[] = options.mcpServers ?? []
-    const resolved =
-      mcpServers.length > 0
-        ? await resolveMcpTools(mcpServers, {
-            ...(this.mcpClientFactory ? { clientFactory: this.mcpClientFactory } : {}),
-          })
-        : { tools: [] as Tool[], close: async () => {} }
+    const resolved = await this.resolveMcp(options.mcpServers ?? [])
     try {
       return await this._runLoopWithSchema([...tools, ...resolved.tools], messages, schema, options)
     } finally {
@@ -480,13 +515,7 @@ export class GeminiProvider implements Provider {
     tools: readonly Tool[],
     options: RunWithToolsOptions = {},
   ): AsyncIterable<AgentStreamEvent> {
-    const mcpServers: readonly MCPServer[] = options.mcpServers ?? []
-    const resolved =
-      mcpServers.length > 0
-        ? await resolveMcpTools(mcpServers, {
-            ...(this.mcpClientFactory ? { clientFactory: this.mcpClientFactory } : {}),
-          })
-        : { tools: [] as Tool[], close: async () => {} }
+    const resolved = await this.resolveMcp(options.mcpServers ?? [])
     try {
       yield* this._streamLoop(messages, [...tools, ...resolved.tools], options)
     } finally {
@@ -605,13 +634,7 @@ export class GeminiProvider implements Provider {
     schema: OutputSchema<T>,
     options: RunWithToolsOptions = {},
   ): AsyncIterable<AgentStreamEvent<T>> {
-    const mcpServers: readonly MCPServer[] = options.mcpServers ?? []
-    const resolved =
-      mcpServers.length > 0
-        ? await resolveMcpTools(mcpServers, {
-            ...(this.mcpClientFactory ? { clientFactory: this.mcpClientFactory } : {}),
-          })
-        : { tools: [] as Tool[], close: async () => {} }
+    const resolved = await this.resolveMcp(options.mcpServers ?? [])
     try {
       yield* this._streamLoopWithSchema(
         [...tools, ...resolved.tools],

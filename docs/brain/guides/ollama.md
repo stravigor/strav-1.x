@@ -55,7 +55,7 @@ Ollama's OpenAI-compat layer is request/response-shape-identical for the surface
 
 - **No `reasoning_effort`.** Base class strips the field. Ollama rejects unknown fields; models with built-in thinking (`qwen3-thinking`, `deepseek-r1` distills) emit thinking tokens regardless.
 - **No `response_format.json_schema`.** Recent Ollama supports `json_schema` for some models but behavior varies. Base class uses `json_object` + schema-in-system-prompt + client-side `parseGenerated` — works on every tool-capable model.
-- **`runWithToolsAndSchema` / `streamWithToolsAndSchema` throw.** Same as every OpenAI-compat provider — apps run the two as separate calls (see "What's NOT supported" below).
+- **`runWithToolsAndSchema` / `streamWithToolsAndSchema` use tool-forcing.** The framework injects a synthetic `respond_with_<schemaName>` function tool whose `parameters` IS the schema. The model uses regular tools as needed, then calls `respond_with_*` exactly once for its final answer — those args become `result.value`. Caveats and details in [deepseek.md](./deepseek.md#combined-tools--schema--tool-forcing) (the pattern is shared by every OpenAI-compat provider).
 
 ## Tool calling
 
@@ -74,14 +74,6 @@ Same pattern as OpenAI / DeepSeek: `mcpServers` are resolved through the local M
 
 ## What's NOT supported
 
-- **`runWithToolsAndSchema` / `streamWithToolsAndSchema`.** Run as two calls instead:
-
-  ```ts
-  const { messages } = await brain.runTools(prompt, tools, { provider: 'ollama' })
-  const { value } = await brain.generate(messages, schema, { provider: 'ollama' })
-  ```
-
-  Or switch to OpenAI / Anthropic / Gemini for the combined call.
 - **`countTokens`.** Ollama doesn't expose a count endpoint. `BrainManager.countTokens` returns `null` when routed to Ollama. Apps that need a count call a local tokenizer (matching the model's tokenizer) or estimate.
 - **Strict schema enforcement on `generate`.** The model isn't constrained to the schema by the runtime — `parseGenerated` (and `schema.parse` when set) catches mismatches at the boundary, but smaller models may need more aggressive prompt engineering or a larger model to behave.
 
