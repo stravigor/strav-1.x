@@ -18,7 +18,10 @@ jobs:
 
     services:
       postgres:
-        image: postgres:16
+        # `pgvector/pgvector:pg16` is a strict superset of `postgres:16` —
+        # standard PG 16 plus the `vector` extension. Required by the
+        # `@strav/rag` e2e; harmless for every other suite.
+        image: pgvector/pgvector:pg16
         env:
           POSTGRES_USER: strav
           POSTGRES_PASSWORD: strav

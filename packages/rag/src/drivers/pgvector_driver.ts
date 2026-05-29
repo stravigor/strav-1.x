@@ -28,7 +28,11 @@
  *     model them.
  */
 
-import type { PostgresDatabase } from '@strav/database'
+import {
+  currentTransactionalContext,
+  type DatabaseExecutor,
+  type PostgresDatabase,
+} from '@strav/database'
 import { VectorQueryError } from '../rag_error.ts'
 import { ragVectorSchema } from '../rag_vector_schema.ts'
 import type {
@@ -71,6 +75,20 @@ export class PgvectorDriver implements VectorStore {
     })
   }
 
+  /**
+   * Route reads + writes through the ambient `UnitOfWork`
+   * transaction when one is active (e.g., inside
+   * `tenants.withTenant(...)`); fall back to the raw pool
+   * otherwise. Mirrors how `Repository.executor(opts)` works in
+   * `@strav/database`, so RLS scoping + transactional event
+   * flushing apply uniformly across framework + driver code.
+   */
+  private exec(): DatabaseExecutor {
+    const ambient = currentTransactionalContext()
+    if (ambient) return ambient.tx
+    return this.db as unknown as DatabaseExecutor
+  }
+
   // ─── Collections ──────────────────────────────────────────────────────
 
   async createCollection(_collection: string, _dimension: number): Promise<void> {
@@ -81,7 +99,7 @@ export class PgvectorDriver implements VectorStore {
   }
 
   async deleteCollection(collection: string): Promise<void> {
-    await this.db.execute(
+    await this.exec().execute(
       `DELETE FROM "${this.table}" WHERE "collection" = $1`,
       [collection],
     )
@@ -96,13 +114,24 @@ export class PgvectorDriver implements VectorStore {
     if (documents.length === 0) return
     // pgvector accepts the vector as a stringified array literal —
     // `[0.12,0.34,...]` — cast with `::vector` at the boundary.
+    //
+    // Tenant scoping: the `tenant_id` column on `rag_vector` is
+    // NOT NULL with no default, so apps wrapping the call in
+    // `tenants.withTenant(...)` need a value supplied. We read
+    // `current_setting('app.tenant_id')` inside the SQL itself —
+    // the same session var the RLS policy reads — so the INSERT
+    // works under tenant scope without the driver knowing the PK
+    // type ahead of time. The `true` second arg makes the
+    // setting return NULL (not throw) outside `withTenant`; the
+    // INSERT then fails the NOT NULL constraint with a clear
+    // error message that nudges the app toward the right wrap.
     for (const doc of documents) {
       const id = doc.id ?? crypto.randomUUID()
       const embeddingLiteral = `[${doc.embedding.join(',')}]`
-      await this.db.execute(
+      await this.exec().execute(
         `INSERT INTO "${this.table}"
-          ("id", "collection", "source_id", "content", "metadata", "embedding", "created_at")
-         VALUES ($1, $2, $3, $4, $5::jsonb, $6::vector, NOW())
+          ("id", "tenant_id", "collection", "source_id", "content", "metadata", "embedding", "created_at")
+         VALUES ($1, current_setting('app.tenant_id', true), $2, $3, $4, $5::jsonb, $6::vector, NOW())
          ON CONFLICT ("id") DO UPDATE SET
            "collection" = EXCLUDED."collection",
            "source_id"  = EXCLUDED."source_id",
@@ -124,21 +153,21 @@ export class PgvectorDriver implements VectorStore {
   async delete(collection: string, ids: readonly string[]): Promise<void> {
     if (ids.length === 0) return
     const placeholders = ids.map((_, i) => `$${i + 2}`).join(', ')
-    await this.db.execute(
+    await this.exec().execute(
       `DELETE FROM "${this.table}" WHERE "collection" = $1 AND "id" IN (${placeholders})`,
       [collection, ...ids],
     )
   }
 
   async deleteBySource(collection: string, sourceId: string): Promise<void> {
-    await this.db.execute(
+    await this.exec().execute(
       `DELETE FROM "${this.table}" WHERE "collection" = $1 AND "source_id" = $2`,
       [collection, sourceId],
     )
   }
 
   async flush(collection: string): Promise<void> {
-    await this.db.execute(
+    await this.exec().execute(
       `DELETE FROM "${this.table}" WHERE "collection" = $1`,
       [collection],
     )
@@ -190,7 +219,7 @@ export class PgvectorDriver implements VectorStore {
       score: number | string
     }>
     try {
-      rows = await this.db.query(sql, params)
+      rows = await this.exec().query(sql, params)
     } catch (cause) {
       throw new VectorQueryError(
         `pgvector query failed for collection "${collection}".`,

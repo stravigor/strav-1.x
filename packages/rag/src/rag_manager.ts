@@ -28,7 +28,7 @@ import { PostgresDatabase } from '@strav/database'
 // biome-ignore lint/style/useImportType: BrainManager value import for @inject() param-type metadata.
 import { BrainManager } from '@strav/brain'
 // biome-ignore lint/style/useImportType: Application value import for the container handle.
-import { Application, inject } from '@strav/kernel'
+import { Application, inject, ulid } from '@strav/kernel'
 import { createChunker } from './chunking/chunker.ts'
 import { MemoryDriver } from './drivers/memory_driver.ts'
 import { PgvectorDriver } from './drivers/pgvector_driver.ts'
@@ -204,9 +204,8 @@ export class RagManager {
       )
     }
 
-    const baseId = crypto.randomUUID()
     const documents: VectorDocument[] = chunks.map((chunk, i) => ({
-      id: `${baseId}_${i}`,
+      id: ulid(),
       ...(options.sourceId !== undefined ? { sourceId: options.sourceId } : {}),
       content: chunk.content,
       embedding: embeddings[i]!,

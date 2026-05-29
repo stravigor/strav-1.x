@@ -12,7 +12,10 @@
 
 services:
   postgres:
-    image: postgres:16
+    # `pgvector/pgvector:pg16` is a strict superset of `postgres:16` —
+    # standard PG 16 plus the `vector` extension preinstalled.
+    # Required by `@strav/rag`'s e2e; harmless for every other test.
+    image: pgvector/pgvector:pg16
     container_name: strav_postgres
     environment:
       POSTGRES_USER: strav

@@ -1,0 +1,13 @@
+{
+  "name": "@strav-tests/m5-rag",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "M5 end-to-end smoke — boots Application + DatabaseProvider + BrainProvider + RagProvider against real Postgres + pgvector, runs the full ingest → retrieve loop, verifies the retrievable() repository mixin and per-tenant RLS isolation.",
+  "dependencies": {
+    "@strav/brain": "workspace:*",
+    "@strav/database": "workspace:*",
+    "@strav/kernel": "workspace:*",
+    "@strav/rag": "workspace:*"
+  }
+}
