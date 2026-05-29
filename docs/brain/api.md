@@ -58,6 +58,8 @@ import {
   type ContentBlock,
   type TextBlock,
   type ImageBlock,
+  type DocumentBlock,
+  type AudioBlock,
   type ToolUseBlock,
   type ToolResultBlock,
   type MCPToolUseBlock,
@@ -561,9 +563,28 @@ interface ImageBlock {
     | { type: 'base64'; mediaType: string; data: string }
     | { type: 'url'; url: string }
 }
+
+interface DocumentBlock {
+  type: 'document'
+  source:
+    | { type: 'base64'; mediaType: string; data: string }   // 'application/pdf'
+    | { type: 'url'; url: string }
+  title?: string                                            // surfaced to the model on Anthropic
+}
+
+interface AudioBlock {
+  type: 'audio'
+  source:
+    | { type: 'base64'; mediaType: string; data: string }   // 'audio/mp3', 'audio/wav', 'audio/ogg', …
+    | { type: 'url'; url: string }
+}
 ```
 
-`content` is either a string (no caching, text only) or a typed block list. `ImageBlock` attaches a picture to a user message — see [`guides/multimodal.md`](./guides/multimodal.md) for per-provider mapping + vision-capable model picks.
+`content` is either a string (no caching, text only) or a typed block list. See [`guides/multimodal.md`](./guides/multimodal.md) for the full coverage matrix:
+
+- **Images** — all five providers (model-dependent on Ollama / DeepSeek).
+- **Documents (PDF)** — Anthropic + Gemini native; OpenAI / DeepSeek / Ollama throw with "split to images" guidance.
+- **Audio** — Gemini native; everyone else throws with provider-specific guidance (Anthropic: SDK doesn't expose yet; OpenAI: preprocess via Whisper).
 
 ### `SystemPrompt`
 

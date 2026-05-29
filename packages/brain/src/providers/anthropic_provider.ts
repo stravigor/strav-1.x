@@ -27,6 +27,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import type { AgentResult } from '../agent_result.ts'
 import type { AnthropicProviderConfig } from '../brain_config.ts'
 import { DEFAULT_MODEL } from '../brain_config.ts'
+import { BrainError } from '../brain_error.ts'
 import type { Provider, RunWithToolsOptions } from '../provider.ts'
 import type { Tool } from '../tool.ts'
 import type {
@@ -869,6 +870,27 @@ function toMessageParam(message: Message): Anthropic.MessageParam {
                   }
                 : { type: 'url', url: block.source.url },
           } satisfies Anthropic.ImageBlockParam
+        }
+        if (block.type === 'document') {
+          const documentParam: Anthropic.DocumentBlockParam = {
+            type: 'document',
+            source:
+              block.source.type === 'base64'
+                ? {
+                    type: 'base64',
+                    media_type: 'application/pdf',
+                    data: block.source.data,
+                  }
+                : { type: 'url', url: block.source.url },
+          }
+          if (block.title !== undefined) documentParam.title = block.title
+          return documentParam
+        }
+        if (block.type === 'audio') {
+          throw new BrainError(
+            "AnthropicProvider: audio blocks are not supported. Anthropic's SDK does not expose an audio block type for chat messages. Route audio workloads to Gemini, or transcribe upstream and pass the text.",
+            { context: { provider: 'anthropic' } },
+          )
         }
         const text: Anthropic.TextBlockParam = { type: 'text', text: block.text }
         if (block.cache) text.cache_control = EPHEMERAL_CACHE

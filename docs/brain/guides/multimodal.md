@@ -1,6 +1,18 @@
-# Multimodal inputs — images
+# Multimodal inputs — images, documents, audio
 
-`@strav/brain` lets apps attach images to user messages so vision-capable models can see them alongside text. Same `Message.content` shape across every provider; the framework translates to each vendor's native wire format.
+`@strav/brain` lets apps attach images, PDFs, and audio clips to user messages so multimodal-capable models can process them alongside text. Same `Message.content` shape across every provider; the framework translates to each vendor's native wire format.
+
+Coverage matrix:
+
+|                  | Anthropic | OpenAI | Gemini | DeepSeek | Ollama |
+|---|---|---|---|---|---|
+| **Images**       | yes (Claude 4.x family) | yes (gpt-5 / gpt-4o family) | yes (Gemini 2.x) | yes on `deepseek-vl` | yes on vision models (`llama3.2-vision`, `llava`, `qwen2.5-vl`) |
+| **Documents** (PDF) | yes (native `document` block, with optional `title`) | throws — split to images first | yes (via `inlineData` / `fileData`) | throws (inherits OpenAI) | throws (inherits OpenAI) |
+| **Audio**        | throws — Anthropic's SDK doesn't expose audio yet | throws — Whisper preprocessing required | yes (via `inlineData` / `fileData`) | throws | throws |
+
+The "throws" entries surface a `BrainError` with vendor-specific remediation guidance instead of a wire-level 400.
+
+## Images
 
 ```ts
 import { readFileSync } from 'node:fs'
@@ -118,6 +130,111 @@ for await (const event of brain.stream([
 }
 ```
 
+## Documents (PDF)
+
+Two providers support PDFs natively: **Anthropic** (native `document` block with optional `title` for multi-doc calls) and **Gemini** (via `inlineData` / `fileData`). OpenAI / DeepSeek / Ollama throw with guidance to split the PDF to images first.
+
+```ts
+import { readFileSync } from 'node:fs'
+import type { Message } from '@strav/brain'
+
+const pdf = readFileSync('./contract-q1.pdf').toString('base64')
+
+const message: Message = {
+  role: 'user',
+  content: [
+    { type: 'text', text: 'Summarize the termination clauses.' },
+    {
+      type: 'document',
+      source: { type: 'base64', mediaType: 'application/pdf', data: pdf },
+      title: 'NDA — 2026 Q1',     // optional; Anthropic surfaces this to the model
+    },
+  ],
+}
+
+const { text } = await brain.chat([message], { provider: 'anthropic' })
+```
+
+`DocumentBlock`:
+
+```ts
+interface DocumentBlock {
+  type: 'document'
+  source:
+    | { type: 'base64'; mediaType: string; data: string }   // 'application/pdf'
+    | { type: 'url'; url: string }
+  title?: string                                            // shown to the model on Anthropic
+}
+```
+
+### Per-provider
+
+| Provider | Wire | Notes |
+|---|---|---|
+| **Anthropic** | `{ type: 'document', source: { type: 'base64'|'url', media_type: 'application/pdf', data|url }, title? }` | Native shape. `title` is forwarded to the model — helpful for multi-doc calls ("the contract", "the invoice"). |
+| **Gemini** | `inlineData: { mimeType: 'application/pdf', data }` (base64) or `fileData: { fileUri, mimeType: 'application/pdf' }` (url). `title` is silently dropped. | URL fetches happen on Gemini's side. |
+| **OpenAI / DeepSeek / Ollama** | throws `BrainError`. | Apps that target OpenAI for PDFs preprocess with `pdf-to-image` (or similar) and send each page as an `ImageBlock` on a vision-capable model. |
+
+### Multi-document calls
+
+Anthropic handles multiple `DocumentBlock`s in one turn cleanly. Useful for "compare A vs B" or "extract data from all three":
+
+```ts
+{
+  role: 'user',
+  content: [
+    { type: 'text', text: 'Find clauses that differ between these two versions.' },
+    { type: 'document', source: { type: 'base64', mediaType: 'application/pdf', data: v1 }, title: 'Version 1' },
+    { type: 'document', source: { type: 'base64', mediaType: 'application/pdf', data: v2 }, title: 'Version 2' },
+  ],
+}
+```
+
+## Audio
+
+**Gemini** is the only V1 provider that accepts audio in its chat API. Anthropic + OpenAI throw with guidance:
+
+- **OpenAI** — preprocess via the Whisper API (`audio.transcriptions.create`) or `gpt-4o-transcribe`, then send the resulting text.
+- **Anthropic** — their SDK doesn't expose an audio block type yet. Route audio workloads to Gemini, or transcribe upstream.
+
+```ts
+import { readFileSync } from 'node:fs'
+import type { Message } from '@strav/brain'
+
+const voice = readFileSync('./meeting.mp3').toString('base64')
+
+const message: Message = {
+  role: 'user',
+  content: [
+    { type: 'text', text: 'Transcribe + extract action items as bullet points.' },
+    { type: 'audio', source: { type: 'base64', mediaType: 'audio/mp3', data: voice } },
+  ],
+}
+
+const { text } = await brain.chat([message], { provider: 'google' })
+```
+
+`AudioBlock`:
+
+```ts
+interface AudioBlock {
+  type: 'audio'
+  source:
+    | { type: 'base64'; mediaType: string; data: string }   // 'audio/mp3', 'audio/wav', 'audio/ogg', 'audio/flac', 'audio/webm', 'audio/aac'
+    | { type: 'url'; url: string }
+}
+```
+
+Supported audio MIMEs on Gemini: `audio/mp3`, `audio/wav`, `audio/ogg`, `audio/flac`, `audio/webm`, `audio/aac`, `audio/m4a`. URL-source MIMEs are guessed from the file extension.
+
+### Per-provider
+
+| Provider | Behavior |
+|---|---|
+| **Gemini** | `inlineData` (base64) or `fileData` (url) with audio MIME. Same wire path as images. |
+| **Anthropic** | throws `BrainError` — SDK doesn't expose an audio block. |
+| **OpenAI / DeepSeek / Ollama** | throws `BrainError` — preprocess via Whisper / model-specific transcription and send text. |
+
 ## Local + private
 
 Ollama vision + base64 + the local MCP client gives a fully on-device path — image goes from disk → base64 → local Ollama model, no cloud involved:
@@ -143,9 +260,9 @@ The same `brain.chat` call swaps to a cloud provider by changing `{ provider: 'a
 
 ## What's deferred
 
-- **Audio inputs.** Gemini supports audio natively, Anthropic 4.x does too via its audio block. OpenAI takes a separate Whisper preprocessing step. Surface lands when an app needs it.
-- **Video inputs.** Gemini supports video clips; Anthropic supports key-frame extraction. Same deferral — surface lands when an app needs it.
-- **Documents (PDF).** Anthropic + Gemini accept PDFs as a separate block type. Useful for invoice / contract / report workflows.
-- **Image generation** as a brain primitive. Currently apps drop down to provider SDKs directly for DALL-E / Imagen / etc.
-- **Multimodal embeddings.** `brain.embed(...)` is text-only in V1. Gemini's `multimodalembedding-001` accepts images; an `embedImage(...)` extension lands when an app needs it.
-- **`tool_result` blocks carrying images.** A tool might return a chart or a generated image. Currently `tool_result.content` is text-only.
+- **Video inputs.** Gemini supports video clips; Anthropic supports key-frame extraction. Surface lands when an app needs it.
+- **Anthropic audio.** Their SDK doesn't expose an audio block yet; when it does the framework adds the translation.
+- **Image generation** as a brain primitive. Apps currently drop down to provider SDKs for DALL-E / Imagen / etc.
+- **Multimodal embeddings.** `brain.embed(...)` is text-only in V1. Gemini's `multimodalembedding-001` accepts images; an extension lands when an app needs it.
+- **`tool_result` blocks carrying media.** A tool might return a chart, generated image, or audio clip. Currently `tool_result.content` is text-only.
+- **PDF on OpenAI via auto-rasterization.** Apps that want one-line PDF→images can wrap a helper in their own code; an opt-in framework helper lands when usage warrants.

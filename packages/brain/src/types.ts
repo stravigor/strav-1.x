@@ -134,9 +134,50 @@ export interface ImageBlock {
     | { type: 'url'; url: string }
 }
 
+/**
+ * Document input — attaches a PDF (V1 only — the providers that
+ * support documents currently all gate on `application/pdf`) to a
+ * user message. Anthropic surfaces it as a native `document` block;
+ * Gemini accepts it via `inlineData` / `fileData` with
+ * `application/pdf` mime; OpenAI / Ollama / DeepSeek don't support
+ * PDF blocks at all (apps split the PDF to images and use
+ * `ImageBlock`s for those vendors).
+ *
+ * The optional `title` is shown to the model on Anthropic (helpful
+ * for multi-document calls — "the contract", "the invoice"); other
+ * providers ignore it.
+ */
+export interface DocumentBlock {
+  type: 'document'
+  source:
+    | { type: 'base64'; mediaType: string; data: string }
+    | { type: 'url'; url: string }
+  /** Optional title shown to the model (Anthropic uses it; others ignore). */
+  title?: string
+}
+
+/**
+ * Audio input — attaches a sound clip to a user message. V1
+ * coverage: Gemini supports audio natively via `inlineData` with
+ * audio MIMEs (`audio/mp3`, `audio/wav`, `audio/ogg`, `audio/flac`,
+ * `audio/webm`, `audio/aac`). Anthropic + OpenAI + Ollama don't
+ * accept audio in their chat APIs — OpenAI apps preprocess via
+ * Whisper; Anthropic apps wait for the audio block to land in the
+ * SDK; Ollama apps that need audio look at server-side
+ * transcription models.
+ */
+export interface AudioBlock {
+  type: 'audio'
+  source:
+    | { type: 'base64'; mediaType: string; data: string }
+    | { type: 'url'; url: string }
+}
+
 export type ContentBlock =
   | TextBlock
   | ImageBlock
+  | DocumentBlock
+  | AudioBlock
   | ToolUseBlock
   | ToolResultBlock
   | MCPToolUseBlock

@@ -800,9 +800,10 @@ function toGeminiParts(content: string | ContentBlock[]): Part[] {
   for (const block of content) {
     if (block.type === 'text') {
       parts.push({ text: block.text })
-    } else if (block.type === 'image') {
-      // Base64 → inlineData (the wire shape Gemini expects for
-      // inline image bytes). URL → fileData with fileUri. Gemini's
+    } else if (block.type === 'image' || block.type === 'document' || block.type === 'audio') {
+      // All three media block types share Gemini's inlineData /
+      // fileData wire shape; only the MIME differs. Base64 →
+      // inlineData. URL → fileData with fileUri. Gemini's
       // fileData accepts public HTTPS and gs:// URIs; arbitrary
       // private URLs need to be fetched and converted to base64
       // by the app.
@@ -812,7 +813,10 @@ function toGeminiParts(content: string | ContentBlock[]): Part[] {
         })
       } else {
         parts.push({
-          fileData: { fileUri: block.source.url, mimeType: guessMimeFromUrl(block.source.url) },
+          fileData: {
+            fileUri: block.source.url,
+            mimeType: guessMimeFromUrl(block.source.url, block.type),
+          },
         })
       }
     } else if (block.type === 'tool_use') {
@@ -841,18 +845,35 @@ function toGeminiParts(content: string | ContentBlock[]): Part[] {
 }
 
 /**
- * Gemini's `fileData.mimeType` is required, but our `ImageBlock`
- * URL-source variant doesn't carry it (the app may not know).
- * Best-effort from the file extension; default to `image/jpeg`
- * which is widely accepted.
+ * Gemini's `fileData.mimeType` is required, but our media-block
+ * URL-source variants don't carry it (the app may not know).
+ * Best-effort from the file extension. Default falls back to the
+ * block type's most-common MIME (jpeg for images, pdf for
+ * documents, mp3 for audio).
  */
-function guessMimeFromUrl(url: string): string {
+function guessMimeFromUrl(
+  url: string,
+  kind: 'image' | 'document' | 'audio',
+): string {
   const lower = url.toLowerCase().split('?')[0] ?? ''
-  if (lower.endsWith('.png')) return 'image/png'
-  if (lower.endsWith('.webp')) return 'image/webp'
-  if (lower.endsWith('.gif')) return 'image/gif'
-  if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) return 'image/jpeg'
-  return 'image/jpeg'
+  if (kind === 'image') {
+    if (lower.endsWith('.png')) return 'image/png'
+    if (lower.endsWith('.webp')) return 'image/webp'
+    if (lower.endsWith('.gif')) return 'image/gif'
+    if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) return 'image/jpeg'
+    return 'image/jpeg'
+  }
+  if (kind === 'document') {
+    return 'application/pdf'
+  }
+  // audio
+  if (lower.endsWith('.mp3')) return 'audio/mp3'
+  if (lower.endsWith('.wav')) return 'audio/wav'
+  if (lower.endsWith('.ogg')) return 'audio/ogg'
+  if (lower.endsWith('.flac')) return 'audio/flac'
+  if (lower.endsWith('.webm')) return 'audio/webm'
+  if (lower.endsWith('.aac') || lower.endsWith('.m4a')) return 'audio/aac'
+  return 'audio/mp3'
 }
 
 function fromGeminiParts(parts: readonly Part[]): string | ContentBlock[] {

@@ -1003,6 +1003,24 @@ function toOpenAIMessage(message: Message): OpenAI.Chat.ChatCompletionMessagePar
     return param
   }
 
+  // Document / audio aren't supported by OpenAI's chat completions
+  // API. Throw with vendor-specific guidance so apps don't waste a
+  // 400 trying to send a PDF.
+  for (const block of message.content) {
+    if (block.type === 'document') {
+      throw new BrainError(
+        "OpenAIProvider: document blocks are not supported on OpenAI's chat completions API. For PDFs, split the document to images (one per page) and send them as ImageBlocks on a vision-capable model (gpt-5 / gpt-4o family); or route document workloads to Anthropic / Gemini, which accept PDF blocks natively.",
+        { context: { provider: 'openai' } },
+      )
+    }
+    if (block.type === 'audio') {
+      throw new BrainError(
+        "OpenAIProvider: audio blocks are not supported on OpenAI's chat completions API. Transcribe audio upstream via OpenAI's Whisper / gpt-4o-transcribe and send the resulting text; or route audio workloads to Gemini, which accepts audio blocks natively.",
+        { context: { provider: 'openai' } },
+      )
+    }
+  }
+
   // User-role multi-block content. If any image blocks are present,
   // emit OpenAI's multi-part content array (text + image_url
   // entries). Otherwise flatten text — keeps simple text messages

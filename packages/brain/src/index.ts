@@ -49,6 +49,8 @@ export type {
   ChatResult,
   ChatUsage,
   ContentBlock,
+  AudioBlock,
+  DocumentBlock,
   EmbedOptions,
   EmbedResult,
   GenerateResult,
