@@ -41,13 +41,14 @@ class AppProvider extends ServiceProvider {
       TenantManager,
       (c) => new TenantManager(c.resolve(PostgresDatabase), c.resolve(EventBus)),
     )
-  }
 
-  override async boot(app: Application): Promise<void> {
-    // Register the `tenant` middleware by name so routes can reference it.
+    // Middleware + routes register here (not in boot()) because
+    // HttpProvider.boot() compiles the router — adding groups after compile
+    // throws `Router: cannot add a group after compile().`. register() runs
+    // strictly before any boot(), so the registry and router are both bound
+    // and mutable at this point. The dependency declaration above still
+    // ensures HttpProvider.register() ran first.
     app.resolve(MiddlewareRegistry).register('tenant', TenantMiddleware)
-
-    // Declare routes against the router.
     registerRoutes(app.resolve(Router))
   }
 }

@@ -28,6 +28,7 @@ import {
 } from '../../packages/database/src/index.ts'
 import { EventBus } from '../../packages/kernel/src/index.ts'
 import {
+  connectedRoleBypassesRls,
   createTestDatabase,
   isPostgresAvailable,
   resetSchema,
@@ -126,6 +127,18 @@ describe.skipIf(!PG_AVAILABLE)('integration: Postgres smoke', () => {
     await db.execute(emitCreateTable(tenantSchema, { registry }).sql)
     await db.execute(emitCreateTable(postSchema, { registry }).sql)
     await db.execute(emitCreateTable(ledgerSchema, { registry }).sql)
+
+    // Seed the two tenant rows up-front so every test (post / ledger
+    // INSERTs) has FK targets — earlier this lived inline in the first
+    // tenancy test and broke any test that ran solo or after a skip.
+    await db.execute('INSERT INTO "tenant" (id, name) VALUES ($1, $2) ON CONFLICT DO NOTHING', [
+      '01TENANTAAA000000000000001',
+      'Acme',
+    ])
+    await db.execute('INSERT INTO "tenant" (id, name) VALUES ($1, $2) ON CONFLICT DO NOTHING', [
+      '01TENANTBBB000000000000002',
+      'Globex',
+    ])
   })
 
   afterAll(async () => {
@@ -165,16 +178,17 @@ describe.skipIf(!PG_AVAILABLE)('integration: Postgres smoke', () => {
   })
 
   test('TenantManager.withTenant isolates reads + writes per tenant', async () => {
-    // Seed two tenants directly (the registry table is NOT RLS-scoped).
-    await db.execute('INSERT INTO "tenant" (id, name) VALUES ($1, $2)', [
-      '01TENANTAAA000000000000001',
-      'Acme',
-    ])
-    await db.execute('INSERT INTO "tenant" (id, name) VALUES ($1, $2)', [
-      '01TENANTBBB000000000000002',
-      'Globex',
-    ])
-
+    // SUPERUSER / BYPASSRLS roles ignore RLS — even FORCE ROW LEVEL SECURITY
+    // doesn't bind a superuser. Skip the scoping assertion gracefully; the
+    // other tenancy bits (trigger-driven IDs, tenanted INSERT path) still
+    // run under the other tests below.
+    if (await connectedRoleBypassesRls(db)) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        'postgres_smoke: connected role bypasses RLS — skipping the cross-tenant read-isolation assertion. Use a non-superuser, non-BYPASSRLS role to exercise it.',
+      )
+      return
+    }
     const tenants = new TenantManager(db, new EventBus())
 
     // Acme creates a post — only Acme should see it via Repository.

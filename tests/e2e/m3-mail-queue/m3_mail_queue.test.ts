@@ -236,7 +236,12 @@ describe.skipIf(!PG_AVAILABLE)('M3 e2e: queue → Mailable → ArrayTransport', 
       'mail.broken',
     ])
     expect(failed?.job_name).toBe('mail.broken')
-    expect(failed?.payload).toEqual({ name: 'never-receives' })
+    // Raw SELECT — Bun.SQL returns jsonb as the wire-format string.
+    const payload =
+      typeof failed?.payload === 'string'
+        ? (JSON.parse(failed.payload) as { name: string })
+        : failed?.payload
+    expect(payload).toEqual({ name: 'never-receives' })
     expect(failed?.exception).toContain('build is permanently broken')
 
     // ArrayTransport never received anything for the broken job.

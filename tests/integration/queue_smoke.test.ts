@@ -12,7 +12,7 @@
  * integration suites.
  */
 
-import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
+import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
 import {
   emitCreateTable,
   type PostgresDatabase,
@@ -84,6 +84,13 @@ describe.skipIf(!PG_AVAILABLE)('integration: @strav/queue DatabaseQueue smoke', 
     await db.close({ timeout: 2 })
   })
 
+  // Tests dispatch + claim against the shared schema — wipe between each
+  // so a row left by an earlier test can't get picked up by Worker.claim()
+  // in a later one.
+  beforeEach(async () => {
+    await db.execute(`TRUNCATE "strav_jobs", "strav_failed_jobs", "strav_scheduler_runs"`)
+  })
+
   test('emitCreateTable for jobSchema is accepted by the real planner', async () => {
     const cols = await db.query<{ column_name: string }>(
       `SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name=$1 ORDER BY ordinal_position`,
@@ -109,8 +116,10 @@ describe.skipIf(!PG_AVAILABLE)('integration: @strav/queue DatabaseQueue smoke', 
     expect(row).not.toBeNull()
     expect(row?.queue).toBe('default')
     expect(row?.job_name).toBe('integration.queue-smoke')
-    // pg returns jsonb as parsed JSON.
-    expect(row?.payload).toEqual({ note: 'persisted' })
+    // Bun.SQL returns jsonb as the wire-format string from the positional
+    // bind path; raw SELECTs (no Model hydration) need to parse manually.
+    const payload = typeof row?.payload === 'string' ? JSON.parse(row.payload) : row?.payload
+    expect(payload).toEqual({ note: 'persisted' })
     expect(Number(row?.attempts)).toBe(0)
     expect(Number(row?.max_attempts)).toBe(3)
     expect(row?.reserved_at).toBeNull()
@@ -272,7 +281,11 @@ describe.skipIf(!PG_AVAILABLE)('integration: @strav/queue DatabaseQueue smoke', 
     )
     expect(failed).not.toBeNull()
     expect(failed?.queue).toBe('default')
-    expect(failed?.payload).toEqual({ note: 'goodbye' })
+    const failedPayload =
+      typeof failed?.payload === 'string'
+        ? (JSON.parse(failed.payload) as { note: string })
+        : failed?.payload
+    expect(failedPayload).toEqual({ note: 'goodbye' })
     expect(failed?.exception).toContain('always fails')
     expect(Number(failed?.attempts)).toBe(1)
     expect(failed?.failed_at.getTime()).toBeLessThanOrEqual(Date.now())
