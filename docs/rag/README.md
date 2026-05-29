@@ -36,11 +36,13 @@ const { text } = await brain.chat(`Context:\n${context}\n\nQuestion: ${userInput
 
 ## Status
 
-V1 — pgvector / memory drivers, two chunkers, the manager + provider, tenanted vector table. Deferred to follow-up slices: the `retrievable()` repository mixin, CLI commands (`rag:reindex`, `rag:flush`), re-ranking strategies.
+V1 — pgvector / memory drivers, two chunkers, the manager + provider, tenanted vector table, `retrievable()` repository mixin, `rag:flush` + `rag:list` CLI commands. Deferred to follow-up slices: re-ranking strategies, embedding caching, `rag:reindex` (apps build their own — see CLI guide).
 
 ## Guides
 
 - [`guides/getting-started.md`](./guides/getting-started.md) — install, configure, run the first ingest.
+- [`guides/retrievable.md`](./guides/retrievable.md) — `retrievable()` repository mixin: extension points, auto-vectorize patterns, resolving matches back to source rows, re-indexing a corpus.
+- [`guides/cli.md`](./guides/cli.md) — `rag:flush` + `rag:list` console commands; how to ship a custom `rag:reindex`.
 - [`guides/migration.md`](./guides/migration.md) — the pgvector migration template; HNSW knobs; dimensions.
 - [`guides/multitenancy.md`](./guides/multitenancy.md) — RLS isolation across tenants; the `withTenant(...)` pattern.
 - [`guides/custom-drivers.md`](./guides/custom-drivers.md) — implement `VectorStore` against Qdrant, Pinecone, etc.

@@ -32,8 +32,14 @@ export {
   type RagManagerOptions,
   type StoreFactory,
 } from './rag_manager.ts'
+export {
+  RagConsoleProvider,
+  RagFlush,
+  RagList,
+} from './console/index.ts'
 export { RagProvider } from './rag_provider.ts'
 export { ragVectorSchema } from './rag_vector_schema.ts'
+export { retrievable } from './retrievable.ts'
 export type {
   Chunk,
   Chunker,

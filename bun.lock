@@ -14,7 +14,7 @@
     },
     "packages/auth": {
       "name": "@strav/auth",
-      "version": "1.0.0-alpha.18",
+      "version": "1.0.0-alpha.19",
       "dependencies": {
         "@strav/database": "workspace:*",
         "@strav/http": "workspace:*",
@@ -26,7 +26,7 @@
     },
     "packages/brain": {
       "name": "@strav/brain",
-      "version": "1.0.0-alpha.18",
+      "version": "1.0.0-alpha.19",
       "dependencies": {
         "@anthropic-ai/sdk": "^0.100.0",
         "@google/genai": "^2.7.0",
@@ -48,7 +48,7 @@
     },
     "packages/cli": {
       "name": "@strav/cli",
-      "version": "1.0.0-alpha.18",
+      "version": "1.0.0-alpha.19",
       "dependencies": {
         "@strav/kernel": "workspace:*",
       },
@@ -58,7 +58,7 @@
     },
     "packages/database": {
       "name": "@strav/database",
-      "version": "1.0.0-alpha.18",
+      "version": "1.0.0-alpha.19",
       "dependencies": {
         "@strav/cli": "workspace:*",
         "@strav/kernel": "workspace:*",
@@ -69,7 +69,7 @@
     },
     "packages/durable": {
       "name": "@strav/durable",
-      "version": "1.0.0-alpha.18",
+      "version": "1.0.0-alpha.19",
       "dependencies": {
         "@strav/database": "workspace:*",
         "@strav/kernel": "workspace:*",
@@ -81,7 +81,7 @@
     },
     "packages/http": {
       "name": "@strav/http",
-      "version": "1.0.0-alpha.18",
+      "version": "1.0.0-alpha.19",
       "dependencies": {
         "@strav/cli": "workspace:*",
         "@strav/kernel": "workspace:*",
@@ -93,7 +93,7 @@
     },
     "packages/kernel": {
       "name": "@strav/kernel",
-      "version": "1.0.0-alpha.18",
+      "version": "1.0.0-alpha.19",
       "dependencies": {
         "pino": "^10.3.1",
         "reflect-metadata": "^0.2.2",
@@ -104,7 +104,7 @@
     },
     "packages/machine": {
       "name": "@strav/machine",
-      "version": "1.0.0-alpha.18",
+      "version": "1.0.0-alpha.19",
       "dependencies": {
         "@strav/database": "workspace:*",
         "@strav/kernel": "workspace:*",
@@ -115,7 +115,7 @@
     },
     "packages/queue": {
       "name": "@strav/queue",
-      "version": "1.0.0-alpha.18",
+      "version": "1.0.0-alpha.19",
       "dependencies": {
         "@strav/cli": "workspace:*",
         "@strav/database": "workspace:*",
@@ -127,9 +127,10 @@
     },
     "packages/rag": {
       "name": "@strav/rag",
-      "version": "1.0.0-alpha.18",
+      "version": "1.0.0-alpha.19",
       "dependencies": {
         "@strav/brain": "workspace:*",
+        "@strav/cli": "workspace:*",
         "@strav/database": "workspace:*",
         "@strav/kernel": "workspace:*",
       },
@@ -139,7 +140,7 @@
     },
     "packages/signal": {
       "name": "@strav/signal",
-      "version": "1.0.0-alpha.18",
+      "version": "1.0.0-alpha.19",
       "dependencies": {
         "@strav/kernel": "workspace:*",
         "@strav/queue": "workspace:*",
@@ -150,7 +151,7 @@
     },
     "packages/view": {
       "name": "@strav/view",
-      "version": "1.0.0-alpha.18",
+      "version": "1.0.0-alpha.19",
       "dependencies": {
         "@strav/cli": "workspace:*",
         "@strav/kernel": "workspace:*",
@@ -172,7 +173,7 @@
     },
     "packages/workflow": {
       "name": "@strav/workflow",
-      "version": "1.0.0-alpha.18",
+      "version": "1.0.0-alpha.19",
       "dependencies": {
         "@strav/kernel": "workspace:*",
       },
@@ -214,6 +215,16 @@
         "@strav/database": "workspace:*",
         "@strav/http": "workspace:*",
         "@strav/kernel": "workspace:*",
+      },
+    },
+    "tests/e2e/m5-rag": {
+      "name": "@strav-tests/m5-rag",
+      "version": "0.0.0",
+      "dependencies": {
+        "@strav/brain": "workspace:*",
+        "@strav/database": "workspace:*",
+        "@strav/kernel": "workspace:*",
+        "@strav/rag": "workspace:*",
       },
     },
   },
@@ -287,6 +298,8 @@
     "@strav-tests/m3-mail-queue": ["@strav-tests/m3-mail-queue@workspace:tests/e2e/m3-mail-queue"],
 
     "@strav-tests/m3_5-auth-extras": ["@strav-tests/m3_5-auth-extras@workspace:tests/e2e/m3_5-auth-extras"],
+
+    "@strav-tests/m5-rag": ["@strav-tests/m5-rag@workspace:tests/e2e/m5-rag"],
 
     "@strav/auth": ["@strav/auth@workspace:packages/auth"],
 
