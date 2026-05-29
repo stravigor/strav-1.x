@@ -855,8 +855,9 @@ Sub-path export. Used internally by providers without server-side MCP (OpenAI to
 class MCPClient {
   constructor(server: MCPServer, options?: { client?: Client })
   connect(): Promise<void>
-  listTools(): Promise<MCPToolDescriptor[]>
-  callTool(name: string, input: unknown): Promise<MCPCallToolResult>
+  listTools(opts?: { signal?: AbortSignal }): Promise<MCPToolDescriptor[]>
+  callTool(name: string, input: unknown, opts?: { signal?: AbortSignal }): Promise<MCPCallToolResult>
+  completeAuthorization(code: string): Promise<void>
   close(): Promise<void>
 }
 
@@ -872,7 +873,39 @@ interface MCPCallToolResult {
 }
 ```
 
-Thin wrapper over `@modelcontextprotocol/sdk`'s `Client` using Streamable HTTP transport. `authorizationToken` from `MCPServer` becomes `Authorization: Bearer <token>`. `connect()` is idempotent; `listTools` / `callTool` auto-connect on first call. SDK-level failures wrap as `BrainError` with the underlying cause preserved.
+Thin wrapper over `@modelcontextprotocol/sdk`'s `Client` using Streamable HTTP transport. Authentication picks one of:
+- `MCPServer.authorizationToken` → static `Authorization: Bearer <token>` for self-hosted servers.
+- `MCPServer.oauth` → authorization-code-with-PKCE flow. On `connect()` against an un-authorized server, `MCPAuthRequiredError` is thrown carrying `.authorizationUrl`. App redirects the user; on the callback route, calls `client.completeAuthorization(code)` to finish the exchange.
+
+The two are mutually exclusive — passing both throws at construction. `connect()` is idempotent; `listTools` / `callTool` auto-connect on first call. SDK-level failures wrap as `BrainError` with the underlying cause preserved.
+
+### OAuth
+
+```ts
+interface MCPOAuthConfig {
+  redirectUri: string
+  scope?: string
+  store: MCPOAuthStore
+  clientMetadata?: Partial<OAuthClientMetadata>
+}
+
+interface MCPOAuthStore {
+  clientInformation(): OAuthClientInformation | undefined | Promise<…>
+  saveClientInformation(info): void | Promise<void>
+  tokens(): OAuthTokens | undefined | Promise<…>
+  saveTokens(tokens): void | Promise<void>
+  codeVerifier(): string | Promise<string>
+  saveCodeVerifier(verifier): void | Promise<void>
+}
+
+class MemoryOAuthStore implements MCPOAuthStore { /* in-memory */ }
+
+class MCPAuthRequiredError extends BrainError {
+  readonly authorizationUrl: string
+}
+```
+
+See [`guides/mcp.md` § OAuth](./guides/mcp.md#oauth----mcpserveroauth) for the full flow + multi-tenant pattern.
 
 ### `resolveMcpTools`
 

@@ -40,8 +40,24 @@ export interface MCPServer {
    * Optional bearer token. Apps source from env vars / secrets
    * managers — never hardcode. The framework forwards this verbatim
    * to the provider's `authorization_token` field.
+   *
+   * Mutually exclusive with `oauth`. Use `authorizationToken` for
+   * self-hosted servers where you control the token; use `oauth`
+   * for commercial servers (Linear, Notion, GitHub, ...).
    */
   authorizationToken?: string
+  /**
+   * OAuth configuration for servers that require it. When set, the
+   * local MCP client (`@strav/brain/mcp`) drives the
+   * authorization-code-with-PKCE flow against the server's OAuth
+   * endpoints, storing tokens via the supplied `store`. The
+   * Anthropic server-side path doesn't use this — Anthropic's
+   * connector handles its own auth.
+   *
+   * Mutually exclusive with `authorizationToken`. See the OAuth
+   * section of `docs/brain/guides/mcp.md`.
+   */
+  oauth?: import('./mcp/oauth.ts').MCPOAuthConfig
   /** Per-server tool config (allowlist / enable flag). */
   tools?: MCPServerToolConfig
 }

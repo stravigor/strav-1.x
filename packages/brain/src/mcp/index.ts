@@ -10,6 +10,12 @@ export {
   type MCPToolDescriptor,
 } from './client.ts'
 export {
+  MCPAuthRequiredError,
+  type MCPOAuthConfig,
+  type MCPOAuthStore,
+  MemoryOAuthStore,
+} from './oauth.ts'
+export {
   resolveMcpTools,
   type ResolveMcpToolsOptions,
   type ResolvedMcpTools,

@@ -202,7 +202,11 @@ Behavior:
 - **Tool namespacing.** Discovered tools are exposed to the model as `<server>__<tool>` (e.g. `linear__list_issues`). The framework strips the prefix before invoking the server, so MCP servers see their tool names unchanged.
 - **Iteration cost.** Unlike the Anthropic server-side path, each MCP tool call *does* cost an iteration — the framework round-trips through your process between the model's tool request and the next model turn. Bump `RunWithToolsOptions.maxIterations` if you expect long MCP chains.
 - **Lifecycle.** Transports are opened at the start of the run and closed in a `finally` once the loop exits. No connection pooling in V1.
-- **Auth.** `authorizationToken` becomes `Authorization: Bearer <token>` on every request. OAuth-flow servers still need out-of-band token exchange — same constraint as the Anthropic path.
+- **Auth.** Two paths:
+  - `MCPServer.authorizationToken` → static `Authorization: Bearer <token>`. Fine for self-hosted servers where you control the token.
+  - `MCPServer.oauth` → authorization-code-with-PKCE flow. The framework drives discovery + dynamic client registration + the redirect + the token exchange. See **OAuth** below.
+
+  The two are mutually exclusive — constructing an `MCPClient` with both throws.
 
 If you need lower-level access — listing tools without invoking the loop, sharing a connection across requests — instantiate `MCPClient` directly:
 
@@ -216,11 +220,108 @@ const { content, isError } = await client.callTool('list_issues', { limit: 3 })
 await client.close()
 ```
 
+## OAuth — `MCPServer.oauth`
+
+Most commercial MCP servers (Linear, Notion, GitHub, Asana) are OAuth-protected. The framework drives the standard authorization-code-with-PKCE flow against the server's OAuth endpoints — dynamic client registration when supported, manual `client_id` when not, automatic refresh.
+
+The shape:
+
+```ts
+interface MCPOAuthConfig {
+  redirectUri: string                     // where the user comes back after authorizing
+  scope?: string                          // optional OAuth scopes
+  store: MCPOAuthStore                    // persists tokens + client info + PKCE verifier
+  clientMetadata?: Partial<OAuthClientMetadata>
+}
+```
+
+```ts
+import { MemoryOAuthStore } from '@strav/brain/mcp'
+
+const linear: MCPServer = {
+  name: 'linear',
+  url: 'https://mcp.linear.app',
+  oauth: {
+    redirectUri: 'https://myapp.com/mcp/linear/callback',
+    scope: 'read',
+    store: new MemoryOAuthStore(),
+  },
+}
+```
+
+### The flow
+
+Because the framework is server-side and headless, it can't redirect the user inline. Instead `connect()` surfaces `MCPAuthRequiredError`:
+
+```ts
+import { MCPAuthRequiredError, MCPClient } from '@strav/brain/mcp'
+
+try {
+  const client = new MCPClient(linear)
+  await client.connect()
+} catch (err) {
+  if (err instanceof MCPAuthRequiredError) {
+    // Save (userId, server.name) somewhere so the callback handler
+    // can rebuild the right store. Then redirect the user:
+    res.redirect(err.authorizationUrl)
+    return
+  }
+  throw err
+}
+```
+
+On the OAuth callback route:
+
+```ts
+app.get('/mcp/linear/callback', async (req, res) => {
+  const userId = await getCurrentUserId(req)
+  const store = buildStoreForUser(userId, 'linear')        // your storage
+  const client = new MCPClient({ ...linear, oauth: { ...linear.oauth!, store } })
+  await client.completeAuthorization(req.query.code as string)
+  res.redirect('/agents')                                  // user is now authorized
+})
+```
+
+After `completeAuthorization` succeeds, the store has tokens. Subsequent `connect()` calls (same store) succeed silently. Refresh tokens are handled automatically.
+
+### `MCPOAuthStore`
+
+The persistence contract:
+
+```ts
+interface MCPOAuthStore {
+  clientInformation(): OAuthClientInformation | undefined | Promise<…>
+  saveClientInformation(info): void | Promise<void>
+  tokens(): OAuthTokens | undefined | Promise<…>
+  saveTokens(tokens): void | Promise<void>
+  codeVerifier(): string | Promise<string>
+  saveCodeVerifier(verifier): void | Promise<void>
+}
+```
+
+`MemoryOAuthStore` is the built-in in-memory implementation — fine for tests and single-process dev. Production apps with multiple processes or restarts implement the interface against a DB, Redis, or KV. The interface is intentionally per-server; multi-tenant apps construct a fresh store per `(user, server)` with the user id baked into the storage keys.
+
+### Multi-tenancy
+
+There's no built-in `userId` parameter — apps key the storage themselves:
+
+```ts
+class PgOAuthStore implements MCPOAuthStore {
+  constructor(private readonly userId: string, private readonly server: string) {}
+  async tokens() { return await db.mcpTokens.findOne({ userId, server: this.server }) }
+  async saveTokens(t) { await db.mcpTokens.upsert({ userId, server: this.server }, t) }
+  // …
+}
+```
+
+### What's still NOT supported
+
+- **`client_credentials` / service-account flows** — V1 covers the interactive authorization-code path only. Servers that expose machine-to-machine creds need a follow-up.
+- **Token encryption at rest** — your store implementation's responsibility.
+
 ## What's deferred
 
-- **Gemini / DeepSeek providers** — same local-client mechanism will apply once those providers land. The `@strav/brain/mcp` API stays stable.
 - **MCP server discovery / introspection** — apps must know the server URL up front.
-- **OAuth-flow MCP servers** — only static bearer tokens today. Servers that require OAuth need an out-of-band exchange.
 - **Per-tool permission policies** — `always_ask` / `always_allow` semantics on top of the current allowlist.
 - **Connection pooling.** Each `runTools` call opens fresh transports. Long-lived agents will want pooling later.
 - **Resources / prompts / sampling.** Only the `tools/*` slice of MCP is exposed; the rest is on the roadmap.
