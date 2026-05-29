@@ -237,6 +237,11 @@ export class Worker {
    * claim is durable + safe against concurrent Workers.
    */
   private async claim(): Promise<JobRow | null> {
+    // Bun.SQL 1.3.x's positional bind path doesn't auto-wrap JS arrays as
+    // Postgres array literals — passing `string[]` to a `::text[]` parameter
+    // arrives as the joined string ("default") and Postgres rejects it as a
+    // malformed array literal. Format the literal explicitly: `{"a","b"}`.
+    const queuesLiteral = `{${this.queues.map((q) => `"${q.replace(/"/g, '\\"')}"`).join(',')}}`
     return this.db.transaction(async (tx) => {
       const row = await tx.queryOne<JobRow>(
         `SELECT id, queue, job_name, payload, attempts, max_attempts
@@ -247,7 +252,7 @@ export class Worker {
          ORDER BY id
          LIMIT 1
          FOR UPDATE SKIP LOCKED`,
-        [this.queues],
+        [queuesLiteral],
       )
       if (!row) return null
       await tx.execute(
