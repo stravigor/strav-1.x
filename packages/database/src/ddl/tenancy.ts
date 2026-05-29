@@ -110,6 +110,13 @@ export function emitRlsForTenanted(schema: Schema, registry: SchemaRegistry | un
   const tenantExpr = `current_setting('app.tenant_id')::${castType}`
   return [
     `ALTER TABLE ${quoteIdent(schema.name)} ENABLE ROW LEVEL SECURITY`,
+    // FORCE makes RLS apply even to the table owner. Without it Postgres
+    // exempts the owner role (which migrations run as), so a deployment
+    // that runs migrations + the app under the same role would silently
+    // see cross-tenant rows. The admin / migration paths that legitimately
+    // need to ignore RLS go through `TenantManager.withoutTenant`, which
+    // routes through the BYPASSRLS connection pool when one is configured.
+    `ALTER TABLE ${quoteIdent(schema.name)} FORCE ROW LEVEL SECURITY`,
     `CREATE POLICY ${quoteIdent(policyName)} ON ${quoteIdent(schema.name)} USING (${quoteIdent(colName)} = ${tenantExpr}) WITH CHECK (${quoteIdent(colName)} = ${tenantExpr})`,
   ].join(';\n')
 }

@@ -84,9 +84,25 @@ export function hydrateRow<T extends object>(
   // Decrypt @encrypt fields up-front so the column-copy + cast.fromDb
   // steps see the decrypted plaintext.
   const source = ctor && cipher ? applyDecryptToRow(ctor, row, cipher) : row
+  const handled = new Set<string>()
   for (const field of schema.fields) {
     if (Object.hasOwn(source, field.name)) {
-      obj[field.name] = source[field.name]
+      const value = source[field.name]
+      // Bun.SQL 1.3.x returns jsonb columns as raw text — parse them back
+      // to objects so consumers see `{ key: value }`, not `'{"key":"value"}'`.
+      obj[field.name] = field.kind === 'json' ? parseJsonbValue(value) : value
+      handled.add(field.name)
+    }
+  }
+  // Tenanted schemas have a synthetic `<registry>_id` FK that's injected
+  // at DDL time, not present in `schema.fields`. Copy any extra row keys
+  // for those schemas so the hydrated Model carries the tenant binding.
+  // Non-tenanted schemas keep the stricter "drop columns the schema does
+  // not declare" contract (Repository — hydration test).
+  if (schema.tenancy.tenanted) {
+    for (const key of Object.keys(source)) {
+      if (handled.has(key)) continue
+      obj[key] = source[key]
     }
   }
   if (ctor) {
@@ -100,6 +116,20 @@ export function hydrateRow<T extends object>(
     }
   }
   return target
+}
+
+/**
+ * Parse a jsonb column value back to its structured form. Bun.SQL's
+ * positional bind path returns jsonb as the wire-format string, so the
+ * Repository / hydration layer has to re-`JSON.parse` it. `null` and
+ * already-parsed values (objects, arrays, numbers, booleans) pass through.
+ * Malformed strings re-throw `SyntaxError` so corrupt jsonb is loud, not
+ * silently demoted to a string.
+ */
+function parseJsonbValue(value: unknown): unknown {
+  if (value === null || value === undefined) return value
+  if (typeof value !== 'string') return value
+  return JSON.parse(value)
 }
 
 /** Type-guard for ModelClass — used when the Repository validates its subclass. */

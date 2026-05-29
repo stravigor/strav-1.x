@@ -101,7 +101,7 @@ describe('emitCreateTable — tenanted: true', () => {
 
     // Single combined SQL string — Database.execute handles multi-statement.
     expect(sql).toMatch(
-      /CREATE TABLE "post" \([\s\S]+\);\nALTER TABLE "post" ENABLE ROW LEVEL SECURITY;\nCREATE POLICY/,
+      /CREATE TABLE "post" \([\s\S]+\);\nALTER TABLE "post" ENABLE ROW LEVEL SECURITY;\nALTER TABLE "post" FORCE ROW LEVEL SECURITY;\nCREATE POLICY/,
     )
 
     // Column order: id, tenant_id, then the rest in declaration order.

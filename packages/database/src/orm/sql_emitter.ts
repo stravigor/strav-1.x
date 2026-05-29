@@ -67,11 +67,26 @@ export function emitInsert(schema: Schema, attrs: Readonly<Record<string, unknow
     params.push(idField.kind === 'id' ? ulid() : crypto.randomUUID())
   }
 
+  const handled = new Set<string>()
+  if (idField && attrs.id === undefined) handled.add('id')
   for (const field of schema.fields) {
     if (field.name === 'id' && idField && attrs.id === undefined) continue
     const value = attrs[field.name]
     if (value === undefined) continue
     cols.push(quoteIdent(field.name))
+    placeholders.push(nextPlaceholder(index))
+    params.push(value)
+    handled.add(field.name)
+  }
+  // Fall-through for keys not in schema.fields — covers the synthetic
+  // tenant_id column on `tenanted: true` schemas (injected at DDL time,
+  // not in the in-memory fields) and any other column the caller wants
+  // to set explicitly without amending the schema declaration.
+  for (const key of Object.keys(attrs)) {
+    if (handled.has(key)) continue
+    const value = attrs[key]
+    if (value === undefined) continue
+    cols.push(quoteIdent(key))
     placeholders.push(nextPlaceholder(index))
     params.push(value)
   }
