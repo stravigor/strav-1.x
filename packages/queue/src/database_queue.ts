@@ -138,7 +138,10 @@ export class DatabaseQueue implements Queue {
       ) VALUES (
         $1, $2, $3, $4::jsonb, 0, $5, ${availableAtFragment}, now(), now()
       )`,
-      [jobId, queue, jobClass.jobName, JSON.stringify(payload), maxAttempts],
+      // `payload` defaults to `{}` for jobs that don't take input — without
+      // this fallback `JSON.stringify(undefined)` yields `undefined`, which
+      // arrives as NULL and trips the column's NOT NULL constraint.
+      [jobId, queue, jobClass.jobName, JSON.stringify(payload ?? {}), maxAttempts],
     )
     return jobId
   }

@@ -255,6 +255,12 @@ export class Worker {
         [queuesLiteral],
       )
       if (!row) return null
+      // Bun.SQL 1.3.x returns jsonb as a raw string from the positional
+      // bind path — parse it back so JobContext.payload is the original
+      // object the job dispatched.
+      if (typeof row.payload === 'string') {
+        row.payload = JSON.parse(row.payload)
+      }
       await tx.execute(
         `UPDATE "strav_jobs"
          SET reserved_at = now(), attempts = attempts + 1, updated_at = now()
