@@ -57,6 +57,7 @@ import {
   type Message,
   type ContentBlock,
   type TextBlock,
+  type ImageBlock,
   type ToolUseBlock,
   type ToolResultBlock,
   type MCPToolUseBlock,
@@ -540,16 +541,29 @@ interface Message {
   content: string | ContentBlock[]
 }
 
-type ContentBlock = TextBlock
+type ContentBlock =
+  | TextBlock
+  | ImageBlock
+  | ToolUseBlock
+  | ToolResultBlock
+  | MCPToolUseBlock
+  | MCPToolResultBlock
 
 interface TextBlock {
   type: 'text'
   text: string
   cache?: boolean
 }
+
+interface ImageBlock {
+  type: 'image'
+  source:
+    | { type: 'base64'; mediaType: string; data: string }
+    | { type: 'url'; url: string }
+}
 ```
 
-`content` is either a string (no caching) or a typed block list (per-block cache control). System / tool result blocks land in later slices.
+`content` is either a string (no caching, text only) or a typed block list. `ImageBlock` attaches a picture to a user message — see [`guides/multimodal.md`](./guides/multimodal.md) for per-provider mapping + vision-capable model picks.
 
 ### `SystemPrompt`
 

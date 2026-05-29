@@ -800,6 +800,21 @@ function toGeminiParts(content: string | ContentBlock[]): Part[] {
   for (const block of content) {
     if (block.type === 'text') {
       parts.push({ text: block.text })
+    } else if (block.type === 'image') {
+      // Base64 → inlineData (the wire shape Gemini expects for
+      // inline image bytes). URL → fileData with fileUri. Gemini's
+      // fileData accepts public HTTPS and gs:// URIs; arbitrary
+      // private URLs need to be fetched and converted to base64
+      // by the app.
+      if (block.source.type === 'base64') {
+        parts.push({
+          inlineData: { mimeType: block.source.mediaType, data: block.source.data },
+        })
+      } else {
+        parts.push({
+          fileData: { fileUri: block.source.url, mimeType: guessMimeFromUrl(block.source.url) },
+        })
+      }
     } else if (block.type === 'tool_use') {
       parts.push({
         functionCall: {
@@ -823,6 +838,21 @@ function toGeminiParts(content: string | ContentBlock[]): Part[] {
     // MCP blocks (Anthropic-only) silently dropped.
   }
   return parts
+}
+
+/**
+ * Gemini's `fileData.mimeType` is required, but our `ImageBlock`
+ * URL-source variant doesn't carry it (the app may not know).
+ * Best-effort from the file extension; default to `image/jpeg`
+ * which is widely accepted.
+ */
+function guessMimeFromUrl(url: string): string {
+  const lower = url.toLowerCase().split('?')[0] ?? ''
+  if (lower.endsWith('.png')) return 'image/png'
+  if (lower.endsWith('.webp')) return 'image/webp'
+  if (lower.endsWith('.gif')) return 'image/gif'
+  if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) return 'image/jpeg'
+  return 'image/jpeg'
 }
 
 function fromGeminiParts(parts: readonly Part[]): string | ContentBlock[] {

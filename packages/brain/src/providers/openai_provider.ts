@@ -68,6 +68,7 @@ import type {
   EmbedOptions,
   EmbedResult,
   GenerateResult,
+  ImageBlock,
   Message,
   StreamEvent,
   SystemPrompt,
@@ -1002,8 +1003,29 @@ function toOpenAIMessage(message: Message): OpenAI.Chat.ChatCompletionMessagePar
     return param
   }
 
-  // User-role multi-block content — flatten text. MCP blocks (which
-  // are read-only and Anthropic-specific) are silently dropped.
+  // User-role multi-block content. If any image blocks are present,
+  // emit OpenAI's multi-part content array (text + image_url
+  // entries). Otherwise flatten text — keeps simple text messages
+  // cleanly typed as strings. MCP blocks (read-only,
+  // Anthropic-specific) are silently dropped.
+  const images = message.content.filter((b): b is ImageBlock => b.type === 'image')
+  if (images.length > 0) {
+    const parts: OpenAI.Chat.ChatCompletionContentPart[] = []
+    for (const block of message.content) {
+      if (block.type === 'text') {
+        parts.push({ type: 'text', text: block.text })
+      } else if (block.type === 'image') {
+        const url =
+          block.source.type === 'base64'
+            ? `data:${block.source.mediaType};base64,${block.source.data}`
+            : block.source.url
+        parts.push({ type: 'image_url', image_url: { url } })
+      }
+      // tool_result / tool_use / mcp blocks dropped from user content
+      // (they're handled elsewhere or aren't valid on user turns).
+    }
+    return { role: 'user', content: parts }
+  }
   const text = message.content
     .filter((b): b is TextBlock => b.type === 'text')
     .map((b) => b.text)

@@ -105,8 +105,38 @@ export interface MCPToolResultBlock {
   isError?: boolean
 }
 
+/**
+ * Image input — attaches a picture to a user message so vision-
+ * capable models can see it alongside the text. V1 covers images
+ * only; audio + video defer.
+ *
+ * `source` is a discriminated union:
+ *   - `{ type: 'base64', mediaType, data }` — inline bytes for
+ *     uploads, screenshots, attachments your app already holds in
+ *     memory. `mediaType` is the IANA MIME (`image/png`,
+ *     `image/jpeg`, `image/webp`, `image/gif`); `data` is the
+ *     base64-encoded image (no `data:` prefix — the provider
+ *     translation adds it where needed).
+ *   - `{ type: 'url', url }` — remote image URL. Anthropic, OpenAI,
+ *     and Gemini all accept HTTPS URLs; check the provider's
+ *     domain allowlist if calls 404 (Anthropic was historically
+ *     stricter). For Gemini, GCS URIs (`gs://...`) also work.
+ *
+ * Vision support is provider- AND model-dependent. Cloud picks:
+ * Anthropic Claude 4 family, OpenAI gpt-4o / gpt-5 family, Gemini
+ * 2.x. Local: `llama3.2-vision`, `llava`, `qwen2.5-vl` on Ollama.
+ * Models without vision either reject the call or ignore the image.
+ */
+export interface ImageBlock {
+  type: 'image'
+  source:
+    | { type: 'base64'; mediaType: string; data: string }
+    | { type: 'url'; url: string }
+}
+
 export type ContentBlock =
   | TextBlock
+  | ImageBlock
   | ToolUseBlock
   | ToolResultBlock
   | MCPToolUseBlock

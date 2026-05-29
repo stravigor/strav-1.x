@@ -52,6 +52,7 @@ export type {
   EmbedOptions,
   EmbedResult,
   GenerateResult,
+  ImageBlock,
   MCPToolResultBlock,
   MCPToolUseBlock,
   Message,

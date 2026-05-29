@@ -856,6 +856,20 @@ function toMessageParam(message: Message): Anthropic.MessageParam {
           if (block.isError) param.is_error = true
           return param
         }
+        if (block.type === 'image') {
+          return {
+            type: 'image',
+            source:
+              block.source.type === 'base64'
+                ? {
+                    type: 'base64',
+                    media_type:
+                      block.source.mediaType as Anthropic.Base64ImageSource['media_type'],
+                    data: block.source.data,
+                  }
+                : { type: 'url', url: block.source.url },
+          } satisfies Anthropic.ImageBlockParam
+        }
         const text: Anthropic.TextBlockParam = { type: 'text', text: block.text }
         if (block.cache) text.cache_control = EPHEMERAL_CACHE
         return text
