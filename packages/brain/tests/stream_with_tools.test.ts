@@ -461,8 +461,6 @@ class TestAgent extends Agent {
   override readonly tier = 'fast'
 }
 
-class TestAgentWithSchema extends TestAgent {}
-
 describe('AgentRunner.stream()', () => {
   test('streams events through the runner', async () => {
     const stub = new StubStreamingProvider('stub', [
@@ -482,12 +480,7 @@ describe('AgentRunner.stream()', () => {
     expect(() => brain.agent(TestAgent).stream()).toThrow(/input\(\) must be called/)
   })
 
-  test('throws when .output(schema) was used (deferred combination)', () => {
-    const stub = new StubStreamingProvider('stub', [terminalStop])
-    const brain = new BrainManager({ default: 'stub', providers: { stub } })
-    const schema = { name: 's', jsonSchema: { type: 'object' as const } }
-    expect(() =>
-      brain.agent(TestAgentWithSchema).input('q').output(schema).stream(),
-    ).toThrow(BrainError)
-  })
+  // The previous "throws when .output(schema) was used" case was
+  // removed when streaming + schema combined landed. The happy
+  // path moved to stream_with_tools_and_schema.test.ts.
 })

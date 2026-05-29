@@ -95,6 +95,12 @@ class BrainManager {
     tools: readonly Tool[],
     options?: RunWithToolsOptions,
   ): Promise<AgentGenerateResult<T>>
+  streamGenerateWithTools<T>(
+    input: string | readonly Message[],
+    schema: OutputSchema<T>,
+    tools: readonly Tool[],
+    options?: RunWithToolsOptions,
+  ): AsyncIterable<AgentStreamEvent<T>>
 }
 
 interface BrainManagerOptions {
@@ -178,6 +184,12 @@ interface Provider {
     schema: OutputSchema<T>,
     options?: RunWithToolsOptions,
   ): Promise<AgentGenerateResult<T>>
+  streamWithToolsAndSchema?<T>(
+    messages: readonly Message[],
+    tools: readonly Tool[],
+    schema: OutputSchema<T>,
+    options?: RunWithToolsOptions,
+  ): AsyncIterable<AgentStreamEvent<T>>
 }
 ```
 
@@ -596,13 +608,15 @@ brain.streamTools(
 Streaming twin of `runTools`. Yields `AgentStreamEvent`s as the loop progresses — text deltas, tool boundaries, per-iteration markers, terminal `stop`. Same provider routing, tier resolution, MCP handling, and `maxIterations` ceiling as `runTools`. Throws `BrainError` when the configured provider lacks `streamWithTools` (V1: all three providers implement it).
 
 ```ts
-type AgentStreamEvent =
+type AgentStreamEvent<T = never> =
   | { type: 'iteration_start'; iteration: number }
   | { type: 'text'; delta: string }
   | { type: 'tool_use'; id: string; name: string; input: unknown }
   | { type: 'tool_result'; id: string; name: string; content: string; isError: boolean }
   | { type: 'iteration_end'; iteration: number; stopReason: string | null }
-  | { type: 'stop'; stopReason: string; iterations: number; usage: ChatUsage; messages: Message[] }
+  // stop narrows when T is set (schema-constrained streams):
+  | { type: 'stop'; stopReason: string; iterations: number; usage: ChatUsage; messages: Message[] }       // T = never
+  | { type: 'stop'; stopReason: string; iterations: number; usage: ChatUsage; messages: Message[]; value: T; text: string }  // T set
 ```
 
 See [`guides/streaming-agents.md`](./guides/streaming-agents.md) for the event lifecycle, error handling, and per-provider mapping.
@@ -621,6 +635,19 @@ brain.generateWithTools<T>(
 Combined tool-loop + structured output. Runs the agentic loop with `tools` while pinning the output to `schema` on every turn; returns the parsed value when the model finally answers without calling a tool. Throws `BrainError` when the configured provider lacks `runWithToolsAndSchema` (V1: all three providers implement it).
 
 Per-provider mapping: Anthropic adds `output_config.format`; OpenAI adds `response_format.json_schema` with `strict: true`; Gemini adds `responseMimeType: 'application/json'` + `responseJsonSchema`. The model can still emit `tool_use` blocks during the loop — the schema only kicks in on the terminal text turn.
+
+### `BrainManager.streamGenerateWithTools(input, schema, tools, options?)`
+
+```ts
+brain.streamGenerateWithTools<T>(
+  input: string | readonly Message[],
+  schema: OutputSchema<T>,
+  tools: readonly Tool[],
+  options?: RunWithToolsOptions,
+): AsyncIterable<AgentStreamEvent<T>>
+```
+
+Streaming twin of `generateWithTools`. Yields the standard `AgentStreamEvent<T>` vocabulary; the terminal `stop` event narrows to include `value: T` + `text: string` — the parsed JSON shaped to the schema and the raw JSON the model emitted on its terminal turn. Throws `BrainError` when the provider lacks `streamWithToolsAndSchema` (V1: all three providers implement it).
 
 ### `Agent`
 
@@ -646,7 +673,7 @@ class AgentRunner<T = never> {
   context(data: Record<string, unknown>): this   // accumulating; per-call > thread defaults
   output<U>(schema: OutputSchema<U>): AgentRunner<U>  // switches to structured-output mode
   run(): Promise<AgentRunResult<T>>
-  stream(): AsyncIterable<AgentStreamEvent>      // streaming twin of run() for the tool-loop path
+  stream(): AsyncIterable<AgentStreamEvent<T>>   // typed stop when T is set via .output()
 }
 
 type AgentRunResult<T> = [T] extends [never] ? AgentResult : AgentGenerateResult<T>
@@ -670,7 +697,7 @@ const { value } = await brain.agent(CityAgent)
 
 `.output(schema)` switches the runner into structured-output mode — `run()` delegates to either `BrainManager.generate(...)` (no tools / mcpServers) or `BrainManager.generateWithTools(...)` (tools or mcpServers declared) and returns `AgentGenerateResult<T>`. The combined path runs the full agentic loop while pinning the schema constraint every turn.
 
-`.stream()` is the streaming twin of `run()` for the tool-loop path — returns an `AsyncIterable<AgentStreamEvent>` instead of awaiting an `AgentResult`. Combining `.stream()` with `.output(schema)` throws `BrainError` (streaming structured output is the next slice).
+`.stream()` is the streaming twin of `run()`. Returns `AsyncIterable<AgentStreamEvent<T>>` — with the default `T = never` the terminal `stop` event is the plain shape; after `.output(schema)`, `T` narrows and the `stop` event additionally carries `value: T` + raw `text`.
 
 ### `AgentGenerateResult<T>`
 

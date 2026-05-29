@@ -546,6 +546,164 @@ export class AnthropicProvider implements Provider {
     }
   }
 
+  async *streamWithToolsAndSchema<T>(
+    messages: readonly Message[],
+    tools: readonly Tool[],
+    schema: OutputSchema<T>,
+    options: RunWithToolsOptions = {},
+  ): AsyncIterable<AgentStreamEvent<T>> {
+    const maxIterations = options.maxIterations ?? 10
+    const toolMap = new Map<string, Tool>(tools.map((t) => [t.name, t]))
+    const workingMessages: Message[] = [...messages]
+    const aggregated: ChatUsage = {
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      cacheCreationTokens: 0,
+    }
+    let iterations = 0
+
+    const mcpServers = options.mcpServers ?? []
+    const useMcpBeta = mcpServers.length > 0
+
+    while (true) {
+      yield { type: 'iteration_start', iteration: iterations }
+
+      const params = this.buildParams(workingMessages, options) as Anthropic.MessageCreateParamsNonStreaming & {
+        mcp_servers?: Anthropic.Beta.Messages.BetaRequestMCPServerURLDefinition[]
+      }
+      params.tools = [
+        ...tools.map((t) => ({
+          name: t.name,
+          description: t.description,
+          input_schema: t.inputSchema as Anthropic.Tool.InputSchema,
+        })),
+        ...mcpServers
+          .filter((s) => s.tools?.enabled !== false)
+          .map((s) => ({
+            type: 'mcp_toolset' as const,
+            mcp_server_name: s.name,
+            ...(s.tools?.allowedTools ? { allowed_tools: [...s.tools.allowedTools] } : {}),
+          })),
+      ] as unknown as Anthropic.MessageCreateParams['tools']
+      params.output_config = {
+        ...(params.output_config ?? {}),
+        format: { type: 'json_schema', schema: schema.jsonSchema },
+      }
+
+      if (useMcpBeta) {
+        params.mcp_servers = mcpServers.map((s) => {
+          const def: Anthropic.Beta.Messages.BetaRequestMCPServerURLDefinition = {
+            type: 'url',
+            name: s.name,
+            url: s.url,
+          }
+          if (s.authorizationToken !== undefined) def.authorization_token = s.authorizationToken
+          return def
+        })
+        const baseBetas = (params as { betas?: readonly string[] }).betas ?? []
+        ;(params as { betas?: string[] }).betas = baseBetas.includes('mcp-client-2025-11-20')
+          ? [...baseBetas]
+          : [...baseBetas, 'mcp-client-2025-11-20']
+      }
+
+      const stream = useMcpBeta
+        ? this.client.beta.messages.stream(
+            params as unknown as Anthropic.Beta.Messages.MessageCreateParamsStreaming,
+          )
+        : this.client.messages.stream(params)
+
+      for await (const event of stream) {
+        if (
+          event.type === 'content_block_delta' &&
+          event.delta.type === 'text_delta' &&
+          event.delta.text.length > 0
+        ) {
+          yield { type: 'text', delta: event.delta.text }
+        }
+      }
+      const final = (await stream.finalMessage()) as unknown as Anthropic.Message
+      addUsage(aggregated, final.usage)
+      const finishReason: string | null = final.stop_reason ?? null
+      yield { type: 'iteration_end', iteration: iterations, stopReason: finishReason }
+
+      workingMessages.push({
+        role: 'assistant',
+        content: fromAnthropicContent(final.content),
+      })
+
+      if (final.stop_reason !== 'tool_use') {
+        const text = collectText(final.content)
+        const value = parseGenerated(text, schema)
+        yield {
+          type: 'stop',
+          stopReason: finishReason ?? 'end_turn',
+          iterations,
+          usage: aggregated,
+          messages: workingMessages,
+          value,
+          text,
+        } as AgentStreamEvent<T>
+        return
+      }
+
+      const toolUseBlocks = final.content.filter(
+        (b): b is Anthropic.ToolUseBlock => b.type === 'tool_use',
+      )
+      const resultBlocks: ContentBlock[] = []
+      for (const block of toolUseBlocks) {
+        const tool = toolMap.get(block.name)
+        if (!tool) {
+          throw new ToolExecutionError(
+            block.name,
+            block.id,
+            new Error(`Tool "${block.name}" is not registered.`),
+          )
+        }
+        yield { type: 'tool_use', id: block.id, name: block.name, input: block.input }
+        let output: unknown
+        try {
+          output = await tool.execute(block.input, {
+            callId: block.id,
+            context: options.context ?? {},
+          })
+        } catch (cause) {
+          throw new ToolExecutionError(block.name, block.id, cause)
+        }
+        const content = typeof output === 'string' ? output : JSON.stringify(output)
+        resultBlocks.push({
+          type: 'tool_result',
+          toolUseId: block.id,
+          content,
+        } satisfies ToolResultBlock)
+        yield {
+          type: 'tool_result',
+          id: block.id,
+          name: block.name,
+          content,
+          isError: false,
+        }
+      }
+      workingMessages.push({ role: 'user', content: resultBlocks })
+
+      iterations++
+      if (iterations >= maxIterations) {
+        const text = collectText(final.content)
+        const value = parseGenerated(text, schema)
+        yield {
+          type: 'stop',
+          stopReason: 'max_iterations',
+          iterations,
+          usage: aggregated,
+          messages: workingMessages,
+          value,
+          text,
+        } as AgentStreamEvent<T>
+        return
+      }
+    }
+  }
+
   async generate<T>(
     messages: readonly Message[],
     schema: OutputSchema<T>,

@@ -176,6 +176,35 @@ Per-provider mapping under the hood:
 | OpenAI | `response_format: { type: 'json_schema', json_schema: { …, strict: true } }` |
 | Gemini | `config: { responseMimeType: 'application/json', responseJsonSchema: schema }` |
 
+## Streaming
+
+`BrainManager.streamGenerateWithTools<T>(input, schema, tools, options)` is the streaming twin of `generateWithTools`. Yields the standard `AgentStreamEvent<T>` vocabulary — text deltas, tool-use/result boundaries, per-iteration markers — and the terminal `stop` event carries the parsed `value: T` + raw `text`:
+
+```ts
+for await (const event of brain.streamGenerateWithTools<Summary>(prompt, summarySchema, [searchTool])) {
+  if (event.type === 'text') process.stdout.write(event.delta)
+  if (event.type === 'stop') {
+    console.log('parsed:', event.value)   // ^? Summary
+    console.log('iterations:', event.iterations)
+  }
+}
+```
+
+Same shape via the runner:
+
+```ts
+for await (const event of brain
+  .agent(ResearchAgent)
+  .input(query)
+  .output(summarySchema)
+  .stream()
+) {
+  // event.type === 'stop' → event.value is typed as Summary
+}
+```
+
+Per-provider mapping is identical to the non-streaming path (`output_config.format` / `response_format.json_schema` / `responseJsonSchema`) — only the request switches to the streaming endpoint and the framework parses the final assembled text.
+
 ## What's deferred
 
-- **Streaming structured outputs.** All three providers support partial JSON streams; the framework's `generate` / `generateWithTools` is one-shot today. Streaming lands when the combined `.stream() + .output(schema)` slice does.
+(no longer carried — the streaming + tools + schema axes are now orthogonal)

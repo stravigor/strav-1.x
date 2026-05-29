@@ -1,7 +1,17 @@
 /**
- * `AgentStreamEvent` — the union yielded by streaming agentic
+ * `AgentStreamEvent<T>` — the union yielded by streaming agentic
  * runs (`Provider.streamWithTools` / `BrainManager.streamTools` /
  * `AgentRunner.stream`).
+ *
+ * The generic `T` carries the structured-output type when the run
+ * was schema-constrained:
+ *   - With the default `T = never`, the terminal `stop` event is the
+ *     plain shape: `{ stopReason, iterations, usage, messages }`.
+ *   - With `T` set (via `BrainManager.streamGenerateWithTools` or
+ *     `AgentRunner.stream()` after `.output(schema)`), the `stop`
+ *     event additionally carries `{ value: T; text: string }` — the
+ *     parsed JSON shaped to the schema and the raw text the model
+ *     produced.
  *
  * Event vocabulary:
  *
@@ -24,10 +34,9 @@
  *     use this.
  *   - `stop` — terminal event. Carries the full `messages` trace,
  *     iteration count, aggregated usage, and the framework
- *     stop reason (`'end_turn'`, `'max_iterations'`, etc.). Equivalent
- *     to the non-streaming `AgentResult` minus the bare `text` —
- *     apps reconstruct that from `text` deltas or read the final
- *     message.
+ *     stop reason (`'end_turn'`, `'max_iterations'`, etc.). When the
+ *     run was schema-constrained, also carries `value` (parsed JSON)
+ *     and `text` (the raw JSON the model emitted).
  *
  * What's NOT in V1:
  *   - Per-character tool-argument streaming. `tool_use` fires once
@@ -41,7 +50,30 @@
 
 import type { ChatUsage, Message } from './types.ts'
 
-export type AgentStreamEvent =
+interface BaseStopEvent {
+  type: 'stop'
+  stopReason: string
+  iterations: number
+  usage: ChatUsage
+  messages: Message[]
+}
+
+interface ValueStopEvent<T> extends BaseStopEvent {
+  /** Parsed JSON shaped to the supplied `OutputSchema<T>`. */
+  value: T
+  /** Raw JSON text the model emitted on its terminal turn. */
+  text: string
+}
+
+/**
+ * The `stop` variant narrows when the stream was schema-constrained
+ * — the `[T] extends [never]` form is the standard "is this still
+ * the default never?" check (a bare `T extends never` would
+ * distribute over union types and break).
+ */
+type StopEvent<T> = [T] extends [never] ? BaseStopEvent : ValueStopEvent<T>
+
+export type AgentStreamEvent<T = never> =
   | { type: 'iteration_start'; iteration: number }
   | { type: 'text'; delta: string }
   | { type: 'tool_use'; id: string; name: string; input: unknown }
@@ -53,10 +85,4 @@ export type AgentStreamEvent =
       isError: boolean
     }
   | { type: 'iteration_end'; iteration: number; stopReason: string | null }
-  | {
-      type: 'stop'
-      stopReason: string
-      iterations: number
-      usage: ChatUsage
-      messages: Message[]
-    }
+  | StopEvent<T>

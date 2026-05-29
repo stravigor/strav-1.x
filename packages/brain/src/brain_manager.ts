@@ -171,6 +171,35 @@ export class BrainManager {
   }
 
   /**
+   * Streaming variant of `generateWithTools`. Yields
+   * `AgentStreamEvent<T>`s as the loop progresses; the terminal
+   * `stop` event carries the parsed value + raw JSON text. Throws
+   * `BrainError` when the provider lacks
+   * `streamWithToolsAndSchema` (V1: all three providers
+   * implement it).
+   */
+  streamGenerateWithTools<T>(
+    input: string | readonly Message[],
+    schema: OutputSchema<T>,
+    tools: readonly Tool[],
+    options: RunWithToolsOptions = {},
+  ): AsyncIterable<AgentStreamEvent<T>> {
+    const provider = this.provider(options.provider)
+    if (!provider.streamWithToolsAndSchema) {
+      throw new BrainError(
+        `BrainManager.streamGenerateWithTools: provider "${provider.name}" does not implement streamWithToolsAndSchema.`,
+        { context: { provider: provider.name } },
+      )
+    }
+    const messages = normalizeInput(input)
+    const resolved = this.applyDefaults(options) as RunWithToolsOptions
+    if (resolved.mcpServers === undefined && this.defaultMcpServers.length > 0) {
+      resolved.mcpServers = this.defaultMcpServers
+    }
+    return provider.streamWithToolsAndSchema<T>(messages, tools, schema, resolved)
+  }
+
+  /**
    * Tool-loop + structured output combined. Runs the agentic loop
    * with the supplied `tools` while pinning the output to `schema`
    * on every turn; returns the parsed value when the model finally

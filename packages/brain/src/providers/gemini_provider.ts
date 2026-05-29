@@ -524,6 +524,161 @@ export class GeminiProvider implements Provider {
     }
   }
 
+  async *streamWithToolsAndSchema<T>(
+    messages: readonly Message[],
+    tools: readonly Tool[],
+    schema: OutputSchema<T>,
+    options: RunWithToolsOptions = {},
+  ): AsyncIterable<AgentStreamEvent<T>> {
+    const mcpServers: readonly MCPServer[] = options.mcpServers ?? []
+    const resolved =
+      mcpServers.length > 0
+        ? await resolveMcpTools(mcpServers, {
+            ...(this.mcpClientFactory ? { clientFactory: this.mcpClientFactory } : {}),
+          })
+        : { tools: [] as Tool[], close: async () => {} }
+    try {
+      yield* this._streamLoopWithSchema(
+        [...tools, ...resolved.tools],
+        messages,
+        schema,
+        options,
+      )
+    } finally {
+      await resolved.close()
+    }
+  }
+
+  private async *_streamLoopWithSchema<T>(
+    tools: readonly Tool[],
+    messages: readonly Message[],
+    schema: OutputSchema<T>,
+    options: RunWithToolsOptions,
+  ): AsyncIterable<AgentStreamEvent<T>> {
+    const maxIterations = options.maxIterations ?? 10
+    const toolMap = new Map<string, Tool>(tools.map((t) => [t.name, t]))
+    const workingMessages: Message[] = [...messages]
+    const aggregated: ChatUsage = {
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      cacheCreationTokens: 0,
+    }
+    let iterations = 0
+
+    while (true) {
+      yield { type: 'iteration_start', iteration: iterations }
+
+      const params = this.buildParams(workingMessages, options, tools)
+      params.config = {
+        ...(params.config ?? {}),
+        responseMimeType: 'application/json',
+        responseJsonSchema: schema.jsonSchema,
+      }
+      const stream = await this.models.generateContentStream(params)
+
+      const accumulatedParts: Part[] = []
+      let textBuf = ''
+      let finishReason: string | null = null
+      let lastUsage: ChatUsage | undefined
+
+      for await (const chunk of stream) {
+        const candidate = chunk.candidates?.[0]
+        const chunkParts = candidate?.content?.parts ?? []
+        for (const part of chunkParts) {
+          if (typeof part.text === 'string' && part.text.length > 0) {
+            textBuf += part.text
+            yield { type: 'text', delta: part.text }
+          }
+        }
+        accumulatedParts.push(...chunkParts)
+        if (candidate?.finishReason) finishReason = String(candidate.finishReason)
+        if (chunk.usageMetadata) lastUsage = toUsage(chunk.usageMetadata)
+      }
+      if (lastUsage) {
+        aggregated.inputTokens += lastUsage.inputTokens
+        aggregated.outputTokens += lastUsage.outputTokens
+        aggregated.cacheReadTokens += lastUsage.cacheReadTokens
+      }
+
+      yield { type: 'iteration_end', iteration: iterations, stopReason: finishReason }
+
+      const assistantContent = fromGeminiParts(accumulatedParts)
+      workingMessages.push({ role: 'assistant', content: assistantContent })
+
+      const toolUses = (Array.isArray(assistantContent) ? assistantContent : []).filter(
+        (b): b is ToolUseBlock => b.type === 'tool_use',
+      )
+
+      if (toolUses.length === 0) {
+        const text = textBuf
+        const value = parseGenerated(text, schema)
+        yield {
+          type: 'stop',
+          stopReason: finishReason ?? 'stop',
+          iterations,
+          usage: aggregated,
+          messages: workingMessages,
+          value,
+          text,
+        } as AgentStreamEvent<T>
+        return
+      }
+
+      const resultBlocks: ContentBlock[] = []
+      for (const call of toolUses) {
+        const tool = toolMap.get(call.name)
+        if (!tool) {
+          throw new ToolExecutionError(
+            call.name,
+            call.id,
+            new Error(`Tool "${call.name}" is not registered.`),
+          )
+        }
+        yield { type: 'tool_use', id: call.id, name: call.name, input: call.input }
+        let output: unknown
+        try {
+          output = await tool.execute(call.input, {
+            callId: call.id,
+            context: options.context ?? {},
+          })
+        } catch (cause) {
+          throw new ToolExecutionError(call.name, call.id, cause)
+        }
+        const content = typeof output === 'string' ? output : JSON.stringify(output)
+        resultBlocks.push({
+          type: 'tool_result',
+          toolUseId: call.id,
+          content,
+        } satisfies ToolResultBlock)
+        yield {
+          type: 'tool_result',
+          id: call.id,
+          name: call.name,
+          content,
+          isError: false,
+        }
+      }
+      workingMessages.push({ role: 'user', content: resultBlocks })
+
+      iterations++
+      if (iterations >= maxIterations) {
+        const text = textBuf
+        const value = parseGenerated(text, schema)
+        yield {
+          type: 'stop',
+          stopReason: 'max_iterations',
+          iterations,
+          usage: aggregated,
+          messages: workingMessages,
+          value,
+          text,
+        } as AgentStreamEvent<T>
+        return
+      }
+    }
+  }
+
   async generate<T>(
     messages: readonly Message[],
     schema: OutputSchema<T>,

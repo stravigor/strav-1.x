@@ -90,24 +90,22 @@ export class AgentRunner<T = never> {
   }
 
   /**
-   * Streaming variant of `run()`. Returns an `AsyncIterable<AgentStreamEvent>`
-   * — yields text deltas, tool-use/result boundaries, and a terminal
-   * `stop` event with the full trace.
+   * Streaming variant of `run()`. Returns an
+   * `AsyncIterable<AgentStreamEvent<T>>` — yields text deltas,
+   * tool-use/result boundaries, and a terminal `stop` event with
+   * the full trace.
    *
-   * V1 caveat: `.stream()` and `.output(schema)` can't be combined.
-   * Streaming structured output lands in the same later slice as
-   * tool + schema. Calling `.stream()` on a runner where `.output()`
-   * has been used throws `BrainError`.
+   * Default (no `.output(schema)` set): the terminal `stop` has the
+   * plain shape and `T` defaults to `never`.
+   *
+   * With `.output(schema)`: the terminal `stop` event carries the
+   * parsed `value: T` + raw `text` alongside the loop bookkeeping,
+   * and the runner delegates to
+   * `BrainManager.streamGenerateWithTools`.
    */
-  stream(): AsyncIterable<AgentStreamEvent> {
+  stream(): AsyncIterable<AgentStreamEvent<T>> {
     if (this.prompt === undefined) {
       throw new BrainError('AgentRunner.stream: input() must be called before stream().')
-    }
-    if (this.schema !== undefined) {
-      throw new BrainError(
-        'AgentRunner.stream() does not yet support .output(schema). Use .run() for structured output, or .stream() without .output() for the tool-loop variant. Combined streaming + schema lands in a later slice.',
-        { context: { agent: this.agent.constructor.name } },
-      )
     }
     const messages: Message[] = [{ role: 'user', content: this.prompt }]
     const options: RunWithToolsOptions = {
@@ -116,7 +114,17 @@ export class AgentRunner<T = never> {
       context: this.contextBag,
     }
     if (this.agent.mcpServers.length > 0) options.mcpServers = this.agent.mcpServers
-    return this.brain.streamTools(messages, this.agent.tools, options)
+    if (this.schema !== undefined) {
+      return this.brain.streamGenerateWithTools<T>(
+        messages,
+        this.schema,
+        this.agent.tools,
+        options,
+      )
+    }
+    return this.brain.streamTools(messages, this.agent.tools, options) as AsyncIterable<
+      AgentStreamEvent<T>
+    >
   }
 
   async run(): Promise<AgentRunResult<T>> {

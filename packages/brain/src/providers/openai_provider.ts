@@ -564,6 +564,206 @@ export class OpenAIProvider implements Provider {
     }
   }
 
+  async *streamWithToolsAndSchema<T>(
+    messages: readonly Message[],
+    tools: readonly Tool[],
+    schema: OutputSchema<T>,
+    options: RunWithToolsOptions = {},
+  ): AsyncIterable<AgentStreamEvent<T>> {
+    const mcpServers: readonly MCPServer[] = options.mcpServers ?? []
+    const resolved =
+      mcpServers.length > 0
+        ? await resolveMcpTools(mcpServers, {
+            ...(this.mcpClientFactory ? { clientFactory: this.mcpClientFactory } : {}),
+          })
+        : { tools: [] as Tool[], close: async () => {} }
+    try {
+      yield* this._streamLoopWithSchema(
+        [...tools, ...resolved.tools],
+        messages,
+        schema,
+        options,
+      )
+    } finally {
+      await resolved.close()
+    }
+  }
+
+  private async *_streamLoopWithSchema<T>(
+    tools: readonly Tool[],
+    messages: readonly Message[],
+    schema: OutputSchema<T>,
+    options: RunWithToolsOptions,
+  ): AsyncIterable<AgentStreamEvent<T>> {
+    const maxIterations = options.maxIterations ?? 10
+    const toolMap = new Map<string, Tool>(tools.map((t) => [t.name, t]))
+    const workingMessages: Message[] = [...messages]
+    const aggregated: ChatUsage = {
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      cacheCreationTokens: 0,
+    }
+    let iterations = 0
+
+    while (true) {
+      yield { type: 'iteration_start', iteration: iterations }
+
+      const baseParams = this.buildParams(workingMessages, options, tools)
+      baseParams.response_format = {
+        type: 'json_schema',
+        json_schema: {
+          name: schema.name,
+          ...(schema.description !== undefined ? { description: schema.description } : {}),
+          schema: schema.jsonSchema,
+          strict: true,
+        },
+      }
+      const params: OpenAI.Chat.ChatCompletionCreateParamsStreaming = {
+        ...baseParams,
+        stream: true,
+        stream_options: { include_usage: true },
+      }
+      const stream = await this.client.chat.completions.create(params)
+
+      let textBuf = ''
+      const toolCallsByIndex: Map<
+        number,
+        { id?: string; name?: string; args: string }
+      > = new Map()
+      let finishReason: string | null = null
+      let lastUsage: OpenAI.CompletionUsage | undefined
+
+      for await (const chunk of stream) {
+        const choice = chunk.choices[0]
+        const delta = choice?.delta
+        if (delta?.content && typeof delta.content === 'string' && delta.content.length > 0) {
+          textBuf += delta.content
+          yield { type: 'text', delta: delta.content }
+        }
+        if (delta?.tool_calls) {
+          for (const tc of delta.tool_calls) {
+            const entry = toolCallsByIndex.get(tc.index) ?? { args: '' }
+            if (tc.id) entry.id = tc.id
+            if (tc.function?.name) entry.name = tc.function.name
+            if (tc.function?.arguments) entry.args += tc.function.arguments
+            toolCallsByIndex.set(tc.index, entry)
+          }
+        }
+        if (choice?.finish_reason) finishReason = choice.finish_reason
+        if (chunk.usage) lastUsage = chunk.usage
+      }
+
+      addUsage(aggregated, lastUsage)
+      yield { type: 'iteration_end', iteration: iterations, stopReason: finishReason }
+
+      const assistantBlocks: ContentBlock[] = []
+      if (textBuf.length > 0) assistantBlocks.push({ type: 'text', text: textBuf })
+      const orderedCalls = [...toolCallsByIndex.entries()]
+        .sort(([a], [b]) => a - b)
+        .map(([, v]) => v)
+      for (const call of orderedCalls) {
+        if (!call.id || !call.name) continue
+        let parsedInput: unknown = {}
+        try {
+          parsedInput = call.args ? JSON.parse(call.args) : {}
+        } catch {
+          parsedInput = call.args
+        }
+        assistantBlocks.push({
+          type: 'tool_use',
+          id: call.id,
+          name: call.name,
+          input: parsedInput,
+        } satisfies ToolUseBlock)
+      }
+      const assistantContent: string | ContentBlock[] =
+        assistantBlocks.length === 1 && assistantBlocks[0]?.type === 'text'
+          ? assistantBlocks[0].text
+          : assistantBlocks
+      workingMessages.push({ role: 'assistant', content: assistantContent })
+
+      if (finishReason !== 'tool_calls' || orderedCalls.length === 0) {
+        const text = textBuf
+        const value = parseGenerated(text, schema)
+        yield {
+          type: 'stop',
+          stopReason: finishReason ?? 'stop',
+          iterations,
+          usage: aggregated,
+          messages: workingMessages,
+          value,
+          text,
+        } as AgentStreamEvent<T>
+        return
+      }
+
+      const resultBlocks: ContentBlock[] = []
+      for (const call of orderedCalls) {
+        if (!call.id || !call.name) continue
+        const tool = toolMap.get(call.name)
+        if (!tool) {
+          throw new ToolExecutionError(
+            call.name,
+            call.id,
+            new Error(`Tool "${call.name}" is not registered.`),
+          )
+        }
+        let parsedInput: unknown
+        try {
+          parsedInput = call.args ? JSON.parse(call.args) : {}
+        } catch (err) {
+          throw new ToolExecutionError(
+            call.name,
+            call.id,
+            new Error(`Failed to parse tool input JSON: ${(err as Error).message}`),
+          )
+        }
+        yield { type: 'tool_use', id: call.id, name: call.name, input: parsedInput }
+
+        let output: unknown
+        try {
+          output = await tool.execute(parsedInput, {
+            callId: call.id,
+            context: options.context ?? {},
+          })
+        } catch (cause) {
+          throw new ToolExecutionError(call.name, call.id, cause)
+        }
+        const content = typeof output === 'string' ? output : JSON.stringify(output)
+        resultBlocks.push({
+          type: 'tool_result',
+          toolUseId: call.id,
+          content,
+        } satisfies ToolResultBlock)
+        yield {
+          type: 'tool_result',
+          id: call.id,
+          name: call.name,
+          content,
+          isError: false,
+        }
+      }
+      workingMessages.push({ role: 'user', content: resultBlocks })
+
+      iterations++
+      if (iterations >= maxIterations) {
+        const text = textBuf
+        const value = parseGenerated(text, schema)
+        yield {
+          type: 'stop',
+          stopReason: 'max_iterations',
+          iterations,
+          usage: aggregated,
+          messages: workingMessages,
+          value,
+          text,
+        } as AgentStreamEvent<T>
+        return
+      }
+    }
+  }
+
   async generate<T>(
     messages: readonly Message[],
     schema: OutputSchema<T>,

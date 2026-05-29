@@ -121,6 +121,22 @@ export interface Provider {
   ): Promise<AgentGenerateResult<T>>
 
   /**
+   * Streaming variant of `runWithToolsAndSchema`. Same agentic loop,
+   * same schema constraint on every turn — yielded as
+   * `AgentStreamEvent<T>`s. The terminal `stop` event carries the
+   * parsed `value` + raw `text` alongside the loop bookkeeping.
+   *
+   * Optional; `BrainManager.streamGenerateWithTools` throws
+   * `BrainError` when the chosen provider doesn't implement it.
+   */
+  streamWithToolsAndSchema?<T>(
+    messages: readonly Message[],
+    tools: readonly Tool[],
+    schema: OutputSchema<T>,
+    options?: RunWithToolsOptions,
+  ): AsyncIterable<AgentStreamEvent<T>>
+
+  /**
    * Streaming variant of `runWithTools`. Yields `AgentStreamEvent`s
    * as the loop progresses — text deltas during model turns,
    * `tool_use` / `tool_result` boundaries around tool execution,
