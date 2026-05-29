@@ -1,6 +1,6 @@
 {
   "name": "@strav/brain",
-  "version": "1.0.0-alpha.7",
+  "version": "1.0.0-alpha.8",
   "description": "Strav AI module — unified Provider interface, BrainManager, threads, prompt caching. Anthropic provider in V1; OpenAI / Gemini / DeepSeek follow.",
   "type": "module",
   "main": "./src/index.ts",

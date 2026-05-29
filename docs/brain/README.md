@@ -2,7 +2,7 @@
 
 The AI module for Strav 1.0 — a unified `Provider` interface, a per-app `BrainManager` facade, multi-turn `Thread`s, and built-in prompt caching. V1 ships the **Anthropic** provider backed by the official `@anthropic-ai/sdk`; OpenAI, Gemini, and DeepSeek follow in later slices.
 
-> **Status: 1.0.0-alpha.7 — M5 slice 3 (brain foundation).**
+> **Status: 1.0.0-alpha.8 — M5 slice 3 (brain foundation).**
 > Shipping: **`Provider`** interface, **`AnthropicProvider`** (chat / stream / countTokens) backed by `@anthropic-ai/sdk`, **`BrainManager`** facade (provider routing, model-tier sugar, default-cache config, single-shot + streaming + token-count surfaces), **`Thread`** (multi-turn with `toJSON` / `fromJSON` persistence), **`BrainProvider`** service provider (config-driven boot, eager construction so bad config fails at boot), **prompt caching** (top-level + per-block + system-prompt cache flags translate to `cache_control: { type: 'ephemeral' }`), **adaptive thinking** + **effort** opt-ins, **typed `BrainError`** (`brain.error`).
 > Deferred: **tools / agents / MCP** (separate slice — wraps the SDK's tool runner + `agent_toolset_20260401`), **embeddings**, **vision / files / batches**, **structured outputs** (`output_config.format` + Zod), **OpenAI / Gemini / DeepSeek providers** (one slice per), **server-side compaction** (`compact-2026-01-12` beta — Thread-level integration), **`generate(schema)`** convenience over `chat`. **Managed Agents** lands as a separate sub-path (`@strav/brain/managed-agents`) when it ships.
 

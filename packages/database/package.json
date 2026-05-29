@@ -1,6 +1,6 @@
 {
   "name": "@strav/database",
-  "version": "1.0.0-alpha.7",
+  "version": "1.0.0-alpha.8",
   "description": "Strav database layer — Postgres connection pool, schema DSL, migrations (Bun.sql, no native deps)",
   "type": "module",
   "main": "./src/index.ts",
