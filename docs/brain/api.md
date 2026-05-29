@@ -31,8 +31,10 @@ import {
   // Tools + agents
   Agent,
   AgentRunner,
+  type AgentRunResult,
   type AgentResolver,
   type AgentResult,
+  type AgentGenerateResult,
   defineTool,
   type DefineToolSpec,
   type Tool,
@@ -580,11 +582,14 @@ Subclass with `@inject()` to get container DI. `BrainProvider` installs an `Agen
 ### `AgentRunner`
 
 ```ts
-class AgentRunner {
+class AgentRunner<T = never> {
   input(text: string): this                      // required before run()
   context(data: Record<string, unknown>): this   // accumulating; per-call > thread defaults
-  run(): Promise<AgentResult>
+  output<U>(schema: OutputSchema<U>): AgentRunner<U>  // switches to structured-output mode
+  run(): Promise<AgentRunResult<T>>
 }
+
+type AgentRunResult<T> = [T] extends [never] ? AgentResult : AgentGenerateResult<T>
 ```
 
 Returned by `BrainManager.agent(Class)`. Designed to chain:
@@ -594,6 +599,28 @@ const result = await brain.agent(ResearchAgent)
   .input('What is the current state of X?')
   .context({ userId: '...', tenantId: '...' })
   .run()
+//  ^? AgentResult
+
+const { value } = await brain.agent(CityAgent)
+  .input('Capital of France?')
+  .output(citySchema)
+  .run()
+//  ^? AgentGenerateResult<CityAnswer>
+```
+
+`.output(schema)` switches the runner into structured-output mode — `run()` delegates to `BrainManager.generate(...)` and returns `AgentGenerateResult<T>`. V1 caveat: when the agent declares `tools` or `mcpServers`, `.output()`-mode `run()` throws `BrainError` (combined tool + schema is a later slice).
+
+### `AgentGenerateResult<T>`
+
+```ts
+interface AgentGenerateResult<T = unknown> {
+  value: T
+  text: string
+  messages: Message[]
+  iterations: number           // always 0 in V1 (schema path doesn't engage the tool loop)
+  stopReason: string
+  usage: ChatUsage
+}
 ```
 
 ### `BrainManager.agent(Class, instance?)`

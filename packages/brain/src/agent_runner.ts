@@ -2,24 +2,49 @@
  * `AgentRunner` — fluent builder returned by `BrainManager.agent(Class)`.
  *
  * Carries the agent instance + an input message + an optional
- * per-run context bag. `run()` translates the agent's declarative
- * configuration into a `runWithTools` call and returns the
- * `AgentResult`.
+ * per-run context bag + an optional structured-output schema.
+ * `run()` translates the agent's declarative configuration into
+ * either a `runWithTools` call (default) or a `generate` call (when
+ * `.output(schema)` was used) and returns the matching result type.
  *
- * Designed to chain: `brain.agent(R).input(text).context({...}).run()`.
+ * Designed to chain:
+ *
+ * ```ts
+ * brain.agent(R).input(text).context({...}).run()
+ * brain.agent(R).input(text).output(schema).run()  // → AgentGenerateResult<T>
+ * ```
+ *
  * Apps that need the full Message-array surface bypass the runner
- * and call `BrainManager.runTools(messages, tools, options)` directly.
+ * and call `BrainManager.runTools(messages, tools, options)` or
+ * `BrainManager.generate(input, schema, options)` directly.
  */
 
 import type { Agent } from './agent.ts'
+import type { AgentGenerateResult } from './agent_generate_result.ts'
 import type { AgentResult } from './agent_result.ts'
 import type { BrainManager } from './brain_manager.ts'
+import { BrainError } from './brain_error.ts'
+import type { OutputSchema } from './output_schema.ts'
+import type { ChatOptions, Message } from './types.ts'
 import type { RunWithToolsOptions } from './provider.ts'
-import type { Message } from './types.ts'
 
-export class AgentRunner {
+/**
+ * Conditional return shape for `AgentRunner.run()`. With the default
+ * generic (`T = never`), `run()` returns `AgentResult` — the
+ * tool-loop shape. When the runner has been switched into
+ * structured-output mode via `.output(schema)`, `T` carries the
+ * inferred type and `run()` returns `AgentGenerateResult<T>`.
+ *
+ * The `[T] extends [never]` form is the standard "is this still the
+ * default never?" check — `T extends never` would distribute over
+ * union types and break.
+ */
+export type AgentRunResult<T> = [T] extends [never] ? AgentResult : AgentGenerateResult<T>
+
+export class AgentRunner<T = never> {
   private prompt: string | undefined
   private contextBag: Record<string, unknown> = {}
+  private schema: OutputSchema<T> | undefined
 
   constructor(
     private readonly brain: BrainManager,
@@ -43,21 +68,79 @@ export class AgentRunner {
     return this
   }
 
-  async run(): Promise<AgentResult> {
+  /**
+   * Switch the runner into structured-output mode. `run()` then
+   * delegates to `BrainManager.generate(...)` and returns an
+   * `AgentGenerateResult<U>` shaped to the supplied schema.
+   *
+   * V1 caveat: structured output and tool use can't be combined yet.
+   * Agents that declare `tools` or `mcpServers` AND call `.output()`
+   * throw a `BrainError` at `run()` with a clear "this combination is
+   * deferred" message. Apps that need both today run them in two
+   * steps — `runTools(...)` for the loop, then `generate(...)` for
+   * the structured summary.
+   */
+  output<U>(schema: OutputSchema<U>): AgentRunner<U> {
+    // Mutate in place + cast — the runtime state is a single object;
+    // the generic narrows only the static return type. This avoids
+    // cloning the prompt + contextBag fields.
+    this.schema = schema as unknown as OutputSchema<T>
+    return this as unknown as AgentRunner<U>
+  }
+
+  async run(): Promise<AgentRunResult<T>> {
     if (this.prompt === undefined) {
-      throw new Error('AgentRunner.run: input() must be called before run().')
+      throw new BrainError('AgentRunner.run: input() must be called before run().')
     }
     const messages: Message[] = [{ role: 'user', content: this.prompt }]
+
+    if (this.schema !== undefined) {
+      if (this.agent.tools.length > 0 || this.agent.mcpServers.length > 0) {
+        throw new BrainError(
+          'AgentRunner.output() does not yet support tool use. The agent declares tools or mcpServers — drop them on the agent, or run runTools(...) and generate(...) as two separate calls. Combined tool + schema lands in a later slice.',
+          {
+            context: {
+              agent: this.agent.constructor.name,
+              tools: this.agent.tools.length,
+              mcpServers: this.agent.mcpServers.length,
+            },
+          },
+        )
+      }
+      const generateOptions = this.buildChatOptions()
+      const result = await this.brain.generate<T>(messages, this.schema, generateOptions)
+      const generateResult: AgentGenerateResult<T> = {
+        value: result.value,
+        text: result.text,
+        messages: [
+          ...messages,
+          { role: 'assistant', content: result.text },
+        ],
+        iterations: 0,
+        stopReason: result.stopReason ?? 'stop',
+        usage: result.usage,
+      }
+      return generateResult as AgentRunResult<T>
+    }
+
     const options: RunWithToolsOptions = {
-      tier: this.agent.tier,
-      maxTokens: this.agent.maxTokens,
-      system: this.agent.instructions,
+      ...this.buildChatOptions(),
       maxIterations: this.agent.maxIterations,
       context: this.contextBag,
     }
+    if (this.agent.mcpServers.length > 0) options.mcpServers = this.agent.mcpServers
+    const result = await this.brain.runTools(messages, this.agent.tools, options)
+    return result as AgentRunResult<T>
+  }
+
+  private buildChatOptions(): ChatOptions {
+    const options: ChatOptions = {
+      tier: this.agent.tier,
+      maxTokens: this.agent.maxTokens,
+      system: this.agent.instructions,
+    }
     if (this.agent.model !== undefined) options.model = this.agent.model
     if (this.agent.provider !== undefined) options.provider = this.agent.provider
-    if (this.agent.mcpServers.length > 0) options.mcpServers = this.agent.mcpServers
-    return this.brain.runTools(messages, this.agent.tools, options)
+    return options
   }
 }

@@ -113,6 +113,30 @@ const result = await brain.agent(ConfiguredAgent, myAgent).input(text).run()
 
 The second arg overrides the resolver. The class argument is still required to keep the call signature typed.
 
+### Structured output: `.output(schema)`
+
+When an agent should return a typed object rather than free-form prose, chain `.output(schema)`:
+
+```ts
+class CityAgent extends Agent {
+  override readonly instructions = 'You only emit verified city data.'
+  override readonly tier = 'fast'
+}
+
+const { value } = await brain
+  .agent(CityAgent)
+  .input('Capital of France?')
+  .output(citySchema)
+  .run()
+//  ^? AgentGenerateResult<CityAnswer>
+```
+
+`run()` then returns `AgentGenerateResult<T>` instead of `AgentResult`: `{ value, text, messages, iterations, stopReason, usage }`. The agent's `instructions` / `tier` / `model` / `provider` / `maxTokens` still flow through — only the underlying call shape switches from `runTools(...)` to `generate(...)`.
+
+V1 caveat: `.output()` doesn't yet combine with `tools` or `mcpServers`. An agent that declares either AND calls `.output()` throws `BrainError` at `run()`. Apps that need both today run them in two steps. Combined tool + schema lands in a later slice.
+
+See [`guides/structured-outputs.md`](./structured-outputs.md) for the schema shape and per-provider mapping.
+
 ## What the agentic loop does
 
 V1 implements the manual agentic loop (see the Anthropic skill's tool-use section):

@@ -8,8 +8,9 @@
 // tools, structured outputs, other providers.
 
 export { Agent } from './agent.ts'
+export type { AgentGenerateResult } from './agent_generate_result.ts'
 export type { AgentResult } from './agent_result.ts'
-export { AgentRunner } from './agent_runner.ts'
+export { AgentRunner, type AgentRunResult } from './agent_runner.ts'
 export {
   type AnthropicProviderConfig,
   type BrainCacheConfig,

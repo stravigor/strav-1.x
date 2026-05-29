@@ -120,8 +120,29 @@ const { value } = await brain.generate(prompt, citySchema, {
 })
 ```
 
+## With `Agent`
+
+`AgentRunner.output(schema)` switches a declarative agent into structured-output mode. The same agent + tier + system prompt — typed result:
+
+```ts
+class CityAgent extends Agent {
+  override readonly instructions = 'You only emit verified city data.'
+  override readonly tier = 'fast'
+}
+
+const { value } = await brain
+  .agent(CityAgent)
+  .input('Capital of France?')
+  .output(citySchema)
+  .run()
+//  ^? AgentGenerateResult<CityAnswer>
+```
+
+`run()` returns `AgentGenerateResult<T>` — `{ value, text, messages, iterations, stopReason, usage }`. `iterations` is always `0` here because the structured-output path doesn't engage the tool-use loop.
+
+V1 caveat: `.output()` doesn't yet combine with `tools` or `mcpServers`. An agent that declares either AND calls `.output()` throws `BrainError` at `run()`. Apps that need both today run them in two steps — `runTools(...)` for the agentic work, then `generate(...)` (or a second agent) for the structured summary. Combined tool + schema lands in a later slice.
+
 ## What's deferred
 
 - **Streaming structured outputs.** All three providers support partial JSON streams; the framework's `generate` is one-shot today. Streaming lands when the streaming-agents slice does.
-- **`brain.agent(MyAgent).output(schema).run()`.** Plumbing the schema into the `Agent` runner is a natural next step — out of scope for this slice.
-- **Built-in Zod helper.** A `@strav/brain-zod` package that produces `OutputSchema<z.infer<typeof z>>` in one call is straightforward; not in this slice.
+- **Tool use + structured output.** Combining `.output(schema)` with a tool-using agent lands when the streaming-agents slice does — it shares the per-turn-state plumbing.
