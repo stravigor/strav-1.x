@@ -135,6 +135,21 @@ const { value } = await brain
 
 `.output(schema)` combines freely with `tools` and `mcpServers`. The model can still emit tool calls during the loop; only its final turn produces JSON, which is parsed against the schema. `iterations` reports how many tool-use round-trips happened.
 
+**Class-side declaration.** Subclassing `Agent<T>` with a class-level `outputSchema` lets the runner be typed without the per-call `.output(schema)` chain — `brain.agent(Class)` infers `T` from the class generic and pre-arms the runner:
+
+```ts
+class CityAgent extends Agent<CityAnswer> {
+  override readonly instructions = 'You only emit verified city data.'
+  override readonly outputSchema = citySchema   // OutputSchema<CityAnswer>
+  override readonly tools = [searchTool]        // tools still allowed
+}
+
+const { value } = await brain.agent(CityAgent).input('Capital of France?').run()
+//      ^? CityAnswer
+```
+
+A per-call `.output(otherSchema)` still wins over the class-side value when an app wants to override one route's shape.
+
 See [`guides/structured-outputs.md`](./structured-outputs.md) for the schema shape and per-provider mapping.
 
 ## What the agentic loop does

@@ -659,18 +659,34 @@ Streaming twin of `generateWithTools`. Yields the standard `AgentStreamEvent<T>`
 ### `Agent`
 
 ```ts
-abstract class Agent {
+abstract class Agent<T = never> {
   abstract readonly instructions: string         // system prompt
   readonly tools: readonly Tool[]                // default []
+  readonly mcpServers: readonly MCPServer[]      // default []
   readonly provider?: string                     // overrides default provider routing
   readonly model?: string                        // explicit model wins over tier
   readonly tier: ModelTier                       // default 'powerful' (claude-opus-4-7)
   readonly maxIterations: number                 // default 10
   readonly maxTokens: number                     // default 4096
+  readonly outputSchema?: OutputSchema<T>        // class-side structured output
 }
 ```
 
 Subclass with `@inject()` to get container DI. `BrainProvider` installs an `AgentResolver` so `brain.agent(MyAgent)` resolves through `app.resolve(MyAgent)` — i.e. constructor injection works normally.
+
+**Class-side `outputSchema`.** Subclasses that extend `Agent<SomeType>` declare a class-level `outputSchema`; `brain.agent(Class)` infers the generic from the class and returns a typed `AgentRunner<SomeType>`. `.run()` returns `AgentGenerateResult<SomeType>` automatically — no per-call `.output(schema)` needed. Apps can still chain `.output(otherSchema)` to override at the call site.
+
+```ts
+class CityAgent extends Agent<City> {
+  override readonly instructions = 'You only emit verified city data.'
+  override readonly outputSchema = citySchema   // OutputSchema<City>
+}
+
+const { value } = await brain.agent(CityAgent).input('Capital of France?').run()
+//      ^? City
+```
+
+Plain `Agent` subclasses (no generic argument) stay `Agent<never>`; `.run()` returns `AgentResult` exactly as before.
 
 ### `AgentRunner`
 
@@ -722,18 +738,20 @@ interface AgentGenerateResult<T = unknown> {
 ### `BrainManager.agent(Class, instance?)`
 
 ```ts
-brain.agent<A extends Agent>(
-  AgentClass: new (...args: never[]) => A,
-  instance?: A,
-): AgentRunner
+brain.agent<T = never>(
+  AgentClass: new (...args: never[]) => Agent<T>,
+  instance?: Agent<T>,
+): AgentRunner<T>
 ```
 
 When `instance` is omitted, the registered `AgentResolver` builds one (typically through the container so constructor injection works). Pass `instance` when you need to construct the agent yourself with per-request state.
 
+When the `Class` extends `Agent<T>` for some `T` and declares `outputSchema`, the returned runner is pre-typed and pre-armed in structured-output mode — `.run()` returns `AgentGenerateResult<T>` directly, no `.output(schema)` chain required.
+
 ### `BrainManager.setAgentResolver(resolver)`
 
 ```ts
-type AgentResolver = <A extends Agent>(cls: new (...args: never[]) => A) => A
+type AgentResolver = <A extends Agent<unknown>>(cls: new (...args: never[]) => A) => A
 
 brain.setAgentResolver(resolver: AgentResolver): void
 ```

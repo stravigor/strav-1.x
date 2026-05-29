@@ -49,7 +49,7 @@ export class AgentRunner<T = never> {
 
   constructor(
     private readonly brain: BrainManager,
-    private readonly agent: Agent,
+    private readonly agent: Agent<unknown>,
   ) {}
 
   /** Set the user input. Required before `run()`. */

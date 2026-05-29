@@ -21,17 +21,30 @@
  *   .run()
  * ```
  *
- * V1 makes the configuration declarative-only — apps that need
- * runtime knobs (per-request model overrides, dynamic tool sets)
- * use `BrainManager.runTools(...)` directly. Adding per-instance
- * overrides on the Agent class is a future ergonomic slice.
+ * Structured output (typed result without `.output(schema)` at the call site):
+ *
+ * ```ts
+ * class CityAgent extends Agent<CityAnswer> {
+ *   override readonly instructions = 'You only emit verified city data.'
+ *   override readonly outputSchema = citySchema  // OutputSchema<CityAnswer>
+ * }
+ *
+ * const { value } = await brain.agent(CityAgent).input('Capital of France?').run()
+ * //      ^? CityAnswer — runner is typed from the class generic
+ * ```
+ *
+ * The generic threads `T` through `BrainManager.agent(Class)` →
+ * `AgentRunner<T>` → `AgentGenerateResult<T>`. Subclasses that
+ * don't declare an output type stay `Agent<never>` and `run()`
+ * returns `AgentResult` exactly as before.
  */
 
 import type { MCPServer } from './mcp_server.ts'
+import type { OutputSchema } from './output_schema.ts'
 import type { ModelTier } from './types.ts'
 import type { Tool } from './tool.ts'
 
-export abstract class Agent {
+export abstract class Agent<T = never> {
   /** System prompt — the persona / instructions Claude sees on every turn. */
   abstract readonly instructions: string
 
@@ -65,4 +78,20 @@ export abstract class Agent {
 
   /** Hard cap on per-call response tokens. Default `4096`. */
   readonly maxTokens: number = 4096
+
+  /**
+   * Structured-output schema. Set on subclasses that extend
+   * `Agent<SomeType>` to declare the agent always returns that
+   * shape; `BrainManager.agent(Class)` then types the runner
+   * automatically so `.run()` returns `AgentGenerateResult<T>`
+   * without a per-call `.output(schema)`.
+   *
+   * Leave unset on `Agent<never>` subclasses (no structured
+   * output). The runner falls back to the standard tool-loop path
+   * and returns `AgentResult`.
+   *
+   * Apps that want a per-call override still chain
+   * `.output(otherSchema)` — that wins over the class-side value.
+   */
+  readonly outputSchema?: OutputSchema<T>
 }

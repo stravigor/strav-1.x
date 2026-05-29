@@ -40,7 +40,7 @@ import type { Tool } from './tool.ts'
 import { DEFAULT_TIERS } from './brain_config.ts'
 
 /** Container-aware Agent constructor resolver — `BrainProvider` installs one wired to `app.resolve(...)`. */
-export type AgentResolver = <A extends Agent>(cls: new (...args: never[]) => A) => A
+export type AgentResolver = <A extends Agent<unknown>>(cls: new (...args: never[]) => A) => A
 
 export interface BrainManagerOptions {
   /** Name of the default provider — must exist in `providers`. */
@@ -292,15 +292,29 @@ export class BrainManager {
    * `@inject()`-decorate their Agent subclass so constructor
    * injection of dependencies (Repositories, services, etc.) flows
    * through normally.
+   *
+   * When the agent subclass extends `Agent<T>` for some `T` and
+   * declares `outputSchema`, the returned runner is typed as
+   * `AgentRunner<T>` and the schema is pre-applied — `.run()`
+   * returns `AgentGenerateResult<T>` without a per-call
+   * `.output(schema)`. Apps can still chain `.output(otherSchema)`
+   * to override.
    */
-  agent<A extends Agent>(AgentClass: new (...args: never[]) => A, instance?: A): AgentRunner {
+  agent<T = never>(
+    AgentClass: new (...args: never[]) => Agent<T>,
+    instance?: Agent<T>,
+  ): AgentRunner<T> {
     const agent = instance ?? this.resolveAgent(AgentClass)
-    return new AgentRunner(this, agent)
+    const runner = new AgentRunner<T>(this, agent)
+    if (agent.outputSchema !== undefined) {
+      return runner.output(agent.outputSchema)
+    }
+    return runner
   }
 
   // ─── Internal ────────────────────────────────────────────────────────────
 
-  private resolveAgent<A extends Agent>(AgentClass: new (...args: never[]) => A): A {
+  private resolveAgent<A extends Agent<unknown>>(AgentClass: new (...args: never[]) => A): A {
     if (this.agentResolver) return this.agentResolver(AgentClass)
     // Fallback: assume the Agent class is constructible without args.
     // Apps that need DI on the agent register a resolver via
