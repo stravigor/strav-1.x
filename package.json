@@ -16,7 +16,8 @@
     "test": "bun test",
     "test:e2e": "bun test tests/e2e",
     "test:integration": "bun test tests/integration",
-    "db:setup": "bun scripts/db-setup.ts"
+    "db:setup": "bun scripts/db-setup.ts",
+    "db:setup-roles": "bun scripts/db-setup-roles.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.0.0",

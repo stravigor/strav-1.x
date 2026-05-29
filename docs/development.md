@@ -58,6 +58,23 @@ bun db:setup
 
 That runs `DROP SCHEMA public CASCADE; CREATE SCHEMA public;` against the configured `DB_DATABASE`. Don't point `DB_DATABASE` at anything precious.
 
+### Two-role setup for RLS-faithful tests
+
+Production Strav deployments run under a non-privileged app role and a separate BYPASSRLS admin role (see [`docs/database/guides/multi-tenancy.md`](./database/guides/multi-tenancy.md#two-pool-setup)). To exercise the same shape locally — so tenant-isolation assertions actually hit the policy machinery instead of degrading under a superuser — provision the two roles once:
+
+```bash
+DB_USER=<superuser> DB_PASSWORD=<superuser-pw> bun db:setup-roles
+```
+
+Creates `strav_app` (NOSUPERUSER, NOBYPASSRLS, LOGIN — owns the `public` schema) and `strav_admin` (NOSUPERUSER, BYPASSRLS, LOGIN). Then point the integration suite at the app role:
+
+```bash
+export DB_USER=strav_app DB_PASSWORD=strav_app
+bun test
+```
+
+Without this, the integration suite still passes — RLS-scoping assertions self-skip with a warning under SUPERUSER / BYPASSRLS roles. CI uses the two-role pattern so every PR exercises the policies for real.
+
 ## CI
 
 `.github/workflows/ci.yml` runs the same suite against a Postgres-16 service. The `DB_*` env vars are pre-set in the workflow, so the integration tests aren't skipped in CI — they run on every PR / push to `master`.
