@@ -2,9 +2,10 @@
 
 Authentication primitives for Strav 1.0 — `Hasher` (argon2id), guards, the per-request `ctx.auth` façade, and `auth` / `guest` middleware.
 
-> **Status: 1.0.0-alpha.2 — M2 shipped (foundation + Session + Token + lifecycle helpers). Published as `@strav/auth@1.0.0-alpha.2`.**
-> Shipping: **Hasher** (Bun.password / argon2id), **Authenticatable** contract, **Guard** + **AuthManager** + **AuthContext** (`ctx.auth`), **MemoryGuard** (dev/test), **SessionGuard** (production cookie-based, DB-backed) + lifecycle helpers (`regenerate` for session-fixation prevention, `touch` for sliding-window expiry, `killAllForUser` for bulk revoke) + **Session** with `payload jsonb` for flash / CSRF / locale + **SessionRepository.patchPayload**, **TokenGuard** (bearer-token, DB-backed; `<id>|<secret>` plaintext with SHA-256 hash storage + constant-time verification), **AccessToken** Model / Schema / Repository, **auth / guest middleware**, **AuthProvider** (auto-wires the lot + `'session'` / `'token'` driver entries).
-> Deferred (each its own slice): **magic links**, **email verification**, **TOTP**, **auto-flush payload middleware**, **session cleanup command** (`sessions:gc`), **token abilities / scopes** (lands with auth policies), **token `last_used_at` updates** (needs write batching). **JWT** driver opt-in: post-1.0.
+> **Status: 1.0.0-alpha.3 shipped (M2). Auth-extras slice in-progress on `master`: magic links, email verification, TOTP, policies / gates.**
+> Shipping: **Hasher** (Bun.password / argon2id), **Authenticatable** contract, **Guard** + **AuthManager** + **AuthContext** (`ctx.auth`), **MemoryGuard** (dev/test), **SessionGuard** + lifecycle helpers (`regenerate` / `touch` / `killAllForUser`) + **Session** with `payload jsonb` + **SessionRepository.patchPayload**, **TokenGuard** + **AccessToken** Model / Schema / Repository, **auth / guest middleware**.
+> Auth-extras (this slice, unreleased): **`MagicLinkManager`** + `strav_magic_links` schema (single-use passwordless links), **`EmailVerification`** (stateless HMAC-signed URLs) + **`verified` middleware**, **TOTP** helpers (`generateSecret` / `qrUri` / `verifyTotp`), **`Gate`** + policy classes + `'policy:resource,ability'` middleware + `ctx.auth.authorize` / `can` / `cannot`.
+> Deferred: **auto-flush payload middleware**, **session cleanup command** (`sessions:gc`), **token abilities / scopes**, **token `last_used_at` updates**. **JWT** driver opt-in: post-1.0.
 
 ## Install
 
@@ -78,6 +79,13 @@ export default {
 | `AUTH_BUILTIN_NAMES` | String-key constants used in `config.http.middleware` and `route.middleware('...')` |
 | `AuthProvider` | ServiceProvider that binds Hasher + AuthManager and auto-wires `ctx.auth` |
 | `assertAuth(ctx)` | Helper that narrows `ctx.auth` to a non-null `AuthContext` |
+| `MagicLinkManager` | Create + consume single-use passwordless sign-in URLs; backed by `strav_magic_links` |
+| `magicLinkSchema` / `MagicLinkError` | Schema for the magic-links table + typed error (`auth.magic-link-error`) |
+| `EmailVerification` | Stateless HMAC-signed verification URLs — `signedUrl(userId)` / `verify(token)` |
+| `EmailNotVerifiedError` / `verifiedMiddleware` | `verified` middleware that checks `user.email_verified_at` |
+| `Gate` | Registry for policy classes + standalone abilities; backs `ctx.auth.authorize / can / cannot` |
+| `makePolicyMiddleware` / `AuthorizationError` | Factory used by the `policy:resource,ability` middleware + typed 403 error |
+| `generateSecret` / `qrUri` / `verifyTotp` | TOTP (RFC 6238) helpers — no external dep, base32 secret format |
 
 ## Documentation
 
@@ -86,3 +94,7 @@ export default {
 - [`guides/middleware.md`](./guides/middleware.md) — `auth` / `guest` middleware (with the `:guardName` factory form), error responses, ordering.
 - [`guides/sessions.md`](./guides/sessions.md) — SessionGuard / Session schema + migration, what's deferred (sliding-window expiry, payload column, session rotation, cleanup command), production checklist.
 - [`guides/tokens.md`](./guides/tokens.md) — TokenGuard / AccessToken schema + migration, token format, minting and verifying, what's deferred (abilities/scopes, `last_used_at`), production checklist.
+- [`guides/magic-links.md`](./guides/magic-links.md) — `MagicLinkManager` flow, schema + migration, TTL parsing, pairing with `signal` for the email job.
+- [`guides/verification.md`](./guides/verification.md) — `EmailVerification` (stateless HMAC URLs) + `verified` middleware, comparison with magic links.
+- [`guides/totp.md`](./guides/totp.md) — TOTP enroll / verify lifecycle, base32 secret storage with `@encrypt`, recovery-code shape.
+- [`guides/policies.md`](./guides/policies.md) — `Gate`, policy classes, gate ability functions, the `policy:resource,ability` middleware, `ctx.auth.authorize` / `can` / `cannot`.

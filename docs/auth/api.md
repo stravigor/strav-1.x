@@ -1,6 +1,6 @@
 # @strav/auth — API Reference
 
-> **Status:** Reflects what's implemented as of M2 (auth foundation slice) — Hasher, Authenticatable, Guard, AuthManager, AuthContext, MemoryGuard, auth/guest middleware, AuthProvider, assertAuth. SessionGuard / TokenGuard / magic links / TOTP / email verification / JWT land in follow-up cuts (most need `@strav/database`).
+> **Status:** Reflects M2 (foundation + Session + Token) **plus** the auth-extras slice on `master` (unreleased): `MagicLinkManager`, `EmailVerification` + `verified` middleware, TOTP helpers, `Gate` + policies + `policy` middleware + `ctx.auth.authorize / can / cannot`. JWT lands post-1.0.
 
 ## `Hasher`
 
@@ -109,8 +109,15 @@ interface AuthContext {
   logout(): Promise<void>
   populate(): Promise<void>       // force the default guard to authenticate now
   guard(name: string): AuthGuardView
+
+  // Policy/Gate integration (no-op when no Gate is bound):
+  authorize(ability: string, ...args: unknown[]): Promise<void>   // throws AuthorizationError on deny
+  can(ability: string, ...args: unknown[]): Promise<boolean>
+  cannot(ability: string, ...args: unknown[]): Promise<boolean>
 }
 ```
+
+The `authorize` / `can` / `cannot` methods delegate to the `Gate` resolved at boot. They call `populate()` first so handlers don't need to `await ctx.auth.check()` separately. `can` returns `false` when no Gate is bound; `authorize` throws a plain `Error` (developer mistake — wire `Gate` in your provider). See [`guides/policies.md`](./guides/policies.md).
 
 Caching is keyed by guard. Calling `ctx.auth.guard('memory')` twice within a request returns the same view — and if `'memory'` IS the default guard, `ctx.auth.guard('memory')` returns a view that shares cache with `ctx.auth` itself. So `auth:default-name` middleware populating the view also populates `ctx.auth.user`.
 
@@ -283,6 +290,8 @@ Both registered as **factory** entries on the `MiddlewareRegistry`. The `:` suff
 | `'auth:memory'` | Require auth on the `memory` guard |
 | `'guest'` | Require *unauthenticated* on the default guard |
 | `'guest:memory'` | Require unauthenticated on the `memory` guard |
+| `'verified'` | Require `ctx.auth.user.email_verified_at != null`. Run after `auth`. |
+| `'policy:<key>,<ability>'` | Load resource via `gate.resource(key, loader)` then call `ctx.auth.authorize(ability, resource)`. Run after `auth`. |
 
 ```ts
 // Per-route:
@@ -303,7 +312,22 @@ Both middleware short-circuit by returning the thrown error through the kernel's
 
 ## `AuthProvider`
 
-`name = 'auth'`, `dependencies = ['config', 'http']`. Binds `Hasher`, `SessionRepository`, `AccessTokenRepository`, `AuthManager`; auto-registers `auth` / `guest` middleware; installs a `ctx.auth` enricher on `HttpKernel`. `boot()` eagerly resolves the manager so config errors surface at boot.
+`name = 'auth'`, `dependencies = ['config', 'http']`. Binds `Hasher`, `SessionRepository`, `AccessTokenRepository`, `AuthManager`, `Gate`, `MagicLinkManager`, `EmailVerification`; auto-registers `auth` / `guest` / `policy` / `verified` middleware; installs a `ctx.auth` enricher on `HttpKernel` (with `gateRef` injected when `Gate` is bound). `boot()` eagerly resolves the manager so config errors surface at boot.
+
+Extras-related config:
+
+```ts
+// config/auth.ts
+export default {
+  default: 'session',
+  guards: { /* … */ },
+  hasher: { /* … */ },
+  magic: { baseUrl?: string; path?: string },          // MagicLinkManager
+  verification: { baseUrl?: string; ttlSeconds?: number; path?: string },   // EmailVerification
+}
+```
+
+`EmailVerification` reads `config.app.key` for the HMAC secret — missing key throws `ConfigError` at boot. `magic.baseUrl` / `verification.baseUrl` default to `config.app.url`.
 
 ```ts
 interface AuthConfigShape {
@@ -353,3 +377,155 @@ async function show(ctx: HttpContext) {
 ```
 
 If the route already has the `auth` middleware applied, `assertAuth` never throws — the middleware has already verified `ctx.auth` exists and the user is present.
+
+## `MagicLinkManager`
+
+Single-use passwordless sign-in links. Backed by the `strav_magic_links` table (`magicLinkSchema`). `AuthProvider` registers `MagicLinkManager` as a container singleton when `config.auth.magic.baseUrl` (or `config.app.url`) is set.
+
+```ts
+class MagicLinkManager {
+  constructor(opts: { db: Database; baseUrl?: string; path?: string })
+
+  create(userId: string, options?: CreateMagicLinkOptions): Promise<string>
+  consume(token: string): Promise<ConsumedMagicLink>
+}
+
+interface CreateMagicLinkOptions {
+  ttl?: string | number    // '15m' | '1h' | '7d' | seconds. Default '15m'
+  redirectTo?: string       // stored on the row, returned by consume()
+  baseUrl?: string          // per-call override
+  path?: string             // default '/auth/magic'
+}
+
+interface ConsumedMagicLink { userId: string; redirectTo: string | null }
+```
+
+- **`create(userId, opts?)`** — inserts a row with a 32-byte random hex token (256-bit entropy), returns the full URL to email. Throws `MagicLinkError` if no `baseUrl` is configured.
+- **`consume(token)`** — looks up the row, rejects when missing / `used_at != null` / `expires_at` past, atomically fills `used_at`, returns `{ userId, redirectTo }`.
+
+`MagicLinkError` carries one of three discriminator codes in its `context`: `'invalid'`, `'used'`, `'expired'`. Status is 400 (treat as a client error — the user clicked a stale link).
+
+Token storage is plaintext on purpose: the security boundary is single-use + short TTL + email delivery, not token secrecy. Schema is `strav_magic_links` with `token UNIQUE` for the consume lookup. See [`guides/magic-links.md`](./guides/magic-links.md).
+
+## `EmailVerification`
+
+Stateless, signed verification URLs. Unlike magic links (which authenticate), these only prove email ownership. **No DB table** — the token is `<userId>.<timestamp>.<hmac-sha256>` keyed on `config.app.key`.
+
+```ts
+class EmailVerification {
+  constructor(opts: { appKey: string; baseUrl?: string; ttlSeconds?: number; path?: string })
+
+  signedUrl(userId: string, options?: EmailVerificationOptions): string
+  verify(token: string, options?: EmailVerificationOptions): EmailVerificationResult
+}
+
+interface EmailVerificationOptions {
+  ttlSeconds?: number      // default 86400 (24h)
+  path?: string             // default '/auth/verify'
+  now?: number              // override for deterministic tests
+}
+
+interface EmailVerificationResult { userId: string }
+```
+
+`verify` does constant-time signature compare + TTL check and throws `EmailVerificationError` (status 400; `context.code` is `'invalid'` or `'expired'`).
+
+Tradeoff vs. `MagicLinkManager`: stateless = no DB write, no per-token revoke. Apps that need to invalidate a verification link (e.g. user changes email) should rotate `config.app.key` or fall back to `MagicLinkManager`.
+
+`AuthProvider` registers `EmailVerification` as a singleton when `config.app.key` is present — missing key throws `ConfigError` at boot.
+
+### `verifiedMiddleware` / `EmailNotVerifiedError`
+
+Registered on the middleware registry as `'verified'`. Reads `ctx.auth.user.email_verified_at` and throws `EmailNotVerifiedError` (`auth.email-not-verified`, status 403) when null. **Must run after `'auth'`** — it does not authenticate the user, only gates verified ones.
+
+```ts
+router.get('/billing', handler).middleware(['auth', 'verified'])
+```
+
+See [`guides/verification.md`](./guides/verification.md).
+
+## TOTP
+
+RFC 6238 helpers — pure `node:crypto`, no external dep. Three top-level functions cover the enroll-and-verify lifecycle:
+
+```ts
+function generateSecret(): string                                       // base32, 160 bits
+function qrUri(secret: string, account: string, issuer: string): string // otpauth://totp/…
+function verifyTotp(secret: string, code: string, options?: TotpOptions): boolean
+
+interface TotpOptions {
+  digits?: number    // default 6
+  window?: number    // ± steps tolerated for clock skew. Default 1
+  period?: number    // step seconds. Default 30
+}
+
+// Plus base32 primitives used internally — exposed for tests / custom flows:
+function base32Encode(buf: Buffer | Uint8Array): string
+function base32Decode(str: string): Buffer
+```
+
+- **`generateSecret()`** — 20 random bytes encoded as RFC 4648 base32 (no padding). Store on the user row (apps typically encrypt with `@encrypt` from `@strav/database`).
+- **`qrUri(secret, account, issuer)`** — the `otpauth://` URI compatible with Google Authenticator / Authy / 1Password. Render as a QR code with any QR library.
+- **`verifyTotp(secret, code)`** — checks the current 30s window ±1 step. Returns `false` on mismatch — caller decides retry policy / account lockout.
+
+No `Hasher`-style class or container binding — these are pure functions. Apps own the user-facing rate-limiting and recovery-code generation. See [`guides/totp.md`](./guides/totp.md).
+
+## `Gate` — policies + abilities
+
+Central authorization registry. `AuthProvider` registers `Gate` as a container singleton, the context enricher injects it into `AuthContext.gateRef`, and the `policy:resource,ability` middleware factory resolves it on demand.
+
+```ts
+class Gate {
+  policy<T>(resourceClass: new (...a: any[]) => T, policyClass: PolicyClass): this
+  define(ability: string, fn: AbilityFn): this
+  resource(key: string, loader: ResourceLoader): this   // for `policy` middleware
+
+  authorize(ability, user, ...args): Promise<void>      // throws AuthorizationError on deny
+  can(ability, user, ...args): Promise<boolean>
+  cannot(ability, user, ...args): Promise<boolean>
+}
+
+type PolicyMethod  = (user: Authenticatable, ...args: unknown[]) => boolean | Promise<boolean>
+type AbilityFn     = (user: Authenticatable, ...args: unknown[]) => boolean | Promise<boolean>
+type PolicyClass   = new (...a: any[]) => any
+type ResourceLoader = (id: string) => Promise<unknown>
+```
+
+Two authorization modes share the same surface:
+
+1. **Policy classes** — when the first arg to `authorize` is an object, the gate uses its constructor as the policy key. The `ability` string names the method on the policy class:
+
+   ```ts
+   class LeadPolicy {
+     async update(user: User, lead: Lead) { return lead.owner_id === user.id }
+     async destroy(user: User, lead: Lead) { return user.role === 'admin' }
+   }
+   gate.policy(Lead, LeadPolicy)
+   await ctx.auth.authorize('update', lead)   // → LeadPolicy.update(user, lead)
+   ```
+
+2. **Gate ability functions** — standalone, not tied to a resource class:
+
+   ```ts
+   gate.define('admin.access', (user) => user.role === 'admin')
+   await ctx.auth.can('admin.access')         // → AbilityFn(user)
+   ```
+
+`evaluate` order: policy lookup first when args[0] is an object; falls back to a defined ability; otherwise throws `AuthorizationError('No policy or gate found for ability "…"')`.
+
+`AuthorizationError` extends `StravError` with `code: 'auth.unauthorized'`, `status: 403`. `can` swallows it (returns `false`); `authorize` propagates it.
+
+### `policy:resource,ability` middleware
+
+Registered as a factory entry on the `MiddlewareRegistry`. Pattern: `policy:<resourceKey>,<ability>`.
+
+```ts
+gate.resource('leads', (id) => leadRepo.find(id))
+
+router.put('/leads/:id', [LeadController, 'update'])
+  .middleware(['auth', 'policy:leads,update'])
+```
+
+On invocation: pulls `:id` from `ctx.request.params`, calls the registered loader, returns `404` when the loader returns `null`, otherwise calls `ctx.auth.authorize(ability, resource)`.
+
+Throws plain `Error` (developer mistake) when the route has no `:id` param or `ctx.auth` is missing — apply `auth` middleware before `policy`. See [`guides/policies.md`](./guides/policies.md).

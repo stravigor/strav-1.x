@@ -14,6 +14,13 @@ export { type AuthConfigShape, AuthProvider, type GuardConfigEntry } from './aut
 export { type Authenticatable, isAuthenticatable } from './authenticatable.ts'
 export type { Guard, LoginOptions } from './guard.ts'
 export { Hasher, type HasherOptions } from './hasher.ts'
+export {
+  type ConsumedMagicLink,
+  type CreateMagicLinkOptions,
+  MagicLinkError,
+  MagicLinkManager,
+  magicLinkSchema,
+} from './magic/index.ts'
 export { MemoryGuard, type MemoryGuardOptions } from './memory_guard.ts'
 export {
   AUTH_BUILTIN_NAMES,
@@ -22,6 +29,15 @@ export {
   type GuestMiddlewareOptions,
   guestMiddleware,
 } from './middleware/index.ts'
+export {
+  type AbilityFn,
+  AuthorizationError,
+  Gate,
+  makePolicyMiddleware,
+  type PolicyClass,
+  type PolicyMethod,
+  type ResourceLoader,
+} from './policy/index.ts'
 export {
   Session,
   SessionGuard,
@@ -38,3 +54,19 @@ export {
   TokenGuard,
   type TokenGuardOptions,
 } from './token/index.ts'
+export {
+  base32Decode,
+  base32Encode,
+  generateSecret,
+  qrUri,
+  type TotpOptions,
+  verify as verifyTotp,
+} from './totp/index.ts'
+export {
+  EmailNotVerifiedError,
+  EmailVerification,
+  EmailVerificationError,
+  type EmailVerificationOptions,
+  type EmailVerificationResult,
+  verifiedMiddleware,
+} from './verification/index.ts'

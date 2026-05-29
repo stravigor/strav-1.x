@@ -20,10 +20,13 @@ import { AuthError } from '@strav/kernel'
 import type { AuthManager } from './auth_manager.ts'
 import type { Authenticatable } from './authenticatable.ts'
 import type { Guard, LoginOptions } from './guard.ts'
+import type { Gate } from './policy/gate.ts'
 
 export class AuthContext<U extends Authenticatable = Authenticatable> {
   private readonly defaultView: AuthGuardView<U>
   private readonly viewCache = new Map<string, AuthGuardView<Authenticatable>>()
+  /** Injected by the context enricher when a Gate is bound. */
+  gateRef: Gate | undefined
 
   constructor(
     ctx: HttpContext,
@@ -69,6 +72,33 @@ export class AuthContext<U extends Authenticatable = Authenticatable> {
    */
   populate(): Promise<void> {
     return this.defaultView.populate()
+  }
+
+  // ─── Policy/Gate integration ────────────────────────────────────────────────
+
+  /** Throws `AuthorizationError` when the user isn't allowed. */
+  async authorize(ability: string, ...args: unknown[]): Promise<void> {
+    const gate = this.gateRef
+    if (!gate)
+      throw new Error('AuthContext.authorize: no Gate bound. Register a Gate in AuthProvider.')
+    await this.populate()
+    return gate.authorize(ability, this.user, ...args)
+  }
+
+  /** Boolean check — no throw. */
+  async can(ability: string, ...args: unknown[]): Promise<boolean> {
+    const gate = this.gateRef
+    if (!gate) return false
+    await this.populate()
+    return gate.can(ability, this.user, ...args)
+  }
+
+  /** Inverse of `can`. */
+  async cannot(ability: string, ...args: unknown[]): Promise<boolean> {
+    const gate = this.gateRef
+    if (!gate) return true
+    await this.populate()
+    return gate.cannot(ability, this.user, ...args)
   }
 
   /**

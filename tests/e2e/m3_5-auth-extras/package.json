@@ -1,0 +1,13 @@
+{
+  "name": "@strav-tests/m3_5-auth-extras",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Auth-extras end-to-end smoke — magic-link round-trip, email verification, Gate policies wired through AuthProvider against a real Postgres.",
+  "dependencies": {
+    "@strav/kernel": "workspace:*",
+    "@strav/http": "workspace:*",
+    "@strav/database": "workspace:*",
+    "@strav/auth": "workspace:*"
+  }
+}

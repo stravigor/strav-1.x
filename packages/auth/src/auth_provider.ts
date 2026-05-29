@@ -27,18 +27,24 @@ import { type Application, ConfigError, ConfigRepository, ServiceProvider } from
 // Side-effect import — installs the HttpContext.auth augmentation so the
 // enricher below typechecks against the widened ctx.
 import './context_augmentation.ts'
+import { PostgresDatabase } from '@strav/database'
 import { AuthContext } from './auth_context.ts'
 import { AuthManager } from './auth_manager.ts'
 import type { Authenticatable } from './authenticatable.ts'
 import type { Guard } from './guard.ts'
 import { Hasher, type HasherOptions } from './hasher.ts'
+import { MagicLinkManager } from './magic/magic_link_manager.ts'
 import { authMiddleware } from './middleware/auth_middleware.ts'
 import { guestMiddleware } from './middleware/guest_middleware.ts'
 import { AUTH_BUILTIN_NAMES } from './middleware/index.ts'
+import { Gate } from './policy/gate.ts'
+import { makePolicyMiddleware } from './policy/policy_middleware.ts'
 import { SessionGuard } from './session/session_guard.ts'
 import { SessionRepository } from './session/session_repository.ts'
 import { AccessTokenRepository } from './token/access_token_repository.ts'
 import { TokenGuard } from './token/token_guard.ts'
+import { EmailVerification } from './verification/email_verification.ts'
+import { verifiedMiddleware } from './verification/verified_middleware.ts'
 
 export interface AuthConfigShape {
   /** Default guard name; matches a key in `guards`. */
@@ -111,6 +117,37 @@ export class AuthProvider extends ServiceProvider {
     // get them for free; apps not using them don't pay (lazy resolution).
     app.singleton(SessionRepository)
     app.singleton(AccessTokenRepository)
+    app.singleton(Gate)
+
+    app.singleton(MagicLinkManager, (c) => {
+      const config = c.resolve(ConfigRepository)
+      const db = c.resolve(PostgresDatabase)
+      const magicConfig = config.get('auth.magic') as
+        | { baseUrl?: string; path?: string }
+        | undefined
+      return new MagicLinkManager({
+        db,
+        baseUrl: magicConfig?.baseUrl ?? (config.get('app.url') as string),
+        path: magicConfig?.path,
+      })
+    })
+
+    app.singleton(EmailVerification, (c) => {
+      const config = c.resolve(ConfigRepository)
+      const appKey = config.get('app.key') as string
+      if (!appKey) {
+        throw new ConfigError('EmailVerification: appKey is required. Set config.app.key.')
+      }
+      const verificationConfig = config.get('auth.verification') as
+        | { baseUrl?: string; ttlSeconds?: number; path?: string }
+        | undefined
+      return new EmailVerification({
+        appKey,
+        baseUrl: verificationConfig?.baseUrl ?? (config.get('app.url') as string),
+        ttlSeconds: verificationConfig?.ttlSeconds,
+        path: verificationConfig?.path,
+      })
+    })
 
     app.singleton(AuthManager, (c) => {
       const config = c.resolve(ConfigRepository).get('auth') as AuthConfigShape | undefined
@@ -140,6 +177,24 @@ export class AuthProvider extends ServiceProvider {
         { factory: true },
       )
     }
+    if (!reg.has('policy')) {
+      reg.register(
+        'policy',
+        (resourceKey?: string, ability?: string) => {
+          if (!resourceKey || !ability) {
+            throw new Error(
+              'policy middleware: expected "policy:resource,ability" format (e.g. "policy:leads,update").',
+            )
+          }
+          const gate = app.resolve(Gate)
+          return makePolicyMiddleware(gate, resourceKey, ability)
+        },
+        { factory: true },
+      )
+    }
+    if (!reg.has('verified')) {
+      reg.register('verified', verifiedMiddleware())
+    }
   }
 
   override boot(app: Application): void {
@@ -149,7 +204,11 @@ export class AuthProvider extends ServiceProvider {
     // Wire `ctx.auth` for every request. Runs before any middleware so
     // `auth`/`guest` middleware + handlers can read `ctx.auth.user` directly.
     app.resolve(HttpKernel).addContextEnricher((ctx) => {
-      ctx.auth = new AuthContext(ctx, manager)
+      const auth = new AuthContext(ctx, manager)
+      if (app.has(Gate)) {
+        auth.gateRef = app.resolve(Gate)
+      }
+      ctx.auth = auth
     })
   }
 
