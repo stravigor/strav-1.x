@@ -1,6 +1,6 @@
 {
   "name": "@strav/machine",
-  "version": "1.0.0-alpha.18",
+  "version": "1.0.0-alpha.19",
   "description": "Strav state machines — declarative transitions with guards, effects, events + a stateful() Repository mixin.",
   "type": "module",
   "main": "./src/index.ts",

@@ -1,6 +1,6 @@
 {
   "name": "@strav/durable",
-  "version": "1.0.0-alpha.18",
+  "version": "1.0.0-alpha.19",
   "description": "Strav durable execution — crash-resumable sequential workflows on top of @strav/queue + Postgres. V1: sequential .step() with retries + saga compensation. V2 adds parallel/route/loop/sleep/waitForSignal.",
   "type": "module",
   "main": "./src/index.ts",
