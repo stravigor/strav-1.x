@@ -1,6 +1,6 @@
 {
   "name": "@strav/queue",
-  "version": "1.0.0-alpha.8",
+  "version": "1.0.0-alpha.9",
   "description": "Strav queue layer — Job + JobRegistry + dispatch contract; backends ship as drivers",
   "type": "module",
   "main": "./src/index.ts",
