@@ -2,7 +2,7 @@
 
 Declarative finite-state machines for Strav 1.0. Define states, transitions, guards, effects, and event names; apply transitions to any entity. The `stateful(...)` Repository mixin layers in persistence + event emission.
 
-> **Status: 1.0.0-alpha.9 — M5 slice 2 (state-machine foundation + `stateful()` mixin).**
+> **Status: 1.0.0-alpha.10 — M5 slice 2 (state-machine foundation + `stateful()` mixin).**
 > Shipping: **`defineMachine(...)`** → typed `Machine<TEntity, TState, TTransition>` (pure value, no DI), **`Machine.state` / `.is` / `.can` / `.availableTransitions` / `.apply`** with sync + async guards, **`stateful(Base, machine)`** Repository mixin with `.transition(entity, name)` that validates → mutates → runs effect → persists via `Repository.update` → emits via the Repository's `EventBus`, **`TransitionError`** (`machine.invalid-transition`, status 422) + **`GuardError`** (`machine.guard-rejected`, status 422) typed `StravError`s.
 > Deferred: **Initial-state auto-fill on `Model.create()`** (use `Repository.create({ status: machine.definition.initial })` for now), **multi-field machines** (one state field per machine in V1), **history columns / audit log** (apps that need an audit trail listen on `<resource>.updated` and record the transition there), **per-transition queue dispatch sugar** (effects can `await queue.dispatch(...)` directly), **state diagram export** (`machine.toDot()` / `.toMermaid()` lands when an app needs visualization).
 
