@@ -64,10 +64,24 @@ export interface GeminiProviderConfig {
   apiVersion?: string
 }
 
+/** DeepSeek driver config — backed by the `openai` SDK pointed at DeepSeek's OpenAI-compatible endpoint. */
+export interface DeepSeekProviderConfig {
+  driver: 'deepseek'
+  /** API key. Required. Most apps source from `env('DEEPSEEK_API_KEY')`. */
+  apiKey: string
+  /** Optional override of the SDK's base URL. Defaults to `https://api.deepseek.com/v1`. */
+  baseUrl?: string
+  /** Default model when neither `options.model` nor `options.tier` is passed. Defaults to `deepseek-chat`. */
+  defaultModel?: string
+  /** Default `max_tokens` for `chat()` calls that don't specify one. */
+  defaultMaxTokens?: number
+}
+
 export type ProviderConfig =
   | AnthropicProviderConfig
   | OpenAIProviderConfig
-  | GeminiProviderConfig // | DeepSeekProviderConfig (later slice)
+  | GeminiProviderConfig
+  | DeepSeekProviderConfig
 
 /** Cache-shape defaults applied when `ChatOptions.cache` is omitted. */
 export interface BrainCacheConfig {

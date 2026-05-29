@@ -88,10 +88,16 @@ export interface OpenAIProviderOptions {
 
 export class OpenAIProvider implements Provider {
   readonly name: string
-  private readonly client: OpenAI
-  private readonly defaultModel: string
-  private readonly defaultMaxTokens: number
-  private readonly mcpClientFactory?: ResolveMcpToolsOptions['clientFactory']
+  // Protected (rather than private) so OpenAI-compatible drivers
+  // can subclass — see `DeepSeekProvider`. Apps that want to plug
+  // in Groq / Together / Fireworks follow the same pattern: extend,
+  // override the constructor's base URL + default model, optionally
+  // override `buildParams` to suppress fields the upstream API
+  // doesn't accept.
+  protected readonly client: OpenAI
+  protected readonly defaultModel: string
+  protected readonly defaultMaxTokens: number
+  protected readonly mcpClientFactory?: ResolveMcpToolsOptions['clientFactory']
 
   constructor(
     name: string,
@@ -780,7 +786,7 @@ export class OpenAIProvider implements Provider {
 
   // ─── Param translation ──────────────────────────────────────────────────
 
-  private buildParams(
+  protected buildParams(
     messages: readonly Message[],
     options: ChatOptions,
     tools: readonly Tool[],

@@ -28,6 +28,7 @@ import { type Application, ConfigError, ConfigRepository, ServiceProvider } from
 import { BrainManager } from './brain_manager.ts'
 import type { BrainConfigShape, ProviderConfig } from './brain_config.ts'
 import { AnthropicProvider } from './providers/anthropic_provider.ts'
+import { DeepSeekProvider } from './providers/deepseek_provider.ts'
 import { GeminiProvider } from './providers/gemini_provider.ts'
 import { OpenAIProvider } from './providers/openai_provider.ts'
 import type { Provider } from './provider.ts'
@@ -109,10 +110,17 @@ function buildProvider(name: string, config: ProviderConfig): Provider {
         )
       }
       return new GeminiProvider(name, config)
+    case 'deepseek':
+      if (!config.apiKey) {
+        throw new ConfigError(
+          `BrainProvider: deepseek provider "${name}" is missing apiKey. Source from env('DEEPSEEK_API_KEY').`,
+        )
+      }
+      return new DeepSeekProvider(name, config)
     default: {
       const exhaustiveCheck: never = config
       throw new ConfigError(
-        `BrainProvider: unknown driver for provider "${name}". Known drivers: anthropic, openai, google.`,
+        `BrainProvider: unknown driver for provider "${name}". Known drivers: anthropic, openai, google, deepseek.`,
       )
       // (unreachable — kept for the exhaustive check to fire when a new driver lands)
       // biome-ignore lint/correctness/noUnreachable: kept for the exhaustive-check above

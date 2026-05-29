@@ -15,11 +15,13 @@ import {
   AnthropicProvider,
   OpenAIProvider,
   GeminiProvider,
+  DeepSeekProvider,
   // Config
   type BrainConfigShape,
   type AnthropicProviderConfig,
   type OpenAIProviderConfig,
   type GeminiProviderConfig,
+  type DeepSeekProviderConfig,
   type ProviderConfig,
   type BrainCacheConfig,
   DEFAULT_TIERS,
@@ -318,6 +320,35 @@ Maps framework shapes to Gemini's wire format:
 
 `stream()` iterates `generateContentStream` yielding text deltas; the terminal `stop` event carries the last `usageMetadata` translated to `ChatUsage` (including `cachedContentTokenCount` → `cacheReadTokens`). `countTokens` calls `ai.models.countTokens` and returns `totalTokens`. MCP servers are not supported by Gemini server-side — the local client path is the only option.
 
+## `DeepSeekProvider`
+
+Subclass of `OpenAIProvider`, backed by the `openai` SDK pointed at DeepSeek's OpenAI-compatible chat completions endpoint.
+
+```ts
+class DeepSeekProvider extends OpenAIProvider {
+  constructor(
+    name: string,
+    config: DeepSeekProviderConfig,
+    options?: { client?: OpenAI; mcpClientFactory?: … },
+  )
+  // Inherits chat / stream / runWithTools / streamWithTools / generate /
+  // runWithToolsAndSchema / streamWithToolsAndSchema from OpenAIProvider
+  // and overrides three of them — see "Divergences".
+}
+```
+
+Inherits OpenAI's 1:1 wire-format translation. Diverges in three places:
+
+| Field | DeepSeek behavior |
+|---|---|
+| `reasoning_effort` | Stripped from every request — DeepSeek's API rejects unknown fields. `deepseek-reasoner` thinks regardless. |
+| `response_format.json_schema` | Not supported by DeepSeek. `generate()` falls back to `response_format.json_object` + injects the schema into the system prompt; client-side `parseGenerated` validates. |
+| `runWithToolsAndSchema` / `streamWithToolsAndSchema` | Throw `BrainError` — combined tools + schema deferred. Apps run `runTools` + `generate` separately, or switch to Anthropic / OpenAI / Gemini for this combination. |
+
+The subclassing pattern is the recommended template for any OpenAI-compatible vendor (Groq, Together, Fireworks, vLLM) — extend `OpenAIProvider`, override the base URL + default model, optionally override `buildParams` to suppress fields the upstream rejects. See [`guides/deepseek.md`](./guides/deepseek.md#extending-the-pattern).
+
+`countTokens` is not implemented (DeepSeek has no count endpoint). `BrainManager.countTokens` returns `null` when routed to DeepSeek.
+
 ## Config
 
 ```ts
@@ -328,7 +359,11 @@ interface BrainConfigShape {
   cache?: BrainCacheConfig
 }
 
-type ProviderConfig = AnthropicProviderConfig | OpenAIProviderConfig | GeminiProviderConfig // DeepSeek follows
+type ProviderConfig =
+  | AnthropicProviderConfig
+  | OpenAIProviderConfig
+  | GeminiProviderConfig
+  | DeepSeekProviderConfig
 
 interface AnthropicProviderConfig {
   driver: 'anthropic'
@@ -354,6 +389,14 @@ interface GeminiProviderConfig {
   baseUrl?: string
   apiVersion?: string           // 'v1' | 'v1beta'
   defaultModel?: string         // defaults to 'gemini-2.5-flash'
+  defaultMaxTokens?: number
+}
+
+interface DeepSeekProviderConfig {
+  driver: 'deepseek'
+  apiKey: string
+  baseUrl?: string              // defaults to 'https://api.deepseek.com/v1'
+  defaultModel?: string         // defaults to 'deepseek-chat'
   defaultMaxTokens?: number
 }
 

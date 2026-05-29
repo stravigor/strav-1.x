@@ -16,6 +16,7 @@ export {
   type AnthropicProviderConfig,
   type BrainCacheConfig,
   type BrainConfigShape,
+  type DeepSeekProviderConfig,
   DEFAULT_MODEL,
   DEFAULT_TIERS,
   type GeminiProviderConfig,
@@ -33,6 +34,7 @@ export { defineTool, type DefineToolSpec } from './define_tool.ts'
 export type { MCPServer, MCPServerToolConfig } from './mcp_server.ts'
 export type { OutputSchema } from './output_schema.ts'
 export { AnthropicProvider } from './providers/anthropic_provider.ts'
+export { DeepSeekProvider } from './providers/deepseek_provider.ts'
 export { GeminiProvider } from './providers/gemini_provider.ts'
 export { OpenAIProvider } from './providers/openai_provider.ts'
 export type { Provider, RunWithToolsOptions } from './provider.ts'
