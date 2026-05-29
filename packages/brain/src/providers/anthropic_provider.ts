@@ -453,13 +453,33 @@ export class AnthropicProvider implements Provider {
           )
         : this.client.messages.stream(params, reqOpts(options))
 
+      // Track tool_use content blocks by their stream index so
+      // `input_json_delta` events can be paired with the correct id.
+      // Anthropic's streaming protocol issues a `content_block_start`
+      // carrying the tool's id + name, then a sequence of
+      // `input_json_delta`s with `partial_json` chunks, then a
+      // `content_block_stop`.
+      const toolBlockIdByIndex = new Map<number, string>()
       for await (const event of stream) {
         if (
-          event.type === 'content_block_delta' &&
-          event.delta.type === 'text_delta' &&
-          event.delta.text.length > 0
+          event.type === 'content_block_start' &&
+          event.content_block.type === 'tool_use'
         ) {
-          yield { type: 'text', delta: event.delta.text }
+          toolBlockIdByIndex.set(event.index, event.content_block.id)
+          yield {
+            type: 'tool_use_start',
+            id: event.content_block.id,
+            name: event.content_block.name,
+          }
+        } else if (event.type === 'content_block_delta') {
+          if (event.delta.type === 'text_delta' && event.delta.text.length > 0) {
+            yield { type: 'text', delta: event.delta.text }
+          } else if (event.delta.type === 'input_json_delta') {
+            const id = toolBlockIdByIndex.get(event.index)
+            if (id !== undefined && event.delta.partial_json.length > 0) {
+              yield { type: 'tool_use_delta', id, argsDelta: event.delta.partial_json }
+            }
+          }
         }
       }
       const final = (await stream.finalMessage()) as unknown as Anthropic.Message
@@ -596,13 +616,33 @@ export class AnthropicProvider implements Provider {
           )
         : this.client.messages.stream(params, reqOpts(options))
 
+      // Track tool_use content blocks by their stream index so
+      // `input_json_delta` events can be paired with the correct id.
+      // Anthropic's streaming protocol issues a `content_block_start`
+      // carrying the tool's id + name, then a sequence of
+      // `input_json_delta`s with `partial_json` chunks, then a
+      // `content_block_stop`.
+      const toolBlockIdByIndex = new Map<number, string>()
       for await (const event of stream) {
         if (
-          event.type === 'content_block_delta' &&
-          event.delta.type === 'text_delta' &&
-          event.delta.text.length > 0
+          event.type === 'content_block_start' &&
+          event.content_block.type === 'tool_use'
         ) {
-          yield { type: 'text', delta: event.delta.text }
+          toolBlockIdByIndex.set(event.index, event.content_block.id)
+          yield {
+            type: 'tool_use_start',
+            id: event.content_block.id,
+            name: event.content_block.name,
+          }
+        } else if (event.type === 'content_block_delta') {
+          if (event.delta.type === 'text_delta' && event.delta.text.length > 0) {
+            yield { type: 'text', delta: event.delta.text }
+          } else if (event.delta.type === 'input_json_delta') {
+            const id = toolBlockIdByIndex.get(event.index)
+            if (id !== undefined && event.delta.partial_json.length > 0) {
+              yield { type: 'tool_use_delta', id, argsDelta: event.delta.partial_json }
+            }
+          }
         }
       }
       const final = (await stream.finalMessage()) as unknown as Anthropic.Message

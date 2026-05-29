@@ -20,10 +20,24 @@
  *   - `text` — a text delta from the assistant turn currently in
  *     flight. Same shape as `StreamEvent.text` so apps can reuse
  *     UI code.
+ *   - `tool_use_start` — a tool call has begun streaming. Fires
+ *     as soon as the model emits the call's `id` + `name`,
+ *     before the arguments finish streaming. Apps that render
+ *     "(calling X with …)" indicators show the tool name here.
+ *     Anthropic + OpenAI emit this from streaming chunks; Gemini
+ *     doesn't stream tool arguments (parts arrive complete) and
+ *     skips both `tool_use_start` and `tool_use_delta`.
+ *   - `tool_use_delta` — a chunk of the tool-call's argument JSON.
+ *     Apps that render the model composing the call (e.g. typing
+ *     `search(q='current state of bun.sql ...`) accumulate
+ *     `argsDelta` per `id` and re-render. The argument JSON is
+ *     partial / possibly malformed mid-stream — only the final
+ *     `tool_use` event carries the parsed input.
  *   - `tool_use` — the assistant turn finished and the framework
  *     parsed a tool call. Emitted with the parsed `input` before
- *     the framework runs the tool — apps that surface "calling
- *     X..." indicators flip them on here.
+ *     the framework runs the tool. Source-of-truth for tool calls;
+ *     cross-provider consumers can rely on this even when the
+ *     start/delta events aren't fired.
  *   - `tool_result` — the framework executed the tool and is about
  *     to feed the result back to the model. `isError` reflects
  *     whether the tool reported a failure (V1: only false today —
@@ -39,10 +53,6 @@
  *     and `text` (the raw JSON the model emitted).
  *
  * What's NOT in V1:
- *   - Per-character tool-argument streaming. `tool_use` fires once
- *     the parsed input is ready. Streaming partial argument JSON
- *     is a follow-up — most apps don't need it and the SDKs handle
- *     it inconsistently.
  *   - `error` events. Failures throw out of the iterator (the
  *     consumer's `for await` rejects). Apps that want resilient
  *     loops catch around the consumer.
@@ -76,6 +86,8 @@ type StopEvent<T> = [T] extends [never] ? BaseStopEvent : ValueStopEvent<T>
 export type AgentStreamEvent<T = never> =
   | { type: 'iteration_start'; iteration: number }
   | { type: 'text'; delta: string }
+  | { type: 'tool_use_start'; id: string; name: string }
+  | { type: 'tool_use_delta'; id: string; argsDelta: string }
   | { type: 'tool_use'; id: string; name: string; input: unknown }
   | {
       type: 'tool_result'

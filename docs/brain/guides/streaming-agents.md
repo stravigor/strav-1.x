@@ -32,6 +32,8 @@ for await (const event of brain.streamTools('Find issue STR-42, then summarize.'
 type AgentStreamEvent =
   | { type: 'iteration_start'; iteration: number }
   | { type: 'text'; delta: string }
+  | { type: 'tool_use_start'; id: string; name: string }
+  | { type: 'tool_use_delta'; id: string; argsDelta: string }
   | { type: 'tool_use'; id: string; name: string; input: unknown }
   | { type: 'tool_result'; id: string; name: string; content: string; isError: boolean }
   | { type: 'iteration_end'; iteration: number; stopReason: string | null }
@@ -41,14 +43,46 @@ type AgentStreamEvent =
 Lifecycle of one turn:
 
 1. `iteration_start` — before the model call.
-2. Zero or more `text` events — text deltas from the assistant turn currently in flight.
+2. Interleaved while the model streams:
+   - `text` events — text deltas from the assistant turn.
+   - `tool_use_start` — fires once per tool call as soon as the model emits the call's id + name. UIs render "(calling X with …)" here.
+   - `tool_use_delta` — chunks of the tool-call argument JSON. Apps accumulate by `id` and re-render to show the call composing.
 3. `iteration_end` — the assistant turn fully drained, with its provider stop reason.
 4. For each tool the model called this turn:
-   - `tool_use` — the framework parsed the call (full input ready); about to execute.
+   - `tool_use` — the framework parsed the call (full input ready); about to execute. **Source of truth** — cross-provider consumers can rely on this even when `tool_use_start` / `tool_use_delta` weren't fired.
    - `tool_result` — execution finished; the result is about to be fed back to the model.
 5. Repeat from `iteration_start` for the next turn, or finish with `stop`.
 
 `stop` is always terminal. Its `stopReason` is `'end_turn'` (or the provider's equivalent) on a clean finish, or `'max_iterations'` when the safety ceiling was hit. `messages` is the full trace — equivalent to `AgentResult.messages` — so apps can persist it without consuming each event individually.
+
+## Progressive tool-call rendering
+
+Apps that want to show a tool call composing in real time (chat UIs, dashboards) consume `tool_use_start` + `tool_use_delta`:
+
+```ts
+const argsByCallId = new Map<string, string>()
+
+for await (const event of brain.streamTools(prompt, [searchTool])) {
+  switch (event.type) {
+    case 'tool_use_start':
+      argsByCallId.set(event.id, '')
+      renderToolHeader(event.id, event.name)
+      break
+    case 'tool_use_delta':
+      argsByCallId.set(event.id, (argsByCallId.get(event.id) ?? '') + event.argsDelta)
+      renderToolArgsProgressive(event.id, argsByCallId.get(event.id)!)
+      break
+    case 'tool_use':
+      // Final parsed input — render the "calling X(...)" line definitively.
+      renderToolFinal(event.id, event.input)
+      break
+  }
+}
+```
+
+The accumulated `argsDelta` chunks form valid JSON only at the end of the stream — mid-stream the string is partial. Apps that want pretty-printed progressive rendering parse opportunistically (try `JSON.parse`, swallow errors) or just render the raw partial text.
+
+Cross-provider safety: `tool_use_start` + `tool_use_delta` are **optional** — Gemini doesn't emit them. Apps that target multiple providers always handle the `tool_use` event as the source of truth, and treat the start/delta events as best-effort UI hints.
 
 ## Failures
 
@@ -78,11 +112,12 @@ for await (const event of brain.agent(ResearchAgent).input('What changed in Q3?'
 
 ## Per-provider mapping
 
-All three V1 providers implement `streamWithTools`:
+All V1 providers implement `streamWithTools`:
 
-- **Anthropic** — `messages.stream()` (or `beta.messages.stream` when MCP is in play). The SDK helper yields raw `content_block_delta` events and exposes a `finalMessage()` accessor; the provider streams text via the deltas and uses `finalMessage` to get the structured assistant turn (text + tool_use blocks).
-- **OpenAI** — `chat.completions.create({ stream: true, stream_options: { include_usage: true } })`. Tool calls arrive as delta fragments indexed by `tool_calls[].index`; the provider accumulates `id` / `name` / `arguments` across chunks and yields `tool_use` only after `finish_reason: 'tool_calls'` is seen. MCP servers route through `@strav/brain/mcp`.
-- **Gemini** — `models.generateContentStream(...)`. Text parts surface as chunks; `functionCall` parts arrive fully formed (Gemini doesn't stream tool-call arguments). MCP via the local client, same as `runWithTools`.
+- **Anthropic** — `messages.stream()` (or `beta.messages.stream` when MCP is in play). Yields `content_block_start` for the tool_use block (→ `tool_use_start`) and `input_json_delta` chunks (→ `tool_use_delta`) for streaming arguments. Text streams via `text_delta`. The final `tool_use` event fires post-stream with the parsed input.
+- **OpenAI** — `chat.completions.create({ stream: true, stream_options: { include_usage: true } })`. Tool calls arrive as delta fragments indexed by `tool_calls[].index`; the provider emits `tool_use_start` on the first chunk carrying `id + name`, then `tool_use_delta` for each subsequent `function.arguments` chunk. `tool_use` fires after `finish_reason: 'tool_calls'` is seen.
+- **Gemini** — `models.generateContentStream(...)`. Text parts surface as chunks; **`functionCall` parts arrive fully formed**, so Gemini does NOT emit `tool_use_start` / `tool_use_delta` — only the post-iteration `tool_use` event. Apps that need progressive tool-call rendering on Gemini have to wait for `tool_use`.
+- **DeepSeek + Ollama** — same OpenAI-compat layer, same `tool_use_start` / `tool_use_delta` behavior (model-dependent — Ollama with non-function-calling models won't emit tool_calls at all).
 
 The on-the-wire shape differences are hidden behind the unified `AgentStreamEvent` vocabulary. Apps consume the same events regardless of which provider is configured.
 
@@ -94,5 +129,4 @@ The on-the-wire shape differences are hidden behind the unified `AgentStreamEven
 
 ## What's deferred
 
-- **Tool-argument streaming.** `tool_use` fires once the parsed input is ready, not character-by-character. Apps that want to render "calling search(q='..." as it streams will get it in a later slice.
 - **Graceful tool-error recovery.** Tool throws abort the iterator; future slices will let apps opt into "feed the error back to the model and let it adapt."

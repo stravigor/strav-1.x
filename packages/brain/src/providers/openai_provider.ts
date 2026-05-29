@@ -434,9 +434,12 @@ export class OpenAIProvider implements Provider {
       const stream = await this.client.chat.completions.create(params, reqOpts(options))
 
       let textBuf = ''
+      // Tracks: per index, the running entry; and whether
+      // `tool_use_start` has already been emitted (we emit once the
+      // first chunk brings the id + name).
       const toolCallsByIndex: Map<
         number,
-        { id?: string; name?: string; args: string }
+        { id?: string; name?: string; args: string; started: boolean }
       > = new Map()
       let finishReason: string | null = null
       let lastUsage: OpenAI.CompletionUsage | undefined
@@ -450,11 +453,29 @@ export class OpenAIProvider implements Provider {
         }
         if (delta?.tool_calls) {
           for (const tc of delta.tool_calls) {
-            const entry = toolCallsByIndex.get(tc.index) ?? { args: '' }
+            const entry = toolCallsByIndex.get(tc.index) ?? { args: '', started: false }
             if (tc.id) entry.id = tc.id
             if (tc.function?.name) entry.name = tc.function.name
-            if (tc.function?.arguments) entry.args += tc.function.arguments
             toolCallsByIndex.set(tc.index, entry)
+            // Emit `tool_use_start` once id+name are both known.
+            // OpenAI typically delivers them in the same first
+            // chunk for a given tool call.
+            if (!entry.started && entry.id !== undefined && entry.name !== undefined) {
+              entry.started = true
+              yield { type: 'tool_use_start', id: entry.id, name: entry.name }
+            }
+            if (tc.function?.arguments) {
+              entry.args += tc.function.arguments
+              // Emit a delta only after start has fired — apps relying
+              // on an id wouldn't have one until then.
+              if (entry.started && entry.id !== undefined) {
+                yield {
+                  type: 'tool_use_delta',
+                  id: entry.id,
+                  argsDelta: tc.function.arguments,
+                }
+              }
+            }
           }
         }
         if (choice?.finish_reason) finishReason = choice.finish_reason
@@ -623,9 +644,12 @@ export class OpenAIProvider implements Provider {
       const stream = await this.client.chat.completions.create(params, reqOpts(options))
 
       let textBuf = ''
+      // Tracks: per index, the running entry; and whether
+      // `tool_use_start` has already been emitted (we emit once the
+      // first chunk brings the id + name).
       const toolCallsByIndex: Map<
         number,
-        { id?: string; name?: string; args: string }
+        { id?: string; name?: string; args: string; started: boolean }
       > = new Map()
       let finishReason: string | null = null
       let lastUsage: OpenAI.CompletionUsage | undefined
@@ -639,11 +663,29 @@ export class OpenAIProvider implements Provider {
         }
         if (delta?.tool_calls) {
           for (const tc of delta.tool_calls) {
-            const entry = toolCallsByIndex.get(tc.index) ?? { args: '' }
+            const entry = toolCallsByIndex.get(tc.index) ?? { args: '', started: false }
             if (tc.id) entry.id = tc.id
             if (tc.function?.name) entry.name = tc.function.name
-            if (tc.function?.arguments) entry.args += tc.function.arguments
             toolCallsByIndex.set(tc.index, entry)
+            // Emit `tool_use_start` once id+name are both known.
+            // OpenAI typically delivers them in the same first
+            // chunk for a given tool call.
+            if (!entry.started && entry.id !== undefined && entry.name !== undefined) {
+              entry.started = true
+              yield { type: 'tool_use_start', id: entry.id, name: entry.name }
+            }
+            if (tc.function?.arguments) {
+              entry.args += tc.function.arguments
+              // Emit a delta only after start has fired — apps relying
+              // on an id wouldn't have one until then.
+              if (entry.started && entry.id !== undefined) {
+                yield {
+                  type: 'tool_use_delta',
+                  id: entry.id,
+                  argsDelta: tc.function.arguments,
+                }
+              }
+            }
           }
         }
         if (choice?.finish_reason) finishReason = choice.finish_reason

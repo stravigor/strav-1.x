@@ -724,7 +724,9 @@ Streaming twin of `runTools`. Yields `AgentStreamEvent`s as the loop progresses 
 type AgentStreamEvent<T = never> =
   | { type: 'iteration_start'; iteration: number }
   | { type: 'text'; delta: string }
-  | { type: 'tool_use'; id: string; name: string; input: unknown }
+  | { type: 'tool_use_start'; id: string; name: string }              // optional — Gemini skips
+  | { type: 'tool_use_delta'; id: string; argsDelta: string }         // optional — Gemini skips
+  | { type: 'tool_use'; id: string; name: string; input: unknown }    // source of truth
   | { type: 'tool_result'; id: string; name: string; content: string; isError: boolean }
   | { type: 'iteration_end'; iteration: number; stopReason: string | null }
   // stop narrows when T is set (schema-constrained streams):
