@@ -126,17 +126,21 @@ export class AgentRunner<T = never> {
     const messages: Message[] = [{ role: 'user', content: this.prompt }]
 
     if (this.schema !== undefined) {
-      if (this.agent.tools.length > 0 || this.agent.mcpServers.length > 0) {
-        throw new BrainError(
-          'AgentRunner.output() does not yet support tool use. The agent declares tools or mcpServers — drop them on the agent, or run runTools(...) and generate(...) as two separate calls. Combined tool + schema lands in a later slice.',
-          {
-            context: {
-              agent: this.agent.constructor.name,
-              tools: this.agent.tools.length,
-              mcpServers: this.agent.mcpServers.length,
-            },
-          },
+      const hasTools = this.agent.tools.length > 0 || this.agent.mcpServers.length > 0
+      if (hasTools) {
+        const toolOptions: RunWithToolsOptions = {
+          ...this.buildChatOptions(),
+          maxIterations: this.agent.maxIterations,
+          context: this.contextBag,
+        }
+        if (this.agent.mcpServers.length > 0) toolOptions.mcpServers = this.agent.mcpServers
+        const result = await this.brain.generateWithTools<T>(
+          messages,
+          this.schema,
+          this.agent.tools,
+          toolOptions,
         )
+        return result as AgentRunResult<T>
       }
       const generateOptions = this.buildChatOptions()
       const result = await this.brain.generate<T>(messages, this.schema, generateOptions)

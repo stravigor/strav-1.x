@@ -138,11 +138,44 @@ const { value } = await brain
 //  ^? AgentGenerateResult<CityAnswer>
 ```
 
-`run()` returns `AgentGenerateResult<T>` — `{ value, text, messages, iterations, stopReason, usage }`. `iterations` is always `0` here because the structured-output path doesn't engage the tool-use loop.
+`run()` returns `AgentGenerateResult<T>` — `{ value, text, messages, iterations, stopReason, usage }`. When the agent declares no tools, `iterations` is `0` (single `generate` call). When the agent declares `tools` or `mcpServers`, the runner takes the combined path (below) and `iterations` reflects the number of tool-use round-trips.
 
-V1 caveat: `.output()` doesn't yet combine with `tools` or `mcpServers`. An agent that declares either AND calls `.output()` throws `BrainError` at `run()`. Apps that need both today run them in two steps — `runTools(...)` for the agentic work, then `generate(...)` (or a second agent) for the structured summary. Combined tool + schema lands in a later slice.
+## With tools (combined path)
+
+`.output(schema)` *does* combine with `tools` and `mcpServers`. The runner delegates to `BrainManager.generateWithTools`, which runs the standard agentic loop while pinning a JSON-Schema constraint on every turn. The model can still emit `tool_use` blocks during the loop — only the model's final turn (when it answers without calling a tool) emits JSON, and that JSON is parsed against the schema.
+
+```ts
+class ResearchAgent extends Agent {
+  override readonly instructions = 'You summarize research findings.'
+  override readonly tools = [searchPapers, fetchAbstract]
+}
+
+const { value, iterations } = await brain
+  .agent(ResearchAgent)
+  .input('What changed in transformer architectures in 2025?')
+  .output(summarySchema)
+  .run()
+//  ^? AgentGenerateResult<Summary>
+```
+
+Manager-level access:
+
+```ts
+const result = await brain.generateWithTools<Summary>(
+  'What changed in transformer architectures in 2025?',
+  summarySchema,
+  [searchPapers, fetchAbstract],
+)
+```
+
+Per-provider mapping under the hood:
+
+| Provider | What's added every turn |
+|---|---|
+| Anthropic | `output_config: { format: { type: 'json_schema', schema } }` |
+| OpenAI | `response_format: { type: 'json_schema', json_schema: { …, strict: true } }` |
+| Gemini | `config: { responseMimeType: 'application/json', responseJsonSchema: schema }` |
 
 ## What's deferred
 
-- **Streaming structured outputs.** All three providers support partial JSON streams; the framework's `generate` is one-shot today. Streaming lands when the streaming-agents slice does.
-- **Tool use + structured output.** Combining `.output(schema)` with a tool-using agent lands when the streaming-agents slice does — it shares the per-turn-state plumbing.
+- **Streaming structured outputs.** All three providers support partial JSON streams; the framework's `generate` / `generateWithTools` is one-shot today. Streaming lands when the combined `.stream() + .output(schema)` slice does.

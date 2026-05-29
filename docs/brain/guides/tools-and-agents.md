@@ -131,9 +131,9 @@ const { value } = await brain
 //  ^? AgentGenerateResult<CityAnswer>
 ```
 
-`run()` then returns `AgentGenerateResult<T>` instead of `AgentResult`: `{ value, text, messages, iterations, stopReason, usage }`. The agent's `instructions` / `tier` / `model` / `provider` / `maxTokens` still flow through — only the underlying call shape switches from `runTools(...)` to `generate(...)`.
+`run()` then returns `AgentGenerateResult<T>` instead of `AgentResult`: `{ value, text, messages, iterations, stopReason, usage }`. The agent's `instructions` / `tier` / `model` / `provider` / `maxTokens` still flow through — only the underlying call shape switches from `runTools(...)` to `generate(...)` (no tools) or `generateWithTools(...)` (tools / mcpServers declared).
 
-V1 caveat: `.output()` doesn't yet combine with `tools` or `mcpServers`. An agent that declares either AND calls `.output()` throws `BrainError` at `run()`. Apps that need both today run them in two steps. Combined tool + schema lands in a later slice.
+`.output(schema)` combines freely with `tools` and `mcpServers`. The model can still emit tool calls during the loop; only its final turn produces JSON, which is parsed against the schema. `iterations` reports how many tool-use round-trips happened.
 
 See [`guides/structured-outputs.md`](./structured-outputs.md) for the schema shape and per-provider mapping.
 

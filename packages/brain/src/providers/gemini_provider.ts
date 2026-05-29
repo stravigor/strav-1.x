@@ -60,6 +60,7 @@ import type { AgentResult } from '../agent_result.ts'
 import { BrainError } from '../brain_error.ts'
 import type { GeminiProviderConfig } from '../brain_config.ts'
 import type { MCPServer } from '../mcp_server.ts'
+import type { AgentGenerateResult } from '../agent_generate_result.ts'
 import type { AgentStreamEvent } from '../agent_stream_event.ts'
 import { resolveMcpTools, type ResolveMcpToolsOptions } from '../mcp/resolve_mcp_tools.ts'
 import { parseGenerated, type OutputSchema } from '../output_schema.ts'
@@ -266,6 +267,121 @@ export class GeminiProvider implements Provider {
       if (iterations >= maxIterations) {
         return {
           text: candidateText(candidate),
+          messages: workingMessages,
+          iterations,
+          stopReason: 'max_iterations',
+          usage: aggregated,
+        }
+      }
+    }
+  }
+
+  async runWithToolsAndSchema<T>(
+    messages: readonly Message[],
+    tools: readonly Tool[],
+    schema: OutputSchema<T>,
+    options: RunWithToolsOptions = {},
+  ): Promise<AgentGenerateResult<T>> {
+    const mcpServers: readonly MCPServer[] = options.mcpServers ?? []
+    const resolved =
+      mcpServers.length > 0
+        ? await resolveMcpTools(mcpServers, {
+            ...(this.mcpClientFactory ? { clientFactory: this.mcpClientFactory } : {}),
+          })
+        : { tools: [] as Tool[], close: async () => {} }
+    try {
+      return await this._runLoopWithSchema([...tools, ...resolved.tools], messages, schema, options)
+    } finally {
+      await resolved.close()
+    }
+  }
+
+  private async _runLoopWithSchema<T>(
+    tools: readonly Tool[],
+    messages: readonly Message[],
+    schema: OutputSchema<T>,
+    options: RunWithToolsOptions,
+  ): Promise<AgentGenerateResult<T>> {
+    const maxIterations = options.maxIterations ?? 10
+    const toolMap = new Map<string, Tool>(tools.map((t) => [t.name, t]))
+    const workingMessages: Message[] = [...messages]
+    const aggregated: ChatUsage = {
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      cacheCreationTokens: 0,
+    }
+    let iterations = 0
+
+    while (true) {
+      const params = this.buildParams(workingMessages, options, tools)
+      params.config = {
+        ...(params.config ?? {}),
+        responseMimeType: 'application/json',
+        responseJsonSchema: schema.jsonSchema,
+      }
+      const response = await this.models.generateContent(params)
+      addUsage(aggregated, response.usageMetadata)
+
+      const candidate = response.candidates?.[0]
+      if (!candidate) {
+        throw new BrainError('GeminiProvider: response had no candidates.')
+      }
+      const parts = candidate.content?.parts ?? []
+      const assistantContent = fromGeminiParts(parts)
+      workingMessages.push({ role: 'assistant', content: assistantContent })
+
+      const toolUses = (Array.isArray(assistantContent) ? assistantContent : []).filter(
+        (b): b is ToolUseBlock => b.type === 'tool_use',
+      )
+
+      if (toolUses.length === 0) {
+        const text = typeof assistantContent === 'string'
+          ? assistantContent
+          : candidateText(candidate)
+        return {
+          value: parseGenerated(text, schema),
+          text,
+          messages: workingMessages,
+          iterations,
+          stopReason: candidate.finishReason ? String(candidate.finishReason) : 'stop',
+          usage: aggregated,
+        }
+      }
+
+      const resultBlocks: ContentBlock[] = []
+      for (const call of toolUses) {
+        const tool = toolMap.get(call.name)
+        if (!tool) {
+          throw new ToolExecutionError(
+            call.name,
+            call.id,
+            new Error(`Tool "${call.name}" is not registered.`),
+          )
+        }
+        let output: unknown
+        try {
+          output = await tool.execute(call.input, {
+            callId: call.id,
+            context: options.context ?? {},
+          })
+        } catch (cause) {
+          throw new ToolExecutionError(call.name, call.id, cause)
+        }
+        resultBlocks.push({
+          type: 'tool_result',
+          toolUseId: call.id,
+          content: typeof output === 'string' ? output : JSON.stringify(output),
+        } satisfies ToolResultBlock)
+      }
+      workingMessages.push({ role: 'user', content: resultBlocks })
+
+      iterations++
+      if (iterations >= maxIterations) {
+        const text = candidateText(candidate)
+        return {
+          value: parseGenerated(text, schema),
+          text,
           messages: workingMessages,
           iterations,
           stopReason: 'max_iterations',

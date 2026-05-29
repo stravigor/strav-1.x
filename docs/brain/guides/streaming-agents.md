@@ -74,7 +74,7 @@ for await (const event of brain.agent(ResearchAgent).input('What changed in Q3?'
 }
 ```
 
-V1 caveat: `.stream()` and `.output(schema)` can't be combined yet. Calling `.stream()` on a runner where `.output()` was used throws `BrainError`. Streaming structured output lands when the combined tool + schema slice does.
+V1 caveat: `.stream()` and `.output(schema)` can't be combined yet. Calling `.stream()` on a runner where `.output()` was used throws `BrainError`. Streaming structured outputs is the next slice.
 
 ## Per-provider mapping
 
@@ -95,7 +95,6 @@ The on-the-wire shape differences are hidden behind the unified `AgentStreamEven
 ## What's deferred
 
 - **Tool-argument streaming.** `tool_use` fires once the parsed input is ready, not character-by-character. Apps that want to render "calling search(q='..." as it streams will get it in a later slice.
-- **Streaming structured outputs.** All three providers support partial JSON streams; the framework's surface lands when combined tool + schema does.
-- **Combined tools + `.output(schema)`** — same blocker as above.
+- **Streaming structured outputs.** All three providers support partial JSON streams; the framework's surface for `.stream() + .output(schema)` lands in the next slice.
 - **Cancellation / AbortSignal.** Currently the iterator runs to completion. Apps that need to bail mid-stream wrap the consumer in their own race against a timeout.
 - **Graceful tool-error recovery.** Tool throws abort the iterator; future slices will let apps opt into "feed the error back to the model and let it adapt."

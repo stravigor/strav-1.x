@@ -52,6 +52,7 @@ import type { AgentResult } from '../agent_result.ts'
 import { BrainError } from '../brain_error.ts'
 import type { OpenAIProviderConfig } from '../brain_config.ts'
 import type { MCPServer } from '../mcp_server.ts'
+import type { AgentGenerateResult } from '../agent_generate_result.ts'
 import type { AgentStreamEvent } from '../agent_stream_event.ts'
 import { resolveMcpTools, type ResolveMcpToolsOptions } from '../mcp/resolve_mcp_tools.ts'
 import { parseGenerated, type OutputSchema } from '../output_schema.ts'
@@ -251,6 +252,133 @@ export class OpenAIProvider implements Provider {
       if (iterations >= maxIterations) {
         return {
           text: assistantMessage.content ?? '',
+          messages: workingMessages,
+          iterations,
+          stopReason: 'max_iterations',
+          usage: aggregated,
+        }
+      }
+    }
+  }
+
+  async runWithToolsAndSchema<T>(
+    messages: readonly Message[],
+    tools: readonly Tool[],
+    schema: OutputSchema<T>,
+    options: RunWithToolsOptions = {},
+  ): Promise<AgentGenerateResult<T>> {
+    const mcpServers: readonly MCPServer[] = options.mcpServers ?? []
+    const resolved =
+      mcpServers.length > 0
+        ? await resolveMcpTools(mcpServers, {
+            ...(this.mcpClientFactory ? { clientFactory: this.mcpClientFactory } : {}),
+          })
+        : { tools: [] as Tool[], close: async () => {} }
+    try {
+      return await this._runLoopWithSchema([...tools, ...resolved.tools], messages, schema, options)
+    } finally {
+      await resolved.close()
+    }
+  }
+
+  private async _runLoopWithSchema<T>(
+    tools: readonly Tool[],
+    messages: readonly Message[],
+    schema: OutputSchema<T>,
+    options: RunWithToolsOptions,
+  ): Promise<AgentGenerateResult<T>> {
+    const maxIterations = options.maxIterations ?? 10
+    const toolMap = new Map<string, Tool>(tools.map((t) => [t.name, t]))
+    const workingMessages: Message[] = [...messages]
+    const aggregated: ChatUsage = {
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      cacheCreationTokens: 0,
+    }
+    let iterations = 0
+
+    while (true) {
+      const params = this.buildParams(workingMessages, options, tools)
+      params.response_format = {
+        type: 'json_schema',
+        json_schema: {
+          name: schema.name,
+          ...(schema.description !== undefined ? { description: schema.description } : {}),
+          schema: schema.jsonSchema,
+          strict: true,
+        },
+      }
+      const response = await this.client.chat.completions.create(params)
+      addUsage(aggregated, response.usage)
+
+      const choice = response.choices[0]
+      if (!choice) {
+        throw new BrainError('OpenAIProvider: response had no choices.')
+      }
+      const assistantMessage = choice.message
+      workingMessages.push({
+        role: 'assistant',
+        content: fromOpenAIAssistantMessage(assistantMessage),
+      })
+
+      const toolCalls = assistantMessage.tool_calls ?? []
+      if (toolCalls.length === 0 || choice.finish_reason !== 'tool_calls') {
+        const text = assistantMessage.content ?? ''
+        return {
+          value: parseGenerated(text, schema),
+          text,
+          messages: workingMessages,
+          iterations,
+          stopReason: choice.finish_reason ?? 'stop',
+          usage: aggregated,
+        }
+      }
+
+      const resultBlocks: ContentBlock[] = []
+      for (const call of toolCalls) {
+        if (call.type !== 'function') continue
+        const tool = toolMap.get(call.function.name)
+        if (!tool) {
+          throw new ToolExecutionError(
+            call.function.name,
+            call.id,
+            new Error(`Tool "${call.function.name}" is not registered.`),
+          )
+        }
+        let parsedInput: unknown
+        try {
+          parsedInput = call.function.arguments ? JSON.parse(call.function.arguments) : {}
+        } catch (err) {
+          throw new ToolExecutionError(
+            call.function.name,
+            call.id,
+            new Error(`Failed to parse tool input JSON: ${(err as Error).message}`),
+          )
+        }
+        let output: unknown
+        try {
+          output = await tool.execute(parsedInput, {
+            callId: call.id,
+            context: options.context ?? {},
+          })
+        } catch (cause) {
+          throw new ToolExecutionError(call.function.name, call.id, cause)
+        }
+        resultBlocks.push({
+          type: 'tool_result',
+          toolUseId: call.id,
+          content: typeof output === 'string' ? output : JSON.stringify(output),
+        } satisfies ToolResultBlock)
+      }
+      workingMessages.push({ role: 'user', content: resultBlocks })
+
+      iterations++
+      if (iterations >= maxIterations) {
+        const text = assistantMessage.content ?? ''
+        return {
+          value: parseGenerated(text, schema),
+          text,
           messages: workingMessages,
           iterations,
           stopReason: 'max_iterations',

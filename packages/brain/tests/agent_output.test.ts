@@ -1,18 +1,18 @@
 /**
  * Tests for `AgentRunner.output(schema)` — the structured-output
- * mode on top of the declarative `Agent` runner. Exercises the
- * happy path (returns `AgentGenerateResult<T>`), the deferred
- * combination (`tools` / `mcpServers` + schema throws BrainError),
- * and the options threading (system / tier / provider).
+ * mode on top of the declarative `Agent` runner. Covers the
+ * happy path (returns `AgentGenerateResult<T>`) and the options
+ * threading (system / tier / provider).
+ *
+ * The combined `tools` / `mcpServers` + schema path is covered
+ * separately in `run_with_tools_and_schema.test.ts`.
  */
 
 import { describe, expect, test } from 'bun:test'
 import { Agent } from '../src/agent.ts'
-import { BrainError } from '../src/brain_error.ts'
 import { BrainManager } from '../src/brain_manager.ts'
 import type { OutputSchema } from '../src/output_schema.ts'
 import type { Provider } from '../src/provider.ts'
-import type { Tool } from '../src/tool.ts'
 import type {
   ChatOptions,
   ChatResult,
@@ -78,23 +78,6 @@ class CityAgent extends Agent {
   override readonly instructions = 'You only emit verified city data.'
   override readonly tier = 'fast'
   override readonly maxTokens = 512
-}
-
-class CityAgentWithTool extends CityAgent {
-  override readonly tools: readonly Tool[] = [
-    {
-      name: 'search',
-      description: 'search',
-      inputSchema: { type: 'object' },
-      execute: async () => 'r',
-    },
-  ]
-}
-
-class CityAgentWithMcp extends CityAgent {
-  override readonly mcpServers = [
-    { name: 'linear', url: 'https://mcp.linear.app' },
-  ]
 }
 
 // ─── Tests ───────────────────────────────────────────────────────────────
@@ -193,38 +176,9 @@ describe('AgentRunner.output()', () => {
     expect(b.generateCalls).toHaveLength(1)
   })
 
-  test('throws BrainError when the agent declares tools', async () => {
-    const provider = new StubProvider('stub', {
-      value: null as unknown as City,
-      text: 'null',
-      model: 'm',
-      stopReason: null,
-      usage: emptyUsage,
-      raw: undefined,
-    })
-    const brain = new BrainManager({ default: 'stub', providers: { stub: provider } })
-
-    await expect(
-      brain.agent(CityAgentWithTool).input('q').output(citySchema).run(),
-    ).rejects.toBeInstanceOf(BrainError)
-    expect(provider.generateCalls).toHaveLength(0)
-  })
-
-  test('throws BrainError when the agent declares mcpServers', async () => {
-    const provider = new StubProvider('stub', {
-      value: null as unknown as City,
-      text: 'null',
-      model: 'm',
-      stopReason: null,
-      usage: emptyUsage,
-      raw: undefined,
-    })
-    const brain = new BrainManager({ default: 'stub', providers: { stub: provider } })
-
-    await expect(
-      brain.agent(CityAgentWithMcp).input('q').output(citySchema).run(),
-    ).rejects.toBeInstanceOf(BrainError)
-  })
+  // The previous "throws when tools/mcpServers declared" tests were
+  // removed when the combined tool + schema path landed. The happy
+  // path for that combination lives in run_with_tools_and_schema.test.ts.
 
   test('runner.run() before input() still throws even in output mode', async () => {
     const provider = new StubProvider('stub', {

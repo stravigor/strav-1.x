@@ -12,6 +12,7 @@
  * subclassing.
  */
 
+import type { AgentGenerateResult } from './agent_generate_result.ts'
 import type { AgentResult } from './agent_result.ts'
 import type { AgentStreamEvent } from './agent_stream_event.ts'
 import type { MCPServer } from './mcp_server.ts'
@@ -100,6 +101,24 @@ export interface Provider {
     schema: OutputSchema<T>,
     options?: ChatOptions,
   ): Promise<GenerateResult<T>>
+
+  /**
+   * Tool-loop + structured output combined. Runs the agentic loop
+   * with the same tool-handling as `runWithTools`, but pins a
+   * JSON-Schema constraint on every turn — so when the model
+   * finally answers without calling a tool, its text is JSON
+   * matching the schema. Returns the parsed value alongside the
+   * loop bookkeeping.
+   *
+   * Optional on the interface; `BrainManager.generateWithTools`
+   * throws `BrainError` when the configured provider lacks it.
+   */
+  runWithToolsAndSchema?<T>(
+    messages: readonly Message[],
+    tools: readonly Tool[],
+    schema: OutputSchema<T>,
+    options?: RunWithToolsOptions,
+  ): Promise<AgentGenerateResult<T>>
 
   /**
    * Streaming variant of `runWithTools`. Yields `AgentStreamEvent`s

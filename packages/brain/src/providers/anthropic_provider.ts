@@ -45,6 +45,7 @@ import type {
   ToolResultBlock,
   ToolUseBlock,
 } from '../types.ts'
+import type { AgentGenerateResult } from '../agent_generate_result.ts'
 import type { AgentStreamEvent } from '../agent_stream_event.ts'
 import { parseGenerated, type OutputSchema } from '../output_schema.ts'
 
@@ -257,6 +258,139 @@ export class AnthropicProvider implements Provider {
       if (iterations >= maxIterations) {
         return {
           text: collectText(response.content),
+          messages: workingMessages,
+          iterations,
+          stopReason: 'max_iterations',
+          usage: aggregated,
+        }
+      }
+    }
+  }
+
+  async runWithToolsAndSchema<T>(
+    messages: readonly Message[],
+    tools: readonly Tool[],
+    schema: OutputSchema<T>,
+    options: RunWithToolsOptions = {},
+  ): Promise<AgentGenerateResult<T>> {
+    const maxIterations = options.maxIterations ?? 10
+    const toolMap = new Map<string, Tool>(tools.map((t) => [t.name, t]))
+    const workingMessages: Message[] = [...messages]
+    const aggregated: ChatUsage = {
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      cacheCreationTokens: 0,
+    }
+    let iterations = 0
+    let lastStopReason: string | null = null
+
+    const mcpServers = options.mcpServers ?? []
+    const useMcpBeta = mcpServers.length > 0
+
+    while (true) {
+      const params = this.buildParams(workingMessages, options) as Anthropic.MessageCreateParamsNonStreaming & {
+        mcp_servers?: Anthropic.Beta.Messages.BetaRequestMCPServerURLDefinition[]
+      }
+      params.tools = [
+        ...tools.map((t) => ({
+          name: t.name,
+          description: t.description,
+          input_schema: t.inputSchema as Anthropic.Tool.InputSchema,
+        })),
+        ...mcpServers
+          .filter((s) => s.tools?.enabled !== false)
+          .map((s) => ({
+            type: 'mcp_toolset' as const,
+            mcp_server_name: s.name,
+            ...(s.tools?.allowedTools ? { allowed_tools: [...s.tools.allowedTools] } : {}),
+          })),
+      ] as unknown as Anthropic.MessageCreateParams['tools']
+      params.output_config = {
+        ...(params.output_config ?? {}),
+        format: { type: 'json_schema', schema: schema.jsonSchema },
+      }
+
+      let response: Anthropic.Message
+      if (useMcpBeta) {
+        params.mcp_servers = mcpServers.map((s) => {
+          const def: Anthropic.Beta.Messages.BetaRequestMCPServerURLDefinition = {
+            type: 'url',
+            name: s.name,
+            url: s.url,
+          }
+          if (s.authorizationToken !== undefined) def.authorization_token = s.authorizationToken
+          return def
+        })
+        const baseBetas = (params as { betas?: readonly string[] }).betas ?? []
+        ;(params as { betas?: string[] }).betas = baseBetas.includes('mcp-client-2025-11-20')
+          ? [...baseBetas]
+          : [...baseBetas, 'mcp-client-2025-11-20']
+        response = (await this.client.beta.messages.create(
+          params as unknown as Anthropic.Beta.Messages.MessageCreateParamsNonStreaming,
+        )) as unknown as Anthropic.Message
+      } else {
+        response = await this.client.messages.create(params)
+      }
+      addUsage(aggregated, response.usage)
+      lastStopReason = response.stop_reason ?? null
+
+      workingMessages.push({
+        role: 'assistant',
+        content: fromAnthropicContent(response.content),
+      })
+
+      if (response.stop_reason !== 'tool_use') {
+        const text = collectText(response.content)
+        return {
+          value: parseGenerated(text, schema),
+          text,
+          messages: workingMessages,
+          iterations,
+          stopReason: lastStopReason ?? 'end_turn',
+          usage: aggregated,
+        }
+      }
+
+      const toolUseBlocks = response.content.filter(
+        (b): b is Anthropic.ToolUseBlock => b.type === 'tool_use',
+      )
+      const resultBlocks: ContentBlock[] = []
+      for (const block of toolUseBlocks) {
+        const tool = toolMap.get(block.name)
+        if (!tool) {
+          throw new ToolExecutionError(
+            block.name,
+            block.id,
+            new Error(`Tool "${block.name}" is not registered.`),
+          )
+        }
+        let output: unknown
+        try {
+          output = await tool.execute(block.input, {
+            callId: block.id,
+            context: options.context ?? {},
+          })
+        } catch (cause) {
+          throw new ToolExecutionError(block.name, block.id, cause)
+        }
+        const resultBlock: ToolResultBlock = {
+          type: 'tool_result',
+          toolUseId: block.id,
+          content: typeof output === 'string' ? output : JSON.stringify(output),
+        }
+        resultBlocks.push(resultBlock)
+      }
+      workingMessages.push({ role: 'user', content: resultBlocks })
+
+      iterations++
+      if (iterations >= maxIterations) {
+        const text = collectText(response.content)
+        // Last turn was a tool_use response, so text may be empty —
+        // surface what we have but the value will likely fail parse.
+        return {
+          value: parseGenerated(text, schema),
+          text,
           messages: workingMessages,
           iterations,
           stopReason: 'max_iterations',

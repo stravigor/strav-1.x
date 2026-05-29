@@ -23,6 +23,7 @@ import type { Agent } from './agent.ts'
 import type { AgentResult } from './agent_result.ts'
 import type { AgentStreamEvent } from './agent_stream_event.ts'
 import type { MCPServer } from './mcp_server.ts'
+import type { AgentGenerateResult } from './agent_generate_result.ts'
 import type { OutputSchema } from './output_schema.ts'
 import { AgentRunner } from './agent_runner.ts'
 import { BrainError } from './brain_error.ts'
@@ -167,6 +168,37 @@ export class BrainManager {
       resolved.mcpServers = this.defaultMcpServers
     }
     return provider.runWithTools(messages, tools, resolved)
+  }
+
+  /**
+   * Tool-loop + structured output combined. Runs the agentic loop
+   * with the supplied `tools` while pinning the output to `schema`
+   * on every turn; returns the parsed value when the model finally
+   * answers without calling a tool. MCP defaults + tier resolution
+   * + provider routing match `runTools` / `generate`.
+   *
+   * Throws `BrainError` when the chosen provider doesn't implement
+   * `runWithToolsAndSchema`. V1: all three providers do.
+   */
+  async generateWithTools<T>(
+    input: string | readonly Message[],
+    schema: OutputSchema<T>,
+    tools: readonly Tool[],
+    options: RunWithToolsOptions = {},
+  ): Promise<AgentGenerateResult<T>> {
+    const provider = this.provider(options.provider)
+    if (!provider.runWithToolsAndSchema) {
+      throw new BrainError(
+        `BrainManager.generateWithTools: provider "${provider.name}" does not implement runWithToolsAndSchema.`,
+        { context: { provider: provider.name } },
+      )
+    }
+    const messages = normalizeInput(input)
+    const resolved = this.applyDefaults(options) as RunWithToolsOptions
+    if (resolved.mcpServers === undefined && this.defaultMcpServers.length > 0) {
+      resolved.mcpServers = this.defaultMcpServers
+    }
+    return provider.runWithToolsAndSchema<T>(messages, tools, schema, resolved)
   }
 
   /**
