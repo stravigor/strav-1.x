@@ -17,22 +17,22 @@ docs/
 
 ## Status
 
-M1–M4 + M5 slices 1–4 + brain tools/agents + brain MCP shipped at `1.0.0-alpha.10` (2026-05-29). M5 in progress. Documentation lands package-by-package as packages ship:
+M1–M4 + M5 slices 1–4 + brain tools/agents + brain MCP shipped at `1.0.0-alpha.11` (2026-05-29). M5 in progress. Documentation lands package-by-package as packages ship:
 
 | Package | Doc status |
 |---|---|
-| `@strav/kernel` | M1 + M2 shipped (`1.0.0-alpha.10`); see `docs/kernel/` |
-| `@strav/http` | M2 shipped (`1.0.0-alpha.10`); see `docs/http/` |
-| `@strav/auth` | M2 + auth-extras (magic / verification / TOTP / policies) shipped (`1.0.0-alpha.10`); see `docs/auth/` |
-| `@strav/database` | M2 shipped (`1.0.0-alpha.10`) + `generateMigration` alter-column drift detection; see `docs/database/` |
-| `@strav/queue` | M3 shipped (`1.0.0-alpha.10`); `Job` + `JobRegistry` + `Queue` + `SyncQueue` + `DatabaseQueue` + `Worker` + `Scheduler` + `failedJobsSchema` all landed. Console commands now via `@strav/cli`'s `QueueConsoleProvider`. See `docs/queue/` |
-| `@strav/signal` | M3 shipped (`1.0.0-alpha.10`); mail layer + HTTP transport trio (`Message` + `Transport` + `Array` / `Log` / `Resend` / `SendGrid` / `Mailgun` transports + `MailTransportError` + `MailManager` + `MailProvider` + `Mailable`). All pure-fetch, no `nodemailer`. Inbound parsers, notifications, broadcast, SSE still to come. See `docs/signal/` |
-| `@strav/view` | M3 + M4 shipped (`1.0.0-alpha.10`): engine + islands + console commands + pages auto-router. See `docs/view/` |
-| `@strav/cli` | M4 complete (`1.0.0-alpha.10`): foundation + migrate + queue/scheduler + view + HTTP server + make:* scaffolding + key:generate + config:show/list + db:seed. `cache:*` / `tenant:*` / `plugin:*` deferred. See `docs/cli/` |
-| `@strav/workflow` | M5 slice 1 shipped (`1.0.0-alpha.10`): `Workflow` typed builder + `defineWorkflow` + sequential / parallel / route / loop + saga compensation + `WorkflowError` / `CompensationError`. See `docs/workflow/` |
-| `@strav/machine` | M5 slice 2 shipped (`1.0.0-alpha.10`): `defineMachine` typed state machines + `stateful()` Repository mixin + `TransitionError` / `GuardError`. See `docs/machine/` |
-| `@strav/brain` | M5 slice 3 + tools/agents + MCP shipped (`1.0.0-alpha.10`): `Provider` interface + `AnthropicProvider` (chat / stream / countTokens / runWithTools w/ server-side MCP) + `BrainManager` + `Thread` + prompt caching + `defineTool` + `Agent` + `AgentRunner` + `MCPServer` config + `MCPToolUseBlock` / `MCPToolResultBlock` + `ToolExecutionError`. Local MCP client / embeddings / streaming agents / other providers in follow-up slices. See `docs/brain/` |
-| `@strav/durable` | M5 slice 4 shipped (`1.0.0-alpha.10`): `DurableWorkflow` builder (sequential `.step()` with retries + saga compensation) + `WorkflowRegistry` + `DurableRunner` + `DurableProvider`. Parallel / route / loop / sleep / waitForSignal / childWorkflow in follow-up slices. See `docs/durable/` |
+| `@strav/kernel` | M1 + M2 shipped (`1.0.0-alpha.11`); see `docs/kernel/` |
+| `@strav/http` | M2 shipped (`1.0.0-alpha.11`); see `docs/http/` |
+| `@strav/auth` | M2 + auth-extras (magic / verification / TOTP / policies) shipped (`1.0.0-alpha.11`); see `docs/auth/` |
+| `@strav/database` | M2 shipped (`1.0.0-alpha.11`) + `generateMigration` alter-column drift detection; see `docs/database/` |
+| `@strav/queue` | M3 shipped (`1.0.0-alpha.11`); `Job` + `JobRegistry` + `Queue` + `SyncQueue` + `DatabaseQueue` + `Worker` + `Scheduler` + `failedJobsSchema` all landed. Console commands now via `@strav/cli`'s `QueueConsoleProvider`. See `docs/queue/` |
+| `@strav/signal` | M3 shipped (`1.0.0-alpha.11`); mail layer + HTTP transport trio (`Message` + `Transport` + `Array` / `Log` / `Resend` / `SendGrid` / `Mailgun` transports + `MailTransportError` + `MailManager` + `MailProvider` + `Mailable`). All pure-fetch, no `nodemailer`. Inbound parsers, notifications, broadcast, SSE still to come. See `docs/signal/` |
+| `@strav/view` | M3 + M4 shipped (`1.0.0-alpha.11`): engine + islands + console commands + pages auto-router. See `docs/view/` |
+| `@strav/cli` | M4 complete (`1.0.0-alpha.11`): foundation + migrate + queue/scheduler + view + HTTP server + make:* scaffolding + key:generate + config:show/list + db:seed. `cache:*` / `tenant:*` / `plugin:*` deferred. See `docs/cli/` |
+| `@strav/workflow` | M5 slice 1 shipped (`1.0.0-alpha.11`): `Workflow` typed builder + `defineWorkflow` + sequential / parallel / route / loop + saga compensation + `WorkflowError` / `CompensationError`. See `docs/workflow/` |
+| `@strav/machine` | M5 slice 2 shipped (`1.0.0-alpha.11`): `defineMachine` typed state machines + `stateful()` Repository mixin + `TransitionError` / `GuardError`. See `docs/machine/` |
+| `@strav/brain` | M5 slice 3 + tools/agents + MCP shipped (`1.0.0-alpha.11`): `Provider` interface + `AnthropicProvider` (chat / stream / countTokens / runWithTools w/ server-side MCP) + `BrainManager` + `Thread` + prompt caching + `defineTool` + `Agent` + `AgentRunner` + `MCPServer` config + `MCPToolUseBlock` / `MCPToolResultBlock` + `ToolExecutionError`. Local MCP client / embeddings / streaming agents / other providers in follow-up slices. See `docs/brain/` |
+| `@strav/durable` | M5 slice 4 shipped (`1.0.0-alpha.11`): `DurableWorkflow` builder (sequential `.step()` with retries + saga compensation) + `WorkflowRegistry` + `DurableRunner` + `DurableProvider`. Parallel / route / loop / sleep / waitForSignal / childWorkflow in follow-up slices. See `docs/durable/` |
 | Others | Pending — land with their respective milestones (see `spec/implementation-plan.md`) |
 
 ## How to read
