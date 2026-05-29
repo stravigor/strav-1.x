@@ -21,6 +21,7 @@
 
 import type { Agent } from './agent.ts'
 import type { AgentResult } from './agent_result.ts'
+import type { AgentStreamEvent } from './agent_stream_event.ts'
 import type { MCPServer } from './mcp_server.ts'
 import type { OutputSchema } from './output_schema.ts'
 import { AgentRunner } from './agent_runner.ts'
@@ -166,6 +167,36 @@ export class BrainManager {
       resolved.mcpServers = this.defaultMcpServers
     }
     return provider.runWithTools(messages, tools, resolved)
+  }
+
+  /**
+   * Streaming variant of `runTools`. Yields `AgentStreamEvent`s
+   * as the agentic loop progresses — text deltas during model
+   * turns, `tool_use` / `tool_result` boundaries around tool
+   * execution, `iteration_start` / `iteration_end` per round, a
+   * terminal `stop` with the full trace + usage.
+   *
+   * Throws `BrainError` when the configured provider doesn't
+   * implement `streamWithTools`.
+   */
+  streamTools(
+    input: string | readonly Message[],
+    tools: readonly Tool[],
+    options: RunWithToolsOptions = {},
+  ): AsyncIterable<AgentStreamEvent> {
+    const provider = this.provider(options.provider)
+    if (!provider.streamWithTools) {
+      throw new BrainError(
+        `BrainManager.streamTools: provider "${provider.name}" does not implement streamWithTools.`,
+        { context: { provider: provider.name } },
+      )
+    }
+    const messages = normalizeInput(input)
+    const resolved = this.applyDefaults(options) as RunWithToolsOptions
+    if (resolved.mcpServers === undefined && this.defaultMcpServers.length > 0) {
+      resolved.mcpServers = this.defaultMcpServers
+    }
+    return provider.streamWithTools(messages, tools, resolved)
   }
 
   /**

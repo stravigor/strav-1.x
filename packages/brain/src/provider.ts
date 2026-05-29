@@ -13,6 +13,7 @@
  */
 
 import type { AgentResult } from './agent_result.ts'
+import type { AgentStreamEvent } from './agent_stream_event.ts'
 import type { MCPServer } from './mcp_server.ts'
 import type { OutputSchema } from './output_schema.ts'
 import type { Tool } from './tool.ts'
@@ -99,4 +100,21 @@ export interface Provider {
     schema: OutputSchema<T>,
     options?: ChatOptions,
   ): Promise<GenerateResult<T>>
+
+  /**
+   * Streaming variant of `runWithTools`. Yields `AgentStreamEvent`s
+   * as the loop progresses — text deltas during model turns,
+   * `tool_use` / `tool_result` boundaries around tool execution,
+   * `iteration_start` / `iteration_end` per round, a terminal
+   * `stop` with the full trace + usage.
+   *
+   * Optional — providers without a streaming tool-loop implementation
+   * can omit it; `BrainManager.streamTools` throws `BrainError` in
+   * that case.
+   */
+  streamWithTools?(
+    messages: readonly Message[],
+    tools: readonly Tool[],
+    options?: RunWithToolsOptions,
+  ): AsyncIterable<AgentStreamEvent>
 }

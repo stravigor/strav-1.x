@@ -35,6 +35,7 @@ import {
   type AgentResolver,
   type AgentResult,
   type AgentGenerateResult,
+  type AgentStreamEvent,
   defineTool,
   type DefineToolSpec,
   type Tool,
@@ -86,6 +87,8 @@ class BrainManager {
     schema: OutputSchema<T>,
     options?: ChatOptions,
   ): Promise<GenerateResult<T>>
+  runTools(input: string | readonly Message[], tools: readonly Tool[], options?: RunWithToolsOptions): Promise<AgentResult>
+  streamTools(input: string | readonly Message[], tools: readonly Tool[], options?: RunWithToolsOptions): AsyncIterable<AgentStreamEvent>
 }
 
 interface BrainManagerOptions {
@@ -153,6 +156,11 @@ interface Provider {
     tools: readonly Tool[],
     options?: RunWithToolsOptions,
   ): Promise<AgentResult>
+  streamWithTools?(
+    messages: readonly Message[],
+    tools: readonly Tool[],
+    options?: RunWithToolsOptions,
+  ): AsyncIterable<AgentStreamEvent>
   generate?<T>(
     messages: readonly Message[],
     schema: OutputSchema<T>,
@@ -563,6 +571,30 @@ The agentic loop. Send → detect `tool_use` → execute → append `tool_result
 
 Throws `BrainError` when the configured provider doesn't implement `runWithTools` (V1: `AnthropicProvider`, `OpenAIProvider`, `GeminiProvider`; DeepSeek follows). Throws `ToolExecutionError` when a tool's `execute` throws — the loop aborts on the first failure in V1. `OpenAIProvider` and `GeminiProvider` resolve `mcpServers` through the local MCP client at `@strav/brain/mcp` and surface discovered tools to the loop.
 
+### `BrainManager.streamTools(input, tools, options?)`
+
+```ts
+brain.streamTools(
+  input: string | readonly Message[],
+  tools: readonly Tool[],
+  options?: RunWithToolsOptions,
+): AsyncIterable<AgentStreamEvent>
+```
+
+Streaming twin of `runTools`. Yields `AgentStreamEvent`s as the loop progresses — text deltas, tool boundaries, per-iteration markers, terminal `stop`. Same provider routing, tier resolution, MCP handling, and `maxIterations` ceiling as `runTools`. Throws `BrainError` when the configured provider lacks `streamWithTools` (V1: all three providers implement it).
+
+```ts
+type AgentStreamEvent =
+  | { type: 'iteration_start'; iteration: number }
+  | { type: 'text'; delta: string }
+  | { type: 'tool_use'; id: string; name: string; input: unknown }
+  | { type: 'tool_result'; id: string; name: string; content: string; isError: boolean }
+  | { type: 'iteration_end'; iteration: number; stopReason: string | null }
+  | { type: 'stop'; stopReason: string; iterations: number; usage: ChatUsage; messages: Message[] }
+```
+
+See [`guides/streaming-agents.md`](./guides/streaming-agents.md) for the event lifecycle, error handling, and per-provider mapping.
+
 ### `Agent`
 
 ```ts
@@ -583,10 +615,11 @@ Subclass with `@inject()` to get container DI. `BrainProvider` installs an `Agen
 
 ```ts
 class AgentRunner<T = never> {
-  input(text: string): this                      // required before run()
+  input(text: string): this                      // required before run() / stream()
   context(data: Record<string, unknown>): this   // accumulating; per-call > thread defaults
   output<U>(schema: OutputSchema<U>): AgentRunner<U>  // switches to structured-output mode
   run(): Promise<AgentRunResult<T>>
+  stream(): AsyncIterable<AgentStreamEvent>      // streaming twin of run() for the tool-loop path
 }
 
 type AgentRunResult<T> = [T] extends [never] ? AgentResult : AgentGenerateResult<T>
@@ -609,6 +642,8 @@ const { value } = await brain.agent(CityAgent)
 ```
 
 `.output(schema)` switches the runner into structured-output mode — `run()` delegates to `BrainManager.generate(...)` and returns `AgentGenerateResult<T>`. V1 caveat: when the agent declares `tools` or `mcpServers`, `.output()`-mode `run()` throws `BrainError` (combined tool + schema is a later slice).
+
+`.stream()` is the streaming twin of `run()` for the tool-loop path — returns an `AsyncIterable<AgentStreamEvent>` instead of awaiting an `AgentResult`. Combining `.stream()` with `.output(schema)` throws `BrainError` (same deferred-slice constraint).
 
 ### `AgentGenerateResult<T>`
 

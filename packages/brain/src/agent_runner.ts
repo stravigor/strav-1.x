@@ -22,6 +22,7 @@
 import type { Agent } from './agent.ts'
 import type { AgentGenerateResult } from './agent_generate_result.ts'
 import type { AgentResult } from './agent_result.ts'
+import type { AgentStreamEvent } from './agent_stream_event.ts'
 import type { BrainManager } from './brain_manager.ts'
 import { BrainError } from './brain_error.ts'
 import type { OutputSchema } from './output_schema.ts'
@@ -86,6 +87,36 @@ export class AgentRunner<T = never> {
     // cloning the prompt + contextBag fields.
     this.schema = schema as unknown as OutputSchema<T>
     return this as unknown as AgentRunner<U>
+  }
+
+  /**
+   * Streaming variant of `run()`. Returns an `AsyncIterable<AgentStreamEvent>`
+   * — yields text deltas, tool-use/result boundaries, and a terminal
+   * `stop` event with the full trace.
+   *
+   * V1 caveat: `.stream()` and `.output(schema)` can't be combined.
+   * Streaming structured output lands in the same later slice as
+   * tool + schema. Calling `.stream()` on a runner where `.output()`
+   * has been used throws `BrainError`.
+   */
+  stream(): AsyncIterable<AgentStreamEvent> {
+    if (this.prompt === undefined) {
+      throw new BrainError('AgentRunner.stream: input() must be called before stream().')
+    }
+    if (this.schema !== undefined) {
+      throw new BrainError(
+        'AgentRunner.stream() does not yet support .output(schema). Use .run() for structured output, or .stream() without .output() for the tool-loop variant. Combined streaming + schema lands in a later slice.',
+        { context: { agent: this.agent.constructor.name } },
+      )
+    }
+    const messages: Message[] = [{ role: 'user', content: this.prompt }]
+    const options: RunWithToolsOptions = {
+      ...this.buildChatOptions(),
+      maxIterations: this.agent.maxIterations,
+      context: this.contextBag,
+    }
+    if (this.agent.mcpServers.length > 0) options.mcpServers = this.agent.mcpServers
+    return this.brain.streamTools(messages, this.agent.tools, options)
   }
 
   async run(): Promise<AgentRunResult<T>> {
