@@ -14,10 +14,12 @@ import {
   type Provider,
   AnthropicProvider,
   OpenAIProvider,
+  GeminiProvider,
   // Config
   type BrainConfigShape,
   type AnthropicProviderConfig,
   type OpenAIProviderConfig,
+  type GeminiProviderConfig,
   type ProviderConfig,
   type BrainCacheConfig,
   DEFAULT_TIERS,
@@ -224,6 +226,44 @@ Maps framework shapes to OpenAI's wire format:
 
 Streaming adds `stream_options: { include_usage: true }` so the terminal `stop` event carries final usage including `cacheReadTokens` (from `prompt_tokens_details.cached_tokens`). `countTokens` is not implemented — `BrainManager.countTokens` returns `null` when routed to OpenAI.
 
+## `GeminiProvider`
+
+Concrete `Provider` backed by `@google/genai` (Gemini Developer API; Vertex via SDK config).
+
+```ts
+class GeminiProvider implements Provider {
+  readonly name: string
+
+  constructor(
+    name: string,
+    config: GeminiProviderConfig,
+    options?: { client?: { models: GeminiModelsClient } },
+  )
+
+  // …implements Provider, including countTokens (Gemini has a dedicated endpoint)
+}
+```
+
+Maps framework shapes to Gemini's wire format:
+
+| Framework | Gemini SDK |
+|---|---|
+| Role `'assistant'` | `'model'` |
+| `options.system` (any shape) | `config.systemInstruction` (multi-block joined with newlines) |
+| `Message.content: string` | `Content.parts: [{ text }]` |
+| `TextBlock` | `{ text }` part |
+| `ToolUseBlock` (assistant) | `{ functionCall: { id, name, args } }` part |
+| `ToolResultBlock` (user) | `{ functionResponse: { id, name, response: { result \| error } } }` part |
+| `Tool[]` | `config.tools: [{ functionDeclarations: [{ name, description, parametersJsonSchema: inputSchema }] }]` |
+| `options.thinking: 'adaptive'` | `thinkingConfig: { thinkingBudget: -1 }` |
+| `options.thinking: 'disabled'` | `thinkingConfig: { thinkingBudget: 0 }` |
+| `options.effort: 'low' \| 'medium' \| 'high' \| 'xhigh' \| 'max'` | `thinkingConfig: { thinkingLevel: 'LOW' \| 'MEDIUM' \| 'HIGH' \| 'HIGH' \| 'HIGH' }` |
+| `options.maxTokens` | `config.maxOutputTokens` |
+| `options.cache: true` | silently no-op (Gemini prompt cache uses the separate `Caches` API) |
+| `options.mcpServers` (non-empty) | resolved via the local MCP client (`@strav/brain/mcp`); discovered tools merged into the loop with names `<server>__<tool>` |
+
+`stream()` iterates `generateContentStream` yielding text deltas; the terminal `stop` event carries the last `usageMetadata` translated to `ChatUsage` (including `cachedContentTokenCount` → `cacheReadTokens`). `countTokens` calls `ai.models.countTokens` and returns `totalTokens`. MCP servers are not supported by Gemini server-side — the local client path is the only option.
+
 ## Config
 
 ```ts
@@ -234,7 +274,7 @@ interface BrainConfigShape {
   cache?: BrainCacheConfig
 }
 
-type ProviderConfig = AnthropicProviderConfig | OpenAIProviderConfig // Gemini / DeepSeek follow
+type ProviderConfig = AnthropicProviderConfig | OpenAIProviderConfig | GeminiProviderConfig // DeepSeek follows
 
 interface AnthropicProviderConfig {
   driver: 'anthropic'
@@ -251,6 +291,15 @@ interface OpenAIProviderConfig {
   baseUrl?: string
   organization?: string
   defaultModel?: string         // defaults to 'gpt-5'
+  defaultMaxTokens?: number
+}
+
+interface GeminiProviderConfig {
+  driver: 'google'
+  apiKey: string
+  baseUrl?: string
+  apiVersion?: string           // 'v1' | 'v1beta'
+  defaultModel?: string         // defaults to 'gemini-2.5-flash'
   defaultMaxTokens?: number
 }
 
@@ -490,7 +539,7 @@ brain.runTools(
 
 The agentic loop. Send → detect `tool_use` → execute → append `tool_result` → re-send, until the model returns `end_turn` or `maxIterations` is hit.
 
-Throws `BrainError` when the configured provider doesn't implement `runWithTools` (V1: `AnthropicProvider` + `OpenAIProvider`; Gemini / DeepSeek follow). Throws `ToolExecutionError` when a tool's `execute` throws — the loop aborts on the first failure in V1. `OpenAIProvider` resolves `mcpServers` through the local MCP client at `@strav/brain/mcp` and surfaces discovered tools to the loop.
+Throws `BrainError` when the configured provider doesn't implement `runWithTools` (V1: `AnthropicProvider`, `OpenAIProvider`, `GeminiProvider`; DeepSeek follows). Throws `ToolExecutionError` when a tool's `execute` throws — the loop aborts on the first failure in V1. `OpenAIProvider` and `GeminiProvider` resolve `mcpServers` through the local MCP client at `@strav/brain/mcp` and surface discovered tools to the loop.
 
 ### `Agent`
 

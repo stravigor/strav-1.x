@@ -49,7 +49,25 @@ export interface OpenAIProviderConfig {
   defaultMaxTokens?: number
 }
 
-export type ProviderConfig = AnthropicProviderConfig | OpenAIProviderConfig // | GoogleProviderConfig | DeepSeekProviderConfig (later slices)
+/** Google (Gemini) driver config — backed by `@google/genai`. */
+export interface GeminiProviderConfig {
+  driver: 'google'
+  /** API key. Required. Most apps source from `env('GOOGLE_API_KEY')` or `env('GEMINI_API_KEY')`. */
+  apiKey: string
+  /** Optional override of the SDK's base URL — useful for proxies or test doubles. */
+  baseUrl?: string
+  /** Default model when neither `options.model` nor `options.tier` is passed. Defaults to `gemini-2.5-flash`. */
+  defaultModel?: string
+  /** Default `max_tokens` for `chat()` calls that don't specify one. */
+  defaultMaxTokens?: number
+  /** Optional API version pin (`v1` / `v1beta`). */
+  apiVersion?: string
+}
+
+export type ProviderConfig =
+  | AnthropicProviderConfig
+  | OpenAIProviderConfig
+  | GeminiProviderConfig // | DeepSeekProviderConfig (later slice)
 
 /** Cache-shape defaults applied when `ChatOptions.cache` is omitted. */
 export interface BrainCacheConfig {

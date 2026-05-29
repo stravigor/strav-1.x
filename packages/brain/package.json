@@ -21,6 +21,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.100.0",
+    "@google/genai": "^2.7.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@strav/kernel": "workspace:*",
     "openai": "^6.0.0"
