@@ -101,17 +101,9 @@ describe.skipIf(!PG_AVAILABLE)('auth-extras e2e: magic / verification / policy',
           channels: { main: { driver: 'stderr' } },
         },
         database: {
-          default: 'main',
-          connections: {
-            main: {
-              driver: 'postgres' as const,
-              host: process.env.DB_HOST as string,
-              port: Number(process.env.DB_PORT),
-              user: process.env.DB_USER as string,
-              password: process.env.DB_PASSWORD as string,
-              database: process.env.DB_DATABASE as string,
-            },
-          },
+          url: `postgres://${process.env.DB_USER}:${encodeURIComponent(
+            process.env.DB_PASSWORD as string,
+          )}@${process.env.DB_HOST}:${process.env.DB_PORT}/${process.env.DB_DATABASE}`,
         },
         http: { middleware: [] },
         auth: {
