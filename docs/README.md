@@ -17,7 +17,7 @@ docs/
 
 ## Status
 
-M1–M4 shipped at `1.0.0-alpha.6` (2026-05-29). M5 is next. Documentation lands package-by-package as packages ship:
+M1–M4 shipped at `1.0.0-alpha.6` (2026-05-29). M5 in progress — `@strav/workflow` foundation is the first slice. Documentation lands package-by-package as packages ship:
 
 | Package | Doc status |
 |---|---|
@@ -29,6 +29,7 @@ M1–M4 shipped at `1.0.0-alpha.6` (2026-05-29). M5 is next. Documentation lands
 | `@strav/signal` | M3 shipped (`1.0.0-alpha.6`); mail layer + HTTP transport trio (`Message` + `Transport` + `Array` / `Log` / `Resend` / `SendGrid` / `Mailgun` transports + `MailTransportError` + `MailManager` + `MailProvider` + `Mailable`). All pure-fetch, no `nodemailer`. Inbound parsers, notifications, broadcast, SSE still to come. See `docs/signal/` |
 | `@strav/view` | M3 + M4 shipped (`1.0.0-alpha.6`): engine + islands + console commands + pages auto-router. See `docs/view/` |
 | `@strav/cli` | M4 complete (`1.0.0-alpha.6`): foundation + migrate + queue/scheduler + view + HTTP server + make:* scaffolding + key:generate + config:show/list + db:seed. `cache:*` / `tenant:*` / `plugin:*` deferred. See `docs/cli/` |
+| `@strav/workflow` | M5 slice 1 in workspace (unreleased): `Workflow` typed builder + `defineWorkflow` + sequential / parallel / route / loop + saga compensation + `WorkflowError` / `CompensationError`. See `docs/workflow/` |
 | Others | Pending — land with their respective milestones (see `spec/implementation-plan.md`) |
 
 ## How to read
