@@ -32,6 +32,7 @@ M1–M4 + M5 slices 1–2 shipped at `1.0.0-alpha.7` (2026-05-29). M5 in progres
 | `@strav/workflow` | M5 slice 1 shipped (`1.0.0-alpha.7`): `Workflow` typed builder + `defineWorkflow` + sequential / parallel / route / loop + saga compensation + `WorkflowError` / `CompensationError`. See `docs/workflow/` |
 | `@strav/machine` | M5 slice 2 shipped (`1.0.0-alpha.7`): `defineMachine` typed state machines + `stateful()` Repository mixin + `TransitionError` / `GuardError`. See `docs/machine/` |
 | `@strav/brain` | M5 slice 3 in workspace (unreleased): `Provider` interface + `AnthropicProvider` (`@anthropic-ai/sdk`-backed) + `BrainManager` facade + `Thread` + prompt caching. Tools / agents / MCP / embeddings / other providers in follow-up slices. See `docs/brain/` |
+| `@strav/durable` | M5 slice 4 in workspace (unreleased): `DurableWorkflow` builder (sequential `.step()` with retries + saga compensation) + `WorkflowRegistry` + `DurableRunner` + `DurableProvider`. Parallel / route / loop / sleep / waitForSignal / childWorkflow in follow-up slices. See `docs/durable/` |
 | Others | Pending — land with their respective milestones (see `spec/implementation-plan.md`) |
 
 ## How to read

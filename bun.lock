@@ -56,6 +56,18 @@
         "@types/bun": ">=1.3.14",
       },
     },
+    "packages/durable": {
+      "name": "@strav/durable",
+      "version": "1.0.0-alpha.7",
+      "dependencies": {
+        "@strav/database": "workspace:*",
+        "@strav/kernel": "workspace:*",
+        "@strav/queue": "workspace:*",
+      },
+      "peerDependencies": {
+        "@types/bun": ">=1.3.14",
+      },
+    },
     "packages/http": {
       "name": "@strav/http",
       "version": "1.0.0-alpha.7",
@@ -234,6 +246,8 @@
     "@strav/cli": ["@strav/cli@workspace:packages/cli"],
 
     "@strav/database": ["@strav/database@workspace:packages/database"],
+
+    "@strav/durable": ["@strav/durable@workspace:packages/durable"],
 
     "@strav/http": ["@strav/http@workspace:packages/http"],
 

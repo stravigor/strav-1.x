@@ -1,0 +1,29 @@
+{
+  "name": "@strav/durable",
+  "version": "1.0.0-alpha.7",
+  "description": "Strav durable execution — crash-resumable sequential workflows on top of @strav/queue + Postgres. V1: sequential .step() with retries + saga compensation. V2 adds parallel/route/loop/sleep/waitForSignal.",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "files": [
+    "src",
+    "README.md"
+  ],
+  "engines": {
+    "bun": ">=1.3.14"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "@strav/kernel": "workspace:*",
+    "@strav/database": "workspace:*",
+    "@strav/queue": "workspace:*"
+  },
+  "peerDependencies": {
+    "@types/bun": ">=1.3.14"
+  }
+}
