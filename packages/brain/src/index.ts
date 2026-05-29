@@ -60,6 +60,7 @@ export type {
   MCPToolUseBlock,
   Message,
   ModelTier,
+  ServerTool,
   StreamEvent,
   SystemPrompt,
   TextBlock,

@@ -66,6 +66,7 @@ import type {
   AudioSource,
   EmbedOptions,
   EmbedResult,
+  ServerTool,
   TranscribeOptions,
   TranscribeResult,
 } from '../types.ts'
@@ -787,13 +788,20 @@ export class GeminiProvider implements Provider {
       config.systemInstruction = systemText
     }
 
+    const configTools: NonNullable<GenerateContentConfig['tools']> = []
     if (tools.length > 0) {
       const functionDeclarations: FunctionDeclaration[] = tools.map((t) => ({
         name: t.name,
         description: t.description,
         parametersJsonSchema: t.inputSchema,
       }))
-      config.tools = [{ functionDeclarations }]
+      configTools.push({ functionDeclarations })
+    }
+    if (options.serverTools && options.serverTools.length > 0) {
+      configTools.push(...geminiServerTools(options.serverTools))
+    }
+    if (configTools.length > 0) {
+      config.tools = configTools
     }
 
     const thinking = buildThinkingConfig(options)
@@ -899,6 +907,37 @@ function toGeminiParts(content: string | ContentBlock[]): Part[] {
  * block type's most-common MIME (jpeg for images, pdf for
  * documents, mp3 for audio).
  */
+/**
+ * Translate framework `ServerTool[]` into Gemini's typed entries
+ * (`googleSearch` / `codeExecution` / `urlContext`). Anthropic-
+ * specific tools (`web_fetch`) throw with clear guidance.
+ *
+ * Gemini's server tools have no per-tool config — they're enabled
+ * with empty `{}` objects. Domain allowlists / max_uses /
+ * blocked_domains on `web_search` are silently dropped (Gemini
+ * doesn't accept them).
+ */
+function geminiServerTools(
+  serverTools: readonly ServerTool[],
+): NonNullable<GenerateContentConfig['tools']> {
+  const out: NonNullable<GenerateContentConfig['tools']> = []
+  for (const t of serverTools) {
+    if (t.type === 'web_search') {
+      out.push({ googleSearch: {} })
+    } else if (t.type === 'code_execution') {
+      out.push({ codeExecution: {} })
+    } else if (t.type === 'url_context') {
+      out.push({ urlContext: {} })
+    } else if (t.type === 'web_fetch') {
+      throw new BrainError(
+        'GeminiProvider: server tool `web_fetch` is Anthropic-only. Use `url_context` for Gemini or route the call to Anthropic.',
+        { context: { provider: 'google' } },
+      )
+    }
+  }
+  return out
+}
+
 function guessMimeFromUrl(
   url: string,
   kind: 'image' | 'document' | 'audio',

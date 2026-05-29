@@ -904,6 +904,12 @@ export class OpenAIProvider implements Provider {
     options: ChatOptions,
     tools: readonly Tool[],
   ): OpenAI.Chat.ChatCompletionCreateParamsNonStreaming {
+    if (options.serverTools && options.serverTools.length > 0) {
+      throw new BrainError(
+        "OpenAIProvider: server tools (web_search / code_execution / web_fetch / url_context) are not supported on OpenAI's chat completions API. OpenAI's server tools live on the Responses API (separate provider slice). Run them as framework-local tools, route to Anthropic / Gemini, or wait for the OpenAIResponsesProvider slice.",
+        { context: { provider: 'openai' } },
+      )
+    }
     const model = options.model ?? this.defaultModel
     const params: OpenAI.Chat.ChatCompletionCreateParamsNonStreaming = {
       model,

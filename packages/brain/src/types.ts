@@ -205,6 +205,55 @@ export type SystemPrompt =
  * escape hatch in `ChatResult` is what they reach for when they need
  * provider-specific fields.
  */
+/**
+ * Server-side tool — work the provider's backend runs on behalf
+ * of the model. Unlike framework-local tools (`Tool` /
+ * `defineTool`), the model's call doesn't round-trip through
+ * the app's process; the provider executes the tool and inlines
+ * the result in the response.
+ *
+ * V1 coverage:
+ *   - **Anthropic**: `web_search`, `code_execution`, `web_fetch`.
+ *   - **Gemini**: `web_search` (Google Search), `code_execution`,
+ *     `url_context`.
+ *   - **OpenAI / DeepSeek / Ollama**: throw — OpenAI's server tools
+ *     live on the Responses API (separate slice); the compat
+ *     providers don't expose them.
+ *
+ * Cross-provider portability:
+ *   - `web_search` + `code_execution` work on both Anthropic and
+ *     Gemini.
+ *   - `web_fetch` is Anthropic-only.
+ *   - `url_context` is Gemini-only.
+ *
+ * Server tools combine freely with framework-local `Tool[]` and
+ * MCP servers — the model sees all three sets in one tool list.
+ */
+export type ServerTool =
+  | {
+      type: 'web_search'
+      /** Max times the model can call this tool per turn (Anthropic; Gemini ignores). */
+      maxUses?: number
+      /** Domain allowlist (Anthropic; Gemini ignores). Mutually exclusive with `blockedDomains`. */
+      allowedDomains?: readonly string[]
+      /** Domain blocklist (Anthropic; Gemini ignores). */
+      blockedDomains?: readonly string[]
+    }
+  | { type: 'code_execution' }
+  | {
+      type: 'web_fetch'
+      /** Max URL fetches per turn (Anthropic). */
+      maxUses?: number
+      /** Domain allowlist. */
+      allowedDomains?: readonly string[]
+      /** Domain blocklist. */
+      blockedDomains?: readonly string[]
+    }
+  | {
+      type: 'url_context'
+      /** Gemini fetches the URL and surfaces grounded answers from it. */
+    }
+
 export interface ChatOptions {
   /** Override the configured default model. Wins over `tier`. */
   model?: string
@@ -247,6 +296,18 @@ export interface ChatOptions {
    * next `for await` step.
    */
   signal?: AbortSignal
+  /**
+   * Server-side tools — work the provider's backend runs (web
+   * search, code execution, URL fetching). The model's calls
+   * don't round-trip through the framework's tool loop; results
+   * land inline in the response. Combines freely with
+   * framework-local `Tool[]` and MCP servers.
+   *
+   * V1 supports Anthropic + Gemini; OpenAI / DeepSeek / Ollama
+   * throw `BrainError` (use the Responses API for OpenAI, or
+   * route to Anthropic / Gemini).
+   */
+  serverTools?: readonly ServerTool[]
 }
 
 /** Token usage for a single call. Cache-hit fields are populated when caching is in play. */

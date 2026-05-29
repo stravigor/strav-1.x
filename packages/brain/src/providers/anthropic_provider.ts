@@ -39,6 +39,7 @@ import type {
   MCPToolResultBlock,
   MCPToolUseBlock,
   Message,
+  ServerTool,
   StreamEvent,
   SystemPrompt,
   TextBlock,
@@ -162,6 +163,8 @@ export class AnthropicProvider implements Provider {
         mcp_servers?: Anthropic.Beta.Messages.BetaRequestMCPServerURLDefinition[]
       }
       params.tools = [
+        // Server tools placed first when present (from buildParams).
+        ...((params.tools ?? []) as Anthropic.ToolUnion[]),
         ...tools.map((t) => ({
           name: t.name,
           description: t.description,
@@ -291,6 +294,8 @@ export class AnthropicProvider implements Provider {
         mcp_servers?: Anthropic.Beta.Messages.BetaRequestMCPServerURLDefinition[]
       }
       params.tools = [
+        // Server tools placed first when present (from buildParams).
+        ...((params.tools ?? []) as Anthropic.ToolUnion[]),
         ...tools.map((t) => ({
           name: t.name,
           description: t.description,
@@ -417,6 +422,8 @@ export class AnthropicProvider implements Provider {
         mcp_servers?: Anthropic.Beta.Messages.BetaRequestMCPServerURLDefinition[]
       }
       params.tools = [
+        // Server tools placed first when present (from buildParams).
+        ...((params.tools ?? []) as Anthropic.ToolUnion[]),
         ...tools.map((t) => ({
           name: t.name,
           description: t.description,
@@ -576,6 +583,8 @@ export class AnthropicProvider implements Provider {
         mcp_servers?: Anthropic.Beta.Messages.BetaRequestMCPServerURLDefinition[]
       }
       params.tools = [
+        // Server tools placed first when present (from buildParams).
+        ...((params.tools ?? []) as Anthropic.ToolUnion[]),
         ...tools.map((t) => ({
           name: t.name,
           description: t.description,
@@ -778,6 +787,10 @@ export class AnthropicProvider implements Provider {
       ;(params as { betas?: readonly string[] }).betas = betas
     }
 
+    if (options.serverTools && options.serverTools.length > 0) {
+      params.tools = anthropicServerTools(options.serverTools)
+    }
+
     return params
   }
 
@@ -914,6 +927,61 @@ function toSystemParam(
   const param: Anthropic.TextBlockParam = { type: 'text', text: system.text }
   if (system.cache) param.cache_control = EPHEMERAL_CACHE
   return [param]
+}
+
+/**
+ * Translate framework `ServerTool[]` into Anthropic's typed
+ * server-tool entries. Uses the latest SDK-known versions; the
+ * Anthropic backend is backward-compatible to older clients
+ * pinning earlier dates, but we standardize on current. Web fetch
+ * is Anthropic-only; `url_context` is rejected (Gemini-only).
+ */
+function anthropicServerTools(serverTools: readonly ServerTool[]): Anthropic.ToolUnion[] {
+  const out: Anthropic.ToolUnion[] = []
+  for (const t of serverTools) {
+    if (t.type === 'web_search') {
+      const tool: Anthropic.WebSearchTool20260209 = {
+        type: 'web_search_20260209',
+        name: 'web_search',
+      }
+      if (t.maxUses !== undefined) {
+        ;(tool as { max_uses?: number }).max_uses = t.maxUses
+      }
+      if (t.allowedDomains !== undefined) {
+        tool.allowed_domains = [...t.allowedDomains]
+      }
+      if (t.blockedDomains !== undefined) {
+        tool.blocked_domains = [...t.blockedDomains]
+      }
+      out.push(tool)
+    } else if (t.type === 'code_execution') {
+      out.push({
+        type: 'code_execution_20260120',
+        name: 'code_execution',
+      } satisfies Anthropic.CodeExecutionTool20260120)
+    } else if (t.type === 'web_fetch') {
+      const tool: Anthropic.WebFetchTool20260309 = {
+        type: 'web_fetch_20260309',
+        name: 'web_fetch',
+      }
+      if (t.maxUses !== undefined) {
+        ;(tool as { max_uses?: number }).max_uses = t.maxUses
+      }
+      if (t.allowedDomains !== undefined) {
+        tool.allowed_domains = [...t.allowedDomains]
+      }
+      if (t.blockedDomains !== undefined) {
+        tool.blocked_domains = [...t.blockedDomains]
+      }
+      out.push(tool)
+    } else if (t.type === 'url_context') {
+      throw new BrainError(
+        'AnthropicProvider: server tool `url_context` is Gemini-only. Use `web_fetch` for Anthropic or route the call to Gemini.',
+        { context: { provider: 'anthropic' } },
+      )
+    }
+  }
+  return out
 }
 
 function mergeBetas(

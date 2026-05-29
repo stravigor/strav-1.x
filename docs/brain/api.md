@@ -60,6 +60,7 @@ import {
   type ImageBlock,
   type DocumentBlock,
   type AudioBlock,
+  type ServerTool,
   type ToolUseBlock,
   type ToolResultBlock,
   type MCPToolUseBlock,
@@ -613,7 +614,14 @@ interface ChatOptions {
   betas?: readonly string[]
   provider?: string
   signal?: AbortSignal
+  serverTools?: readonly ServerTool[]
 }
+
+type ServerTool =
+  | { type: 'web_search'; maxUses?: number; allowedDomains?: readonly string[]; blockedDomains?: readonly string[] }
+  | { type: 'code_execution' }
+  | { type: 'web_fetch'; maxUses?: number; allowedDomains?: readonly string[]; blockedDomains?: readonly string[] }  // Anthropic only
+  | { type: 'url_context' }                                                                                          // Gemini only
 ```
 
 | Option | Behavior |
@@ -628,6 +636,7 @@ interface ChatOptions {
 | `betas` | Beta headers for this call. Merged with provider-level betas. |
 | `provider` | Override the default-provider routing. Must name a provider in the registry. |
 | `signal` | `AbortSignal` for cancellation. Forwarded to the provider SDK; checked between tool-loop iterations; propagated into `ToolContext.signal` so tools can pass it on. See [`guides/cancellation.md`](./guides/cancellation.md). |
+| `serverTools` | Provider-run tools — web search / code execution / URL fetching. The provider's backend runs them; results land inline. V1: Anthropic + Gemini. OpenAI / DeepSeek / Ollama throw. See [`guides/server-tools.md`](./guides/server-tools.md). |
 
 ### `ChatResult`
 
