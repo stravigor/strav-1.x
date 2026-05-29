@@ -1,6 +1,6 @@
 # DeepSeek provider
 
-`@strav/brain` ships a `DeepSeekProvider` backed by the `openai` SDK pointed at DeepSeek's OpenAI-compatible chat completions endpoint. It inherits from `OpenAIProvider` — the request/response shapes are 1:1 — and overrides only what diverges.
+`@strav/brain` ships a `DeepSeekProvider` backed by the `openai` SDK pointed at DeepSeek's OpenAI-compatible chat completions endpoint. It extends `OpenAICompatProvider` (the shared base for all OpenAI-compat vendors) and only adds DeepSeek-specific defaults + a custom cache-token mapping.
 
 ```ts
 // config/brain.ts
@@ -38,13 +38,14 @@ Then inject `BrainManager` the same way you would for any other provider — `br
 
 ## What's mapped
 
-DeepSeek's API is 1:1 with OpenAI's `/chat/completions` for the bulk of the surface — system prompts, tool definitions, streaming chunk format, `tool_calls` fan-out, `response_format: json_object`. The provider just inherits OpenAI's translation and changes three things:
+DeepSeek's API is 1:1 with OpenAI's `/chat/completions` for the bulk of the surface — system prompts, tool definitions, streaming chunk format, `tool_calls` fan-out, `response_format: json_object`. The inherited `OpenAICompatProvider` handles the standard divergences from `OpenAIProvider`:
 
-- **No `reasoning_effort`.** DeepSeek's API rejects unknown fields. `OpenAIProvider.buildParams` emits `reasoning_effort` when `options.thinking` / `options.effort` is set; `DeepSeekProvider` strips it. `deepseek-reasoner` emits its own thinking tokens regardless of the absent control field — apps that want reasoning use that model.
-- **No `response_format.json_schema`.** DeepSeek supports only `response_format.json_object` mode — the model produces JSON but the API doesn't enforce a schema upstream. `generate()` compensates by:
-  1. Injecting the JSON Schema into the system prompt with a "respond with JSON matching this schema" instruction.
-  2. Setting `response_format: { type: 'json_object' }`.
-  3. Parsing the response client-side via `parseGenerated` (which also runs `schema.parse` when set).
+- **No `reasoning_effort`** (base class strips it — DeepSeek's API rejects unknown fields). `deepseek-reasoner` emits its own thinking tokens regardless of the absent control field.
+- **No `response_format.json_schema`** (base class falls back to `json_object` + schema-in-system-prompt + client-side `parseGenerated`). Validates via `schema.parse` when set.
+- **Combined tools + schema throws** (base class). Apps run `runTools` + `generate` as two calls (see below).
+
+DeepSeek's own addition on top of the base:
+
 - **`cacheReadTokens`** reads from DeepSeek's `prompt_cache_hit_tokens` extension field when the upstream returns it, falling back to `prompt_tokens_details.cached_tokens` otherwise. The same `ChatUsage` shape your other providers report.
 
 ## MCP
@@ -79,12 +80,12 @@ The manager routes per-call: `brain.chat(text, { provider: 'deepseek' })` runs a
 
 ## Extending the pattern
 
-`DeepSeekProvider extends OpenAIProvider` is the recommended template for any OpenAI-compatible vendor (Groq, Together, Fireworks, vLLM, llama.cpp's OpenAI-compat mode):
+`DeepSeekProvider` extends `OpenAICompatProvider` — the abstract base that captures the standard OpenAI-compat override set (strip `reasoning_effort`, `json_object`-mode `generate` with schema-in-system-prompt, throw on combined tools + schema, `mapUsage` hook for vendor cache fields). Same base for any OpenAI-compatible vendor (Groq, Together, Fireworks, vLLM, llama.cpp's OpenAI-compat mode):
 
 ```ts
-import { OpenAIProvider } from '@strav/brain'
+import { OpenAICompatProvider } from '@strav/brain'
 
-export class GroqProvider extends OpenAIProvider {
+export class GroqProvider extends OpenAICompatProvider {
   constructor(name: string, config: GroqConfig) {
     super(name, {
       driver: 'openai',
@@ -93,8 +94,9 @@ export class GroqProvider extends OpenAIProvider {
       defaultModel: config.defaultModel ?? 'llama-3.3-70b-versatile',
     })
   }
-  // Override `buildParams` to suppress fields Groq rejects, etc.
+  // Override `mapUsage` if Groq reports cache hits on a custom field;
+  // override `buildParams` if Groq supports a field the base strips.
 }
 ```
 
-Then register it as a custom driver in `config.brain.providers` (apps that want this can wire `BrainProvider` with their own buildProvider routine).
+Then register it as a custom driver in `config.brain.providers` (apps that want this wire `BrainProvider` with their own `buildProvider` routine).

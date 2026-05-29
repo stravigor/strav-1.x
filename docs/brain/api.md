@@ -14,6 +14,7 @@ import {
   type Provider,
   AnthropicProvider,
   OpenAIProvider,
+  OpenAICompatProvider,
   GeminiProvider,
   DeepSeekProvider,
   OllamaProvider,
@@ -322,29 +323,62 @@ Maps framework shapes to Gemini's wire format:
 
 `stream()` iterates `generateContentStream` yielding text deltas; the terminal `stop` event carries the last `usageMetadata` translated to `ChatUsage` (including `cachedContentTokenCount` → `cacheReadTokens`). `countTokens` calls `ai.models.countTokens` and returns `totalTokens`. MCP servers are not supported by Gemini server-side — the local client path is the only option.
 
-## `DeepSeekProvider`
+## `OpenAICompatProvider`
 
-Subclass of `OpenAIProvider`, backed by the `openai` SDK pointed at DeepSeek's OpenAI-compatible chat completions endpoint.
+Abstract intermediate that captures the standard "OpenAI-compatible local / third-party endpoint" pattern. Extended by `DeepSeekProvider` + `OllamaProvider` in the framework, and the recommended base for any other OpenAI-compatible vendor (Groq, Together, Fireworks, vLLM, llama.cpp's OpenAI-compat mode).
 
 ```ts
-class DeepSeekProvider extends OpenAIProvider {
+abstract class OpenAICompatProvider extends OpenAIProvider {
+  // buildParams strips `reasoning_effort` (most compat endpoints reject unknown fields).
+  // generate uses `response_format.json_object` + schema-in-system-prompt + parseGenerated.
+  // runWithToolsAndSchema / streamWithToolsAndSchema throw BrainError.
+  // mapUsage(u): override to read vendor-specific cache fields.
+}
+```
+
+To wire a new compat vendor:
+
+```ts
+import { OpenAICompatProvider } from '@strav/brain'
+
+export class GroqProvider extends OpenAICompatProvider {
+  constructor(name: string, config: GroqConfig) {
+    super(name, {
+      driver: 'openai',
+      apiKey: config.apiKey,
+      baseUrl: config.baseUrl ?? 'https://api.groq.com/openai/v1',
+      defaultModel: config.defaultModel ?? 'llama-3.3-70b-versatile',
+    })
+  }
+  // Optional: override mapUsage if the vendor reports cache on a custom field.
+  // Optional: override buildParams to re-add a field the vendor accepts.
+}
+```
+
+Then register it in `config.brain.providers` (apps that want this wire `BrainProvider` with their own `buildProvider` routine).
+
+## `DeepSeekProvider`
+
+`OpenAICompatProvider` pointed at DeepSeek's `/v1/chat/completions` endpoint.
+
+```ts
+class DeepSeekProvider extends OpenAICompatProvider {
   constructor(
     name: string,
     config: DeepSeekProviderConfig,
     options?: { client?: OpenAI; mcpClientFactory?: … },
   )
-  // Inherits chat / stream / runWithTools / streamWithTools / generate /
-  // runWithToolsAndSchema / streamWithToolsAndSchema from OpenAIProvider
-  // and overrides three of them — see "Divergences".
+  // Adds DeepSeek defaults + reads prompt_cache_hit_tokens from
+  // DeepSeek's CompletionUsage extension via mapUsage.
 }
 ```
 
-Inherits OpenAI's 1:1 wire-format translation. Diverges in three places:
+Inherits the standard OpenAI-compat overrides. Adds:
 
 | Field | DeepSeek behavior |
 |---|---|
-| `reasoning_effort` | Stripped from every request — DeepSeek's API rejects unknown fields. `deepseek-reasoner` thinks regardless. |
-| `response_format.json_schema` | Not supported by DeepSeek. `generate()` falls back to `response_format.json_object` + injects the schema into the system prompt; client-side `parseGenerated` validates. |
+| `reasoning_effort` | Stripped (base class). `deepseek-reasoner` thinks regardless. |
+| `response_format.json_schema` | Falls back to `json_object` + schema-in-prompt (base class). |
 | `runWithToolsAndSchema` / `streamWithToolsAndSchema` | Throw `BrainError` — combined tools + schema deferred. Apps run `runTools` + `generate` separately, or switch to Anthropic / OpenAI / Gemini for this combination. |
 
 The subclassing pattern is the recommended template for any OpenAI-compatible vendor (Groq, Together, Fireworks, vLLM) — extend `OpenAIProvider`, override the base URL + default model, optionally override `buildParams` to suppress fields the upstream rejects. See [`guides/deepseek.md`](./guides/deepseek.md#extending-the-pattern).
@@ -353,23 +387,19 @@ The subclassing pattern is the recommended template for any OpenAI-compatible ve
 
 ## `OllamaProvider`
 
-Subclass of `OpenAIProvider` for running inference against a local [Ollama](https://ollama.com) server (or any OpenAI-compatible local-LLM server: LM Studio, llama.cpp's server, vLLM, TGI). Unlocks privacy-preserving + free dev workflows for open-weights models (Llama 3.2 / Qwen 2.5 / Mistral / …).
+`OpenAICompatProvider` pointed at a local [Ollama](https://ollama.com) server (or any OpenAI-compatible local-LLM server: LM Studio, llama.cpp's server, vLLM, TGI). Unlocks privacy-preserving + free dev workflows for open-weights models (Llama 3.2 / Qwen 2.5 / Mistral / …).
 
 ```ts
-class OllamaProvider extends OpenAIProvider {
+class OllamaProvider extends OpenAICompatProvider {
   constructor(
     name: string,
     config: OllamaProviderConfig,
     options?: { client?: OpenAI; mcpClientFactory?: … },
   )
+  // Only adds Ollama defaults — baseUrl, placeholder apiKey.
+  // Inherits all OpenAI-compat overrides from the base.
 }
 ```
-
-Same override surface as `DeepSeekProvider`:
-- Defaults to `http://localhost:11434/v1` + `apiKey: 'ollama'` (placeholder; Ollama ignores).
-- `buildParams` strips `reasoning_effort`.
-- `generate` uses `response_format.json_object` + schema-in-system-prompt + client-side `parseGenerated`.
-- `runWithToolsAndSchema` / `streamWithToolsAndSchema` throw.
 
 `defaultModel` is **required** — Ollama models are user-installed via `ollama pull <model>`. Apps pick a tool-capable model (`llama3.2`, `qwen2.5`, `mistral`) for `runWithTools` to behave. `countTokens` is not implemented. See [`guides/ollama.md`](./guides/ollama.md) for the dev/prod swap pattern + LM Studio / vLLM / llama.cpp configurations.
 

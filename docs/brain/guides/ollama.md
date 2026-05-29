@@ -51,11 +51,11 @@ That's it — no API key, no env var. Inject `BrainManager` the same way you wou
 
 ## What's mapped
 
-Ollama's OpenAI-compat layer is request/response-shape-identical for the surface the framework uses. `OllamaProvider` inherits everything from `OpenAIProvider` and overrides only three things — the same set as `DeepSeekProvider`:
+Ollama's OpenAI-compat layer is request/response-shape-identical for the surface the framework uses. `OllamaProvider` extends `OpenAICompatProvider` and inherits the standard OpenAI-compat overrides without adding any of its own:
 
-- **No `reasoning_effort`.** Ollama's API rejects unknown fields. `buildParams` strips the field. Models with built-in thinking (`qwen3-thinking`, `deepseek-r1` distills) emit thinking tokens regardless of the absent control.
-- **No `response_format.json_schema`.** Recent Ollama versions support `json_schema` for some models but behavior varies. The safe default is `response_format.json_object` + schema-in-system-prompt + client-side `parseGenerated`. Works on every tool-capable model.
-- **`runWithToolsAndSchema` / `streamWithToolsAndSchema` throw.** Combined tools + schema needs per-turn schema enforcement Ollama doesn't reliably offer. Apps run the two as separate calls (see "What's NOT supported" below).
+- **No `reasoning_effort`.** Base class strips the field. Ollama rejects unknown fields; models with built-in thinking (`qwen3-thinking`, `deepseek-r1` distills) emit thinking tokens regardless.
+- **No `response_format.json_schema`.** Recent Ollama supports `json_schema` for some models but behavior varies. Base class uses `json_object` + schema-in-system-prompt + client-side `parseGenerated` — works on every tool-capable model.
+- **`runWithToolsAndSchema` / `streamWithToolsAndSchema` throw.** Same as every OpenAI-compat provider — apps run the two as separate calls (see "What's NOT supported" below).
 
 ## Tool calling
 
