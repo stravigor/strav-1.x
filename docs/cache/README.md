@@ -260,6 +260,13 @@ Uses a minimal Memcached text-protocol client over `Bun.connect` — no third-pa
 
 For `increment` / `decrement` on missing keys, Memcached returns `NOT_FOUND` (it can't auto-seed). The driver handles this with a `NOT_FOUND → add(delta) → retry incr` chain — same outcome as Redis but ~2 round-trips on first increment.
 
+## Guides
+
+- [`guides/patterns.md`](./guides/patterns.md) — cache-aside via `remember`, write-through, atomic counters, distributed locks, tagged invalidation, composite shapes, stampede protection, anti-patterns.
+- [`guides/drivers.md`](./guides/drivers.md) — picking memory / postgres / redis / memcached, comparison table + decision tree, per-driver config + ops notes, switching drivers, multi-driver setups.
+- [`guides/invalidation.md`](./guides/invalidation.md) — TTL-based, event-based, tag-based, versioned keys, cascading invalidation, lazy refresh, when cache invalidation is the wrong question, the 5-question self-check before caching.
+- [`guides/testing.md`](./guides/testing.md) — `MemoryCache` with deterministic clock, hit/miss assertions via call counters, real-driver integration tests with `is*Available()` skip, `StubCache` for arg-shape unit tests, testing invalidation, coverage targets.
+
 ## When NOT to cache
 
 - A query that takes <10ms — caching adds round-trip overhead that may dominate.
