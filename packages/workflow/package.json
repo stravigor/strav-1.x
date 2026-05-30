@@ -1,6 +1,6 @@
 {
   "name": "@strav/workflow",
-  "version": "1.0.0-alpha.22",
+  "version": "1.0.0-alpha.23",
   "description": "Strav workflow orchestration — sequential, parallel, route, loop + saga compensation. Pure functions on @strav/kernel.",
   "type": "module",
   "main": "./src/index.ts",
