@@ -6,4 +6,4 @@
  * but this constant is what *generated apps* depend on — keep them in sync
  * on each release until spring formally cuts independent versions.
  */
-export const STRAV_VERSION = '^1.0.0-alpha.29'
+export const STRAV_VERSION = '^1.0.0-alpha.30'

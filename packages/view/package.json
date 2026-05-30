@@ -1,6 +1,6 @@
 {
   "name": "@strav/view",
-  "version": "1.0.0-alpha.29",
+  "version": "1.0.0-alpha.30",
   "description": "Strav view engine — .strav template language. Tokenizer + compiler + ViewEngine, Vue 3 hydration islands + buildIslands, pages auto-router, console commands, disk cache, asset versioning.",
   "type": "module",
   "main": "./src/index.ts",

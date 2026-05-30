@@ -1,6 +1,6 @@
 {
   "name": "@strav/payment",
-  "version": "1.0.0-alpha.29",
+  "version": "1.0.0-alpha.30",
   "description": "Strav payment module — provider-agnostic payment abstraction. Normalized DTOs, multi-provider routing, ledger schema, webhook dispatcher, Cashier-style Billable mixin. Stripe and Omise drivers ship as subpath imports (`@strav/payment/stripe`, `@strav/payment/omise`). Paddle support comes in a later release.",
   "type": "module",
   "main": "./src/index.ts",
