@@ -1,0 +1,24 @@
+{
+  "name": "@strav-tests/spring-api",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "End-to-end smoke for @strav/spring slice A: a committed copy of what `bunx @strav/spring my-app --api` produces, used to prove the scaffolded shape actually boots and serves /healthz against real workspace @strav/* packages.",
+  "scripts": {
+    "strav": "bun bin/strav.ts",
+    "dev": "bun --hot bin/strav.ts serve",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@strav/cli": "workspace:*",
+    "@strav/http": "workspace:*",
+    "@strav/kernel": "workspace:*",
+    "@strav/spring": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "engines": {
+    "bun": ">=1.3.14"
+  }
+}

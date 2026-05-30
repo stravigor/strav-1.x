@@ -1,0 +1,8 @@
+@extends('layouts.app')
+
+@set('title', 'Server error')
+
+@section('content')
+  <h1>500 — Something went wrong</h1>
+  <p>An unexpected error occurred. Please try again shortly.</p>
+@endsection

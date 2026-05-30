@@ -526,3 +526,116 @@ describe('HttpKernel.handle — context shape', () => {
     }
   })
 })
+
+// ─────────────────────────────────────────────────────────────────────────────
+// publicDir static-asset fallback
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('HttpKernel.handle — publicDir static fallback', () => {
+  let pubDir: string
+  beforeEach(async () => {
+    pubDir = mkdtempSync(join(tmpdir(), 'strav-http-public-'))
+    await Bun.write(join(pubDir, 'hello.txt'), 'hi from disk')
+    await Bun.write(join(pubDir, 'assets', 'app.css'), 'body{color:red}')
+  })
+  afterEach(() => {
+    rmSync(pubDir, { recursive: true, force: true })
+  })
+
+  test('GET an unrouted path that exists in publicDir returns the file (200)', async () => {
+    const app = await bootApp(undefined, { http: { publicDir: pubDir } })
+    try {
+      const res = await app.resolve(HttpKernel).handle(new Request('http://localhost/hello.txt'))
+      expect(res.status).toBe(200)
+      expect(await res.text()).toBe('hi from disk')
+    } finally {
+      await app.shutdown()
+    }
+  })
+
+  test('GET a nested file under publicDir resolves', async () => {
+    const app = await bootApp(undefined, { http: { publicDir: pubDir } })
+    try {
+      const res = await app
+        .resolve(HttpKernel)
+        .handle(new Request('http://localhost/assets/app.css'))
+      expect(res.status).toBe(200)
+      expect(await res.text()).toBe('body{color:red}')
+    } finally {
+      await app.shutdown()
+    }
+  })
+
+  test('routed paths still win over disk', async () => {
+    const app = await bootApp(
+      (router) => {
+        router.get('/hello.txt', () => new Response('from router'))
+      },
+      { http: { publicDir: pubDir } },
+    )
+    try {
+      const res = await app.resolve(HttpKernel).handle(new Request('http://localhost/hello.txt'))
+      expect(res.status).toBe(200)
+      expect(await res.text()).toBe('from router')
+    } finally {
+      await app.shutdown()
+    }
+  })
+
+  test('missing file falls through to 404', async () => {
+    const app = await bootApp(undefined, { http: { publicDir: pubDir } })
+    try {
+      const res = await app.resolve(HttpKernel).handle(new Request('http://localhost/nope.txt'))
+      expect(res.status).toBe(404)
+    } finally {
+      await app.shutdown()
+    }
+  })
+
+  test('path traversal is rejected — `..` cannot escape publicDir', async () => {
+    const app = await bootApp(undefined, { http: { publicDir: pubDir } })
+    try {
+      const res = await app
+        .resolve(HttpKernel)
+        .handle(new Request('http://localhost/../../etc/passwd'))
+      expect(res.status).toBe(404)
+    } finally {
+      await app.shutdown()
+    }
+  })
+
+  test('POST to a file path does NOT serve it (only GET / HEAD fall through)', async () => {
+    const app = await bootApp(undefined, { http: { publicDir: pubDir } })
+    try {
+      const res = await app
+        .resolve(HttpKernel)
+        .handle(new Request('http://localhost/hello.txt', { method: 'POST' }))
+      expect(res.status).toBe(404)
+    } finally {
+      await app.shutdown()
+    }
+  })
+
+  test('HEAD returns empty body + 200 for existing files', async () => {
+    const app = await bootApp(undefined, { http: { publicDir: pubDir } })
+    try {
+      const res = await app
+        .resolve(HttpKernel)
+        .handle(new Request('http://localhost/hello.txt', { method: 'HEAD' }))
+      expect(res.status).toBe(200)
+      expect(await res.text()).toBe('')
+    } finally {
+      await app.shutdown()
+    }
+  })
+
+  test('no publicDir set → 404 for every unrouted GET', async () => {
+    const app = await bootApp(undefined, { http: {} })
+    try {
+      const res = await app.resolve(HttpKernel).handle(new Request('http://localhost/hello.txt'))
+      expect(res.status).toBe(404)
+    } finally {
+      await app.shutdown()
+    }
+  })
+})

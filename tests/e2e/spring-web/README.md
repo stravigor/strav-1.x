@@ -1,0 +1,42 @@
+# spring-web
+
+A Strav 1.0 full-stack application scaffolded by `@strav/spring --web`.
+
+## Run
+
+```bash
+bun install
+bun strav view:build     # compile resources/ts/islands/ into public/assets/islands/
+bun strav serve          # HTTP server on http://localhost:3000
+```
+
+Open `http://localhost:3000/` — the page at `resources/views/pages/index.strav`
+renders, with the Vue 3 island defined in `resources/ts/islands/counter.vue`
+hydrating on load.
+
+## Layout
+
+This project follows the layout in `spec/directory-structure.md`:
+
+- `app/` — application code (`http/`, `models/`, `providers/`, …).
+- `bin/strav.ts` — single dispatcher; `bun strav <command>` invokes it.
+- `bootstrap/{app,providers}.ts` — Application factory + provider list.
+- `config/` — typed config; one file per package, each exports `default`.
+- `routes/{api,web,console}.ts` — declared route entry points.
+- `resources/`
+  - `views/pages/**/*.strav` — auto-routed pages via `@strav/view`.
+  - `views/layouts/`, `views/components/`, `views/errors/` — the rest of the templates.
+  - `ts/islands/*.vue` + `setup.ts` — Vue 3 islands. Bundled into one
+    `islands.js` by `bun strav view:build`.
+  - `css/app.css` — base stylesheet (plain CSS; swap in Tailwind /
+    vanilla-extract / your choice).
+- `public/` — static assets served by `routes/web.ts`. `public/assets/`
+  receives the islands bundle output.
+- `tests/feature/` — HTTP-level integration tests.
+- `tests/browser/` — Playwright-driven (you install Playwright when you need it).
+
+## Adding more packages
+
+The scaffolded app starts with `@strav/{kernel,http,view,cli}`. Add
+`@strav/database`, `@strav/auth`, `@strav/queue`, `@strav/broadcast` (and
+their config + provider entries in `bootstrap/providers.ts`) as you need them.

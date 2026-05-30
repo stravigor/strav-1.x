@@ -20,9 +20,6 @@ import { type Application, ConfigRepository, ServiceProvider } from '@strav/kern
 import { registerPages } from './pages.ts'
 import { type ViewConfig, ViewEngine } from './view_engine.ts'
 
-/** String key for the Router — avoids a hard import of @strav/http at module load. */
-const ROUTER_KEY = 'router'
-
 export class ViewProvider extends ServiceProvider {
   override readonly name = 'view'
   override readonly dependencies = ['config']
@@ -40,20 +37,24 @@ export class ViewProvider extends ServiceProvider {
     const raw = app.resolve(ConfigRepository).get('view')
     const config = raw === undefined || raw === null ? {} : (raw as ViewConfig)
 
-    // Pages auto-router: only runs when a Router is in the container
-    // (i.e., @strav/http is registered) and pages.autoRoute !== false.
+    // Pages auto-router: only runs when @strav/http is registered AND
+    // pages.autoRoute !== false.
     if (config.pages?.autoRoute === false) return
-    if (!app.has(ROUTER_KEY)) return
 
-    const engine = app.resolve(ViewEngine)
-    // Dynamic import so @strav/http remains an optional runtime dep.
-    // ViewProvider works fine without it (rendering still works; just
-    // no pages routes get registered).
-    const { Router } = await import('@strav/http')
+    // Dynamic import keeps @strav/http an optional runtime dep: if it's
+    // not installed the import throws and we skip pages auto-routing
+    // entirely (rendering still works). Gating on `app.has(Router)`
+    // after the import handles the "installed but not registered" case.
+    let Router: typeof import('@strav/http').Router
+    try {
+      ;({ Router } = await import('@strav/http'))
+    } catch {
+      return
+    }
     if (!app.has(Router)) return
 
+    const engine = app.resolve(ViewEngine)
     const router = app.resolve(Router)
-
     const pagesDir = config.pages?.pagesDir ? resolve(config.pages.pagesDir) : undefined
 
     await registerPages(engine, router, {

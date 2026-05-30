@@ -1,0 +1,26 @@
+{
+  "name": "{{projectName}}",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "strav": "bun bin/strav.ts",
+    "dev": "bun --hot bin/strav.ts serve",
+    "build": "bun bin/strav.ts view:build",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@strav/cli": "{{stravVersion}}",
+    "@strav/http": "{{stravVersion}}",
+    "@strav/kernel": "{{stravVersion}}",
+    "@strav/view": "{{stravVersion}}",
+    "vue": "^3.5.0"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@vue/compiler-sfc": "^3.5.0"
+  },
+  "engines": {
+    "bun": ">=1.3.14"
+  }
+}

@@ -306,6 +306,27 @@ ULID-only validation prevents log-injection / cardinality attacks via the upstre
 
 Unmatched and method-mismatched paths still flow through the global middleware chain (with a final handler that throws `NotFoundError` or returns the 405 Response). This lets `cors` answer browser preflights for any URL and lets `request_log` capture not-found access patterns.
 
+### Static-asset fallback (`config.http.publicDir`)
+
+When `config.http.publicDir` is set, GET / HEAD requests that the router doesn't match get one last chance: the kernel resolves the path against `publicDir` and, if a file exists there, returns it (`Response(Bun.file(path))`). Misses still fall through to the 404 path.
+
+```ts
+// config/http.ts
+export default {
+  publicDir: 'public', // relative paths resolve against process.cwd()
+}
+```
+
+Rules baked in:
+
+- Only `GET` and `HEAD` fall through. Other methods get the normal 404.
+- Routed paths always win — the router is consulted first.
+- Path traversal (`..`) is rejected: the resolved absolute path must stay under `publicDir`.
+- Bun sets `content-type` from the file extension.
+- For `HEAD`, the kernel returns 200 with `content-length` and an empty body.
+
+The fallback runs inside `handle()`'s `not-found` arm, so global middleware (CORS, request log, security headers) still sees the request.
+
 ## `ExceptionHandler`
 
 Concrete class with default implementations of `report` and `renderHttp`. Apps subclass and bind their own before `HttpProvider.boot()`; if none is bound, the provider falls back to the default.
@@ -412,6 +433,7 @@ Order: middleware runs in declaration order on the way in, reverse on the way ou
 | `exposeStackTrace` | Default `ExceptionHandler` includes stack on responses; defaults to `!app.isProduction()` |
 | `cors` | Options for the built-in `cors` middleware (see below) |
 | `securityHeaders` | Options for the built-in `security_headers` middleware (see below) |
+| `publicDir` | Static-asset root for GET / HEAD requests that no route matches (see "Static-asset fallback" above) |
 
 ## Built-in middleware
 

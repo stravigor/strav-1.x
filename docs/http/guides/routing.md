@@ -200,6 +200,26 @@ app.singleton(ExceptionHandler, (c) => new Handler(c.resolve(Logger)))
 
 Bind your subclass **before** `HttpProvider.register()` runs (in your bootstrap, or in a provider that runs before `'http'`).
 
+## Static assets — `config.http.publicDir`
+
+For "GET this file off disk" cases (built JS, CSS, favicons, images) you don't need a route. Set `publicDir` in `config/http.ts`:
+
+```ts
+// config/http.ts
+export default {
+  publicDir: 'public', // resolved against process.cwd() if relative
+}
+```
+
+Then `GET /app.css` will read `public/app.css` and stream it back (with the content-type Bun infers from the extension). Rules:
+
+- Only `GET` and `HEAD` fall through. `POST /app.css` is still a 404.
+- The router runs first — a declared route at `/app.css` wins over the file on disk.
+- `..` traversal is rejected (the resolved path must stay under `publicDir`).
+- A missing file falls through to the normal 404 path.
+
+Use a hand-declared route when you need per-asset middleware (auth on `/private/foo.pdf`), dynamic content-type, range requests, or signed URLs. Use `publicDir` for everything else.
+
 ## Testing
 
 `HttpKernel.handle(request)` is the test entry — no Bun server needed:

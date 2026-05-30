@@ -1,0 +1,37 @@
+# {{projectName}}
+
+A Strav 1.0 application scaffolded by `@strav/spring`.
+
+## Run
+
+```bash
+bun install
+bun strav serve              # HTTP server on http://localhost:3000
+bun strav                    # list every available command
+bun strav key:generate       # generate a real APP_KEY
+```
+
+## Layout
+
+This project follows the layout in `spec/directory-structure.md`:
+
+- `app/` — your application code (`http/`, `models/`, `providers/`, …)
+- `bin/strav.ts` — single dispatcher; `bun strav <command>` invokes it
+- `bootstrap/` — `app.ts` (Application factory) + `providers.ts` (provider list)
+- `config/` — typed config files; one per package, each exports `default`
+- `routes/` — route declarations
+- `tests/feature/` — HTTP-level integration tests
+- `tests/unit/` — pure unit tests
+
+## Adding more packages
+
+The scaffolded app starts with the minimum stack (`@strav/{kernel,http,cli}`).
+Add `@strav/database`, `@strav/auth`, `@strav/queue`, … as you need them:
+
+```bash
+bun add @strav/database
+```
+
+Then create the matching `config/<name>.ts` file, add the provider to
+`bootstrap/providers.ts`, and (for `@strav/database`) wire `DB_*` env vars
+in `.env`.

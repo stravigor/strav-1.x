@@ -43,6 +43,13 @@ export interface HttpConfigShape {
   cors?: CorsOptions
   /** Configuration for the built-in `security_headers` middleware. */
   securityHeaders?: SecurityHeadersOptions
+  /**
+   * Directory served as static assets when no route matches. Resolved
+   * against `process.cwd()` if relative. Only GET / HEAD requests fall
+   * through; path traversal (`..`) is rejected. Unset → no static
+   * fallback (every miss is a 404).
+   */
+  publicDir?: string
 }
 
 export class HttpProvider extends ServiceProvider {
@@ -78,6 +85,7 @@ export class HttpProvider extends ServiceProvider {
         exceptionHandler: c.resolve(ExceptionHandler),
         globalMiddleware: config.middleware ?? [],
         contextConfig,
+        ...(config.publicDir !== undefined ? { publicDir: config.publicDir } : {}),
       })
     })
   }

@@ -21,6 +21,7 @@
  * resolved `ExceptionHandler.renderHttp`.
  */
 
+import { isAbsolute, resolve as resolvePath, sep } from 'node:path'
 import {
   type Application,
   asStravError,
@@ -57,6 +58,13 @@ export interface HttpKernelOptions {
   globalMiddleware?: readonly string[]
   /** Context-config slice — controls subdomain parsing + proxy trust. */
   contextConfig?: HttpContextConfigSlice
+  /**
+   * Optional static-asset root. When set, GET/HEAD requests that the router
+   * doesn't match fall through to a file lookup under this directory before
+   * the 404 path runs. Relative paths resolve against `process.cwd()`.
+   * Path traversal (`..`) is rejected.
+   */
+  publicDir?: string
 }
 
 export interface ServeOptions {
@@ -98,6 +106,7 @@ export class HttpKernel {
   private readonly exceptionHandler: ExceptionHandler
   private readonly globalMiddleware: readonly MiddlewareDef[]
   private readonly contextConfig: HttpContextConfigSlice
+  private readonly publicDir: string | undefined
   private readonly plans = new Map<CompiledRoute, RoutePlan>()
   private readonly contextEnrichers: ContextEnricher[] = []
 
@@ -110,6 +119,12 @@ export class HttpKernel {
       this.middlewareRegistry.resolve(name),
     )
     this.contextConfig = opts.contextConfig ?? {}
+    this.publicDir =
+      opts.publicDir !== undefined
+        ? isAbsolute(opts.publicDir)
+          ? opts.publicDir
+          : resolvePath(process.cwd(), opts.publicDir)
+        : undefined
   }
 
   /**
@@ -184,7 +199,9 @@ export class HttpKernel {
     let routeMiddleware: readonly MiddlewareDef[] = []
     let finalHandler: FinalHandler
     if (match.kind === 'not-found') {
-      finalHandler = () => {
+      finalHandler = async () => {
+        const file = await this.resolveStaticFile(request.method, url.pathname)
+        if (file !== undefined) return file
         throw new NotFoundError(`Route ${request.method} ${url.pathname} not found.`, {
           code: 'http.not-found',
           context: { method: request.method, path: url.pathname },
@@ -311,6 +328,44 @@ export class HttpKernel {
   }
 
   // ─── Internals ─────────────────────────────────────────────────────────────
+
+  /**
+   * When `publicDir` is configured, GET/HEAD requests that the router didn't
+   * match get a chance to serve a file from disk before the 404 path runs.
+   * Returns the `Response` to use, or `undefined` to fall through to 404.
+   *
+   * Path safety: the resolved absolute path must remain under `publicDir`
+   * (resolving `..` out of the public root → undefined). Bun handles
+   * content-type from the file extension.
+   */
+  private async resolveStaticFile(method: string, pathname: string): Promise<Response | undefined> {
+    if (this.publicDir === undefined) return undefined
+    if (method !== 'GET' && method !== 'HEAD') return undefined
+
+    let decoded: string
+    try {
+      decoded = decodeURIComponent(pathname)
+    } catch {
+      return undefined
+    }
+    const stripped = decoded.replace(/^\/+/, '')
+    if (stripped === '') return undefined
+
+    const absolute = resolvePath(this.publicDir, stripped)
+    if (absolute !== this.publicDir && !absolute.startsWith(this.publicDir + sep)) {
+      return undefined
+    }
+
+    // biome-ignore lint/suspicious/noExplicitAny: Bun global on globalThis
+    const Bun = (globalThis as any).Bun
+    if (!Bun?.file) return undefined
+    const file = Bun.file(absolute)
+    if (!(await file.exists())) return undefined
+    if (method === 'HEAD') {
+      return new Response(null, { status: 200, headers: { 'content-length': String(file.size) } })
+    }
+    return new Response(file)
+  }
 
   private planFor(route: CompiledRoute): RoutePlan {
     const cached = this.plans.get(route)

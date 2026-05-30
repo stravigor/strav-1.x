@@ -1,0 +1,12 @@
+@extends('layouts.app')
+
+@set('title', 'spring-web')
+
+@section('content')
+  <h1>Welcome to spring-web</h1>
+  <p>You're looking at <code>resources/views/pages/index.strav</code>.</p>
+
+  <p>The button below is a Vue 3 island — see <code>resources/ts/islands/counter.vue</code>. Run <code>bun strav view:build</code> to compile islands into <code>public/assets/islands/</code>.</p>
+
+  @island('Counter', { start: 0 })
+@endsection
