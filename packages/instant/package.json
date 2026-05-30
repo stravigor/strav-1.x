@@ -1,6 +1,6 @@
 {
   "name": "@strav/instant",
-  "version": "1.0.0-alpha.27",
+  "version": "1.0.0-alpha.28",
   "description": "Strav instant messaging — provider-agnostic abstraction for LINE / WhatsApp / Messenger. Normalized OutgoingMessage + capability-flagged drivers + webhook receiver. LINE ships as a subpath import (`@strav/instant/line`) with Flex builder, rich menus, beacons, and LIFF ID-token verification. WhatsApp + Messenger come in later releases.",
   "type": "module",
   "main": "./src/index.ts",

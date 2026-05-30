@@ -1,6 +1,6 @@
 {
   "name": "@strav/mail",
-  "version": "1.0.0-alpha.27",
+  "version": "1.0.0-alpha.28",
   "description": "Strav signal layer — mail (core + array/log transports + Mailable + queue-dispatch); notifications + SSE + broadcast follow in later slices",
   "type": "module",
   "main": "./src/index.ts",

@@ -1,6 +1,6 @@
 {
   "name": "@strav/storage",
-  "version": "1.0.0-alpha.27",
+  "version": "1.0.0-alpha.28",
   "description": "Strav storage layer — Storage abstraction + LocalStorage (Bun.file + node:fs) + S3Storage (Bun.S3Client, works with AWS / R2 / B2 / Tigris / MinIO via the endpoint option). Kernel-free; mirrors @strav/cache + @strav/broadcast.",
   "type": "module",
   "main": "./src/index.ts",
