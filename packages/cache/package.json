@@ -1,6 +1,6 @@
 {
   "name": "@strav/cache",
-  "version": "1.0.0-alpha.24",
+  "version": "1.0.0-alpha.25",
   "description": "Strav cache layer — Cache abstraction + MemoryCache (in-process) + PostgresCache (cross-process ledger) + RedisCache (Bun.RedisClient, all data structures incl. tagged sets) + MemcachedCache (text-protocol client over Bun.connect). Atomic increments, distributed locks, tagged invalidation. Mirrors @strav/broadcast: kernel-free core in the root, every driver under its own subpath.",
   "type": "module",
   "main": "./src/index.ts",

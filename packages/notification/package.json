@@ -1,6 +1,6 @@
 {
   "name": "@strav/notification",
-  "version": "1.0.0-alpha.24",
+  "version": "1.0.0-alpha.25",
   "description": "Strav multi-channel notifications — NotificationManager fan-out across channel drivers (mail / database / log / webhook / broadcast). Manager+drivers shape; new channels register via `manager.extend(name, factory)`. Discord / SMS channels ship in follow-up slices.",
   "type": "module",
   "main": "./src/index.ts",

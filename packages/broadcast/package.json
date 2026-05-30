@@ -1,6 +1,6 @@
 {
   "name": "@strav/broadcast",
-  "version": "1.0.0-alpha.24",
+  "version": "1.0.0-alpha.25",
   "description": "Strav broadcast / pub-sub primitive — Broadcaster interface + MemoryBroadcaster (in-process) + PostgresBroadcaster (polling-ledger backplane) + per-channel authorization. Pairs with @strav/http's router.sse and @strav/notification/broadcast.",
   "type": "module",
   "main": "./src/index.ts",

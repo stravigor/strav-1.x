@@ -1,6 +1,6 @@
 {
   "name": "@strav/social",
-  "version": "1.0.0-alpha.24",
+  "version": "1.0.0-alpha.25",
   "description": "Strav social-login module — provider-agnostic OAuth/OIDC client. Normalized profile + token DTOs, state + PKCE helpers, capability gating, multi-provider routing. Line / Google / Facebook adapters ship as subpath imports (`@strav/social/line`, `@strav/social/google`, `@strav/social/facebook`).",
   "type": "module",
   "main": "./src/index.ts",

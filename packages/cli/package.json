@@ -1,6 +1,6 @@
 {
   "name": "@strav/cli",
-  "version": "1.0.0-alpha.24",
+  "version": "1.0.0-alpha.25",
   "description": "Strav CLI layer — Command base, signature parser, ConsoleProvider, interactive prompts on top of @strav/kernel's ConsoleKernel",
   "type": "module",
   "main": "./src/index.ts",
