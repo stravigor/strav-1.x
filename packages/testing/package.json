@@ -1,6 +1,6 @@
 {
   "name": "@strav/testing",
-  "version": "1.0.0-alpha.25",
+  "version": "1.0.0-alpha.26",
   "description": "Strav testing utilities — in-memory stream, typed fetch stub, Postgres availability probe + schema reset, bootTestApp orchestrator, stub providers.",
   "type": "module",
   "main": "./src/index.ts",
