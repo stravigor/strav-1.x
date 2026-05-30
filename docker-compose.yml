@@ -31,5 +31,31 @@ services:
     volumes:
       - strav_postgres_data:/var/lib/postgresql/data
 
+  redis:
+    # Standard Redis. Used by `@strav/cache/redis` integration tests.
+    # The cache suite self-skips when REDIS_URL is unset, so this is
+    # only needed when you want to run those tests locally.
+    image: redis:7-alpine
+    container_name: strav_redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  memcached:
+    # Used by `@strav/cache/memcached` integration tests.
+    image: memcached:1.6-alpine
+    container_name: strav_memcached
+    ports:
+      - "11211:11211"
+    healthcheck:
+      test: ["CMD-SHELL", "echo stats | nc -q 1 127.0.0.1 11211 | grep -q version"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
 volumes:
   strav_postgres_data:

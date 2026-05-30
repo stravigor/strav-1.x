@@ -27,3 +27,7 @@ export {
   resetSchema,
   testDatabaseUrl,
 } from './postgres/index.ts'
+
+// Cache availability probes — also re-exported under
+// `@strav/testing/cache` for the same reason.
+export { isMemcachedAvailable, isRedisAvailable } from './cache/index.ts'

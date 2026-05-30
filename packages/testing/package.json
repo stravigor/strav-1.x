@@ -8,6 +8,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./brain": "./src/brain/index.ts",
+    "./cache": "./src/cache/index.ts",
     "./postgres": "./src/postgres/index.ts"
   },
   "files": [
