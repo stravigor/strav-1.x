@@ -11,11 +11,20 @@ export class MakeNotification extends MakeCommand {
 
   protected stub(name: string): string {
     const cls = pascal(name)
-    return `// ${cls} notification
-// Implement channels (mail, database, broadcast) once @strav/signal notifications land.
-export class ${cls} {
-  via(): string[] {
+    return `import { BaseNotification, type Notifiable } from '@strav/notification'
+import { type Message } from '@strav/mail'
+
+export class ${cls} extends BaseNotification {
+  override via(_notifiable: Notifiable): readonly string[] {
     return ['mail']
+  }
+
+  override toMail(_notifiable: Notifiable): Message {
+    return {
+      to: [],
+      subject: '${cls}',
+      text: 'Edit packages/.../notifications/${snake(name)}.ts',
+    }
   }
 }
 `

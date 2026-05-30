@@ -1,0 +1,14 @@
+{
+  "name": "@strav-tests/m4-notification",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "M4 end-to-end smoke — boots NotificationProvider + DatabaseProvider + LoggerProvider + MailProvider against real Postgres, fans a notification through mail / database / log channels, asserts mail dispatched, row persisted, log line emitted.",
+  "dependencies": {
+    "@strav/database": "workspace:*",
+    "@strav/kernel": "workspace:*",
+    "@strav/mail": "workspace:*",
+    "@strav/notification": "workspace:*",
+    "@strav/testing": "workspace:*"
+  }
+}
