@@ -43,8 +43,13 @@ WORKSPACE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$WORKSPACE_ROOT"
 
 # ─── package list (lockstep, dependency order) ─────────────────────────────────
-# Independent: @strav/spring is versioned outside the lockstep; publish it
-# separately via `--package spring`.
+# @strav/spring is *capability-wise* independent of the lockstep (it has zero
+# @strav/* runtime deps and may eventually cut releases on its own cadence —
+# e.g. ship 1.0.0 GA while the framework is on 1.0.1-rc.x), but during alpha
+# it moves in lockstep with the framework and is included here so a single
+# `./scripts/publish.sh` covers the common case. Off-cycle spring releases
+# still work via `--package spring` (since `is_published()` skips packages
+# already at the current version).
 #
 # Deferred to post-1.0: audit, transit (not in this list).
 # Dropped: oauth2, pdf, publish, mcp (folded into brain).
@@ -73,6 +78,9 @@ ALL_PACKAGES=(
 
   # Test-only (devDependency in consumers)
   testing
+
+  # Standalone scaffolder — no @strav/* runtime deps; safe to publish last.
+  spring
 )
 
 if [[ -n "$SPECIFIC_PACKAGES" ]]; then

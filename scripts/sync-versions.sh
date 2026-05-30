@@ -7,7 +7,15 @@
 #   ./scripts/sync-versions.sh set 0.2.0    # set every package to 0.2.0
 #   ./scripts/sync-versions.sh set 1.0.0-alpha.1
 #
-# Excludes @strav/spring (versioned independently per spec/packages.md).
+# Includes @strav/spring during the alpha cadence so a single bump covers
+# every package. Spring may eventually cut releases on its own cadence
+# (spec/packages.md notes it CAN be versioned independently), at which point
+# edit its package.json by hand and skip it from a re-run here.
+#
+# NOTE: this script does NOT update the STRAV_VERSION / SPRING_VERSION
+# string constants in packages/spring/src/{version.ts,cli.ts}. Bump those
+# by hand alongside running this script, or generated apps will pin at the
+# previous alpha.
 
 set -euo pipefail
 
@@ -25,8 +33,9 @@ Usage:
   $0 --help                 Show this help
 
 Notes:
-  - @strav/spring is excluded (independent versioning).
-  - All other packages move in lockstep.
+  - @strav/spring moves in lockstep during the alpha cadence.
+  - Remember to also bump STRAV_VERSION + SPRING_VERSION constants in
+    packages/spring/src/{version.ts,cli.ts} by hand.
 EOF
 }
 
@@ -40,11 +49,11 @@ if ! command -v jq &>/dev/null; then
   exit 1
 fi
 
-# ─── packages to bump (everything except spring) ───────────────────────────────
+# ─── packages to bump ──────────────────────────────────────────────────────────
 # Portable across bash 3 (macOS) and bash 4+.
 PACKAGES=()
 while IFS= read -r line; do PACKAGES+=("$line"); done \
-  < <(find packages -mindepth 1 -maxdepth 1 -type d -not -name spring | sort)
+  < <(find packages -mindepth 1 -maxdepth 1 -type d | sort)
 
 (( ${#PACKAGES[@]} == 0 )) && { echo -e "${YELLOW}No packages found under packages/${NC}"; exit 0; }
 
@@ -52,7 +61,7 @@ while IFS= read -r line; do PACKAGES+=("$line"); done \
 MODE="$1"
 NEW_VERSION=""
 
-# Pick reference version from first non-spring package
+# Pick reference version from the first package in the sorted list
 REF_PKG="${PACKAGES[0]}"
 [[ ! -f "$REF_PKG/package.json" ]] && { echo -e "${RED}❌ $REF_PKG/package.json missing${NC}"; exit 1; }
 CURRENT=$(jq -r '.version' "$REF_PKG/package.json")
