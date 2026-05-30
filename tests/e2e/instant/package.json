@@ -1,0 +1,12 @@
+{
+  "name": "@strav-tests/instant",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "End-to-end smoke — boots Application + InstantProvider + LineInstantProvider with a stubbed @line/bot-sdk client. Verifies kernel registration, configured-driver routing, capability gating, signed webhook verification, and event parsing without touching the network.",
+  "dependencies": {
+    "@strav/kernel": "workspace:*",
+    "@strav/instant": "workspace:*",
+    "@line/bot-sdk": "^11.0.1"
+  }
+}
