@@ -24,12 +24,13 @@ describe('DurableWorkflow', () => {
       .step('a', async () => 'a-result')
       .step('b', async () => 'b-result')
     expect(wf.steps.map((s) => s.name)).toEqual(['a', 'b'])
-    expect(wf.steps.map((s) => s.maxAttempts)).toEqual([3, 3])
+    expect(wf.steps.map((s) => (s.type === 'step' ? s.maxAttempts : -1))).toEqual([3, 3])
   })
 
   test('.step() defaults: maxAttempts=3, exponential backoff capped at 60s', () => {
     const wf = new DurableWorkflow('demo').step('a', async () => 'r')
-    const step = wf.steps[0]!
+    const step = wf.steps[0]
+    if (step?.type !== 'step') throw new Error('expected step node')
     expect(step.maxAttempts).toBe(3)
     expect(step.backoff(1)).toBe(2)
     expect(step.backoff(2)).toBe(4)
@@ -47,7 +48,8 @@ describe('DurableWorkflow', () => {
       maxAttempts: 5,
       backoff: () => 1,
     })
-    const step = wf.steps[0]!
+    const step = wf.steps[0]
+    if (step?.type !== 'step') throw new Error('expected step node')
     expect(step.maxAttempts).toBe(5)
     expect(step.backoff(99)).toBe(1)
     expect(step.compensate).toBeDefined()

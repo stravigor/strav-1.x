@@ -79,6 +79,25 @@ export interface RetrieveOptions {
   embedModel?: string
   /** Override the brain provider used for embedding. */
   embedProvider?: string
+  /**
+   * Optional re-ranker. When set, the framework fetches `rerankPool`
+   * (or `topK` if unset) matches from the store, runs the reranker,
+   * then slices the result to `topK`. The reranker decides the
+   * final order + `score`; `similarity` carries the raw vector
+   * cosine.
+   *
+   * Built-in strategies live under `@strav/rag` —
+   * `KeywordReranker` (lexical overlap blend) and `MMRReranker`
+   * (Maximal Marginal Relevance for diversity).
+   */
+  rerank?: import('./rerankers/reranker.ts').Reranker
+  /**
+   * Size of the candidate pool fetched from the store before
+   * re-ranking. Ignored when `rerank` is unset. Defaults to
+   * `topK` — set higher (`topK * 3` to `topK * 5` is typical) to
+   * give the reranker room to reorder.
+   */
+  rerankPool?: number
 }
 
 export interface RetrieveResult {

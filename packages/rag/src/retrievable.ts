@@ -65,11 +65,7 @@
 
 import type { Repository } from '@strav/database'
 import type { RagManager } from './rag_manager.ts'
-import type {
-  RetrieveOptions,
-  RetrieveResult,
-  VectorMatch,
-} from './types.ts'
+import type { RetrieveOptions, RetrieveResult, VectorMatch } from './types.ts'
 
 /** Minimal constructor type we can mix into. Wider than `typeof Repository` so subclasses with extra ctor args still type-check. */
 // biome-ignore lint/suspicious/noExplicitAny: mixin constructor signatures intentionally accept any[]; the user-side subclass narrows.
@@ -157,9 +153,7 @@ export function retrievable<TModel extends object, TBase extends RepositoryConst
       // replace cleanly. (RagManager.ingest writes fresh ids per
       // call; without this step every re-vectorize would
       // duplicate.)
-      await this.rag
-        .store()
-        .deleteBySource(this.rag.collectionName(collection), id)
+      await this.rag.store().deleteBySource(this.rag.collectionName(collection), id)
 
       if (!this.shouldRetrieve(model)) return []
 
@@ -182,9 +176,7 @@ export function retrievable<TModel extends object, TBase extends RepositoryConst
     async vectorRemove(model: TModel): Promise<void> {
       const collection = this.collectionName()
       const id = modelId(model)
-      await this.rag
-        .store()
-        .deleteBySource(this.rag.collectionName(collection), id)
+      await this.rag.store().deleteBySource(this.rag.collectionName(collection), id)
     }
 
     /**
@@ -238,9 +230,7 @@ export function retrievable<TModel extends object, TBase extends RepositoryConst
       const ids = [...new Set(matches.map((m) => m.sourceId).filter((s): s is string => !!s))]
       if (ids.length === 0) return []
       const found = await this.findMany(ids as unknown as readonly string[])
-      const byId = new Map<string, TModel>(
-        found.map((m) => [modelId(m), m]),
-      )
+      const byId = new Map<string, TModel>(found.map((m) => [modelId(m), m]))
       const out: TModel[] = []
       for (const match of matches) {
         if (!match.sourceId) continue

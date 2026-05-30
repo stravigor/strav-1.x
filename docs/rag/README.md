@@ -31,10 +31,11 @@ const local = await rag.store('inMemoryCache').query(/* ... */)
 | Core abstraction: manager, normalized types, errors, chunkers, `ragVectorSchema`, `applyRagVectorMigration` | `@strav/rag` |
 | Memory driver — in-process Map<collection, document[]> with cosine similarity. For tests + dev. | `@strav/rag` (built in) |
 | Pgvector driver — Postgres + the `pgvector` extension. HNSW index, RLS-scoped per tenant, default `rag_vector` table. | `@strav/rag` (built in) |
-| `retrievable()` Repository mixin | `@strav/rag` |
-| `rag:flush` + `rag:list` console commands | `@strav/rag` |
+| `retrievable()` Repository mixin + `RetrievableRegistry` | `@strav/rag` |
+| `rag:flush` + `rag:list` + `rag:reindex` console commands | `@strav/rag` |
+| Re-ranking — `Reranker` interface + `KeywordReranker` + `MMRReranker` | `@strav/rag` |
 | Qdrant / Pinecone / Weaviate drivers | **deferred** — apps register custom drivers via `rag.extend(name, factory)` (see `guides/custom-drivers.md`). |
-| Re-ranking, embedding cache, `rag:reindex` | **deferred** — apps build their own re-index from the `retrievable()` mixin. |
+| Embedding cache | **deferred** — apps wrap `brain.embed` with `@strav/cache` for now. |
 
 ## Install
 
@@ -128,6 +129,27 @@ Once registered, any `stores.<name>.driver: 'qdrant'` resolves through the facto
 
 For one-off wiring (tests, scripts), use `rag.useStore(name, store)` to register an already-built instance directly.
 
+## Re-ranking
+
+Vector similarity is a strong baseline but loses information (keyword overlap, diversity, recency, second-stage scores). `RetrieveOptions.rerank` reorders the matches after the vector query; `rerankPool` widens the candidate pool before re-ranking so the reranker has room to reorder.
+
+```ts
+import { KeywordReranker } from '@strav/rag'
+
+const { matches } = await rag.retrieve(query, {
+  topK: 5,
+  rerankPool: 25,                                       // fetch wider
+  rerank: new KeywordReranker({ weight: 0.3 }),         // blend cosine + keyword overlap
+})
+```
+
+Two strategies ship:
+
+- **`KeywordReranker`** — `score = (1 - weight) * similarity + weight * tokenOverlap`. Useful when the embedder smooths over short, jargon-heavy queries (SKUs, error codes, acronyms).
+- **`MMRReranker`** — Maximal Marginal Relevance for diversity. Penalizes near-duplicates from the same source. Takes an `embed(text)` callback (wire from `BrainManager.embed`); `lambda` blends relevance (1) vs. diversity (0), default `0.5`.
+
+Custom rerankers implement the `Reranker` interface — a single async `rerank(query, matches) => RetrievedDocument[]`. Drop in a cross-encoder, a Cohere Rerank call, an LLM-as-judge pass, etc. without touching framework code.
+
 ## Errors apps catch
 
 - **`CollectionNotFoundError`** — query against an unknown collection.
@@ -148,4 +170,4 @@ For one-off wiring (tests, scripts), use `rag.useStore(name, store)` to register
 - [guides/migration.md](./guides/migration.md) — the pgvector migration template; HNSW knobs; dimension mismatches.
 - [guides/multitenancy.md](./guides/multitenancy.md) — RLS isolation across tenants; the `withTenant(...)` pattern.
 - [guides/custom-drivers.md](./guides/custom-drivers.md) — implement `VectorStore` against Qdrant, Pinecone, Weaviate, etc.
-- [guides/cli.md](./guides/cli.md) — `rag:flush` + `rag:list` console commands; how to ship a custom `rag:reindex`.
+- [guides/cli.md](./guides/cli.md) — `rag:flush` + `rag:list` + `rag:reindex` console commands.

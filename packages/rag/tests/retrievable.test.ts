@@ -6,7 +6,7 @@
  */
 
 import { describe, expect, test } from 'bun:test'
-import { BrainManager } from '@strav/brain'
+import type { BrainManager } from '@strav/brain'
 import type { Repository } from '@strav/database'
 import { MemoryDriver } from '../src/drivers/memory/memory_driver.ts'
 import { RagManager } from '../src/rag_manager.ts'
@@ -79,7 +79,9 @@ class StubArticleRepo {
  * declared type for compile-time. Tests-only cast.
  */
 // biome-ignore lint/suspicious/noExplicitAny: see comment above.
-const StubAsRepoCtor = StubArticleRepo as unknown as new (...args: any[]) => Repository<Article> & StubArticleRepo
+const StubAsRepoCtor = StubArticleRepo as unknown as new (
+  ...args: any[]
+) => Repository<Article> & StubArticleRepo
 
 /** Build a RagManager with a stub BrainManager + MemoryDriver pre-attached. */
 function makeRag(): RagManager {
@@ -132,9 +134,13 @@ describe('retrievable() — defaults', () => {
 
   test('shouldRetrieve defaults to true', () => {
     const repo = new ArticleRepository(makeRag())
-    expect((repo as unknown as { shouldRetrieve(_: Article): boolean }).shouldRetrieve({
-      id: 'a_1', title: 't', body: 'b',
-    })).toBe(true)
+    expect(
+      (repo as unknown as { shouldRetrieve(_: Article): boolean }).shouldRetrieve({
+        id: 'a_1',
+        title: 't',
+        body: 'b',
+      }),
+    ).toBe(true)
   })
 })
 
@@ -222,9 +228,9 @@ describe('retrievable() — vectorize', () => {
     const rag = makeRag()
     await rag.createCollection('article')
     const repo = new ArticleRepository(rag)
-    await expect(
-      repo.vectorize({ title: 't', body: 'b' } as unknown as Article),
-    ).rejects.toThrow(/no `id`/)
+    await expect(repo.vectorize({ title: 't', body: 'b' } as unknown as Article)).rejects.toThrow(
+      /no `id`/,
+    )
   })
 })
 

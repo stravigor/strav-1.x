@@ -71,28 +71,40 @@ bun strav rag:flush articles --force
 bun strav app:reindex-articles    # your custom command calling repo.reindexAll()
 ```
 
-A built-in `rag:reindex <repository>` command isn't in V1 because the framework can't resolve a repository name to an instance generically (apps register repos under arbitrary container keys). Apps that want one ship a thin custom command:
+## `rag:reindex {name?} [--all] [--batch=100]`
+
+Re-vectorize a repository (or every registered one). Apps register their retrievable repositories with `RetrievableRegistry` at boot; the command resolves the registered class through the container and calls `reindexAll(batchSize)`.
 
 ```ts
-import { Command, type ExecuteArgs, ExitCode } from '@strav/cli'
+// In a service provider's register():
+import { RetrievableRegistry } from '@strav/rag'
 import { ArticleRepository } from '../app/repositories/article_repository.ts'
 
-export class ReindexArticles extends Command {
-  static signature = 'app:reindex-articles'
-  static description = 'Re-index every article into RAG.'
-  static providers = ['config', 'logger', 'database', 'brain', 'rag']
-
-  override async execute(_args: ExecuteArgs): Promise<number> {
-    const articles = this.app.resolve(ArticleRepository)
-    const total = await articles.reindexAll(100)
-    this.success(`Re-indexed ${total} article(s).`)
-    return ExitCode.Success
-  }
-}
+const registry = app.resolve(RetrievableRegistry)
+registry.register('articles', ArticleRepository)
 ```
+
+Then:
+
+```bash
+bun strav rag:reindex articles            # one repo
+bun strav rag:reindex articles --batch=25 # tune batch size
+bun strav rag:reindex --all               # every registered repo
+```
+
+The repo class must implement `reindexAll(batchSize?: number): Promise<number>` — the `retrievable()` mixin provides exactly that shape. The default batch size is 100; drop lower when hitting embedding rate limits.
+
+### Flags
+
+- **`--all`** — re-index every repository registered in `RetrievableRegistry`.
+- **`--batch=N`** — rows per fetch + embed batch. Default `100`.
+
+### Limitations
+
+- Long-running on large corpora — apps with multi-million-row tables typically wire reindex to a queued worker pointing at the same `reindexAll(...)` rather than running it in-process.
+- No progress bar; the command prints one line per repository on completion.
 
 ## What's NOT in V1
 
-- **`rag:reindex <repository>`** — see above. Apps ship custom commands.
 - **`rag:show <id>`** — inspect a single vector. Not built. Apps drop down to raw SQL or driver-specific tooling.
 - **`rag:stats`** — per-collection vector counts. Could be a one-line SQL query in the meantime: `SELECT collection, COUNT(*) FROM rag_vector GROUP BY collection`.

@@ -2,7 +2,7 @@
  * `DurableRunner` — the engine that owns the durable execution state
  * machine.
  *
- * Three load-bearing methods:
+ * Four load-bearing methods:
  *
  *   1. `start(name, input)` — INSERTs a new run row, dispatches the
  *      first `DurableAdvanceJob` for it inside the same transaction
@@ -11,12 +11,11 @@
  *      queue.
  *
  *   2. `advance(runId)` — the job handler. Acquires a row lock,
- *      decides what step is next, looks for a completed journal
- *      entry to short-circuit (idempotent replay), runs the
- *      handler, journals the result, and either re-enqueues itself
- *      for the next step or — on failure — schedules a retry or
- *      kicks off compensation. The whole step body runs inside a
- *      DB transaction so partial writes can't escape.
+ *      resolves the node at `current_step`, dispatches by node-type
+ *      (`step` / `sleep` / `waitForSignal` / `parallel` / `route` /
+ *      `loop` / `childWorkflow`), journals the result, and either
+ *      re-enqueues itself, parks the run as `waiting`, or — on
+ *      terminal failure — kicks off compensation.
  *
  *   3. `compensate(runId)` — walks the journal in reverse order
  *      running each step's `compensate` callback. On clean
@@ -24,27 +23,44 @@
  *      compensation are logged but don't block the rest of the
  *      rollback (compensators must be idempotent).
  *
+ *   4. `signal(runId, signalName, payload?)` — wakes a run parked on
+ *      a `waitForSignal` node. Writes the journal entry, clears the
+ *      awaiting marker, dispatches an advance.
+ *
  * Apps don't usually call `advance` / `compensate` directly — the
  * `DurableAdvanceJob` and `DurableCompensateJob` classes wrap them.
  */
 
-import {
-  type Database,
-  PostgresDatabase,
-  type SchemaRegistry,
-} from '@strav/database'
+import { type Database, PostgresDatabase, type SchemaRegistry } from '@strav/database'
 import { type Logger, ulid } from '@strav/kernel'
 import type { JobClass, Queue } from '@strav/queue'
-import { RunNotFoundError } from './durable_error.ts'
-import type { DurableStep, DurableContext, RunSnapshot, RunStatus } from './types.ts'
+import { DurableError, RunNotFoundError } from './durable_error.ts'
+import type {
+  DurableContext,
+  DurableNode,
+  DurableStep,
+  RunSnapshot,
+  RunStatus,
+} from './types.ts'
 import type { WorkflowRegistry } from './workflow_registry.ts'
+
+interface RunState {
+  results: Record<string, unknown>
+  stepAttempts: Record<string, number>
+  /** `waitForSignal` markers — `{ [nodeName]: signalName }`. */
+  awaitingSignals?: Record<string, string>
+  /** Per-loop iteration state — `{ [nodeName]: { iteration, results[] } }`. */
+  loopState?: Record<string, { iteration: number; results: unknown[] }>
+  /** Per-child-workflow link — `{ [nodeName]: { childRunId } }`. */
+  childRunIds?: Record<string, string>
+}
 
 interface RunRow {
   id: string
   workflow_name: string
   input: Record<string, unknown> | string
   status: RunStatus
-  state: { results?: Record<string, unknown>; stepAttempts?: Record<string, number> } | string
+  state: RunState | string
   current_step: number
   result: Record<string, unknown> | string | null
   error: string | null
@@ -62,6 +78,22 @@ interface JournalRow {
   attempts: number
   completed_at: Date
 }
+
+type Tx = { query: Database['query']; queryOne: Database['queryOne']; execute: Database['execute'] }
+
+type Outcome =
+  /** Node completed; advance cursor + re-dispatch. */
+  | { kind: 'completed'; value: unknown; attempt: number }
+  /** Node has retries left; re-dispatch with delay. */
+  | { kind: 'retry'; attempt: number; delaySec: number }
+  /** Node exhausted retries; journal + compensate. */
+  | { kind: 'failed'; attempt: number; error: string }
+  /**
+   * Node parked itself. `delaySec`, when set, schedules a wake-up
+   * advance — for sleep and child-workflow polling. Undefined for
+   * waitForSignal (an external `signal()` call resumes it).
+   */
+  | { kind: 'waiting'; delaySec?: number }
 
 export interface DurableRunnerOptions {
   db: PostgresDatabase
@@ -120,8 +152,6 @@ export class DurableRunner {
    * orphan either.
    */
   async start(workflowName: string, input: Record<string, unknown> = {}): Promise<string> {
-    // Validate workflow registration up-front so the caller sees a
-    // synchronous error rather than a never-advancing run row.
     this.registry.get(workflowName)
     const runId = ulid()
     await this.db.transaction(async (tx) => {
@@ -129,7 +159,7 @@ export class DurableRunner {
         `INSERT INTO "strav_workflow_runs"
            (id, workflow_name, input, status, state, current_step, result, error, created_at, updated_at)
          VALUES ($1, $2, $3::jsonb, 'pending', $4::jsonb, 0, NULL, NULL, now(), now())`,
-        [runId, workflowName, JSON.stringify(input), JSON.stringify({ results: {}, stepAttempts: {} })],
+        [runId, workflowName, JSON.stringify(input), JSON.stringify(emptyState())],
       )
       await this.queue.dispatch(this.advanceJob, { runId })
     })
@@ -148,133 +178,108 @@ export class DurableRunner {
   }
 
   /**
-   * Advance handler. Runs inside one transaction:
-   *
-   *   1. SELECT FOR UPDATE the run row (serializes concurrent advances).
-   *   2. Resolve the workflow + the step at `current_step`.
-   *   3. If a completed journal row already exists for this step,
-   *      treat the run as if the step just succeeded — bump
-   *      `current_step` and either enqueue the next or mark
-   *      `completed`.
-   *   4. Otherwise call the handler. On success: journal +
-   *      bump cursor + enqueue next (or mark `completed`). On
-   *      throw: track the attempt; if there are retries left,
-   *      enqueue a delayed advance; otherwise journal the failure
-   *      and kick off compensation.
+   * Advance handler. Loads the run, dispatches the current node by
+   * type, and either re-enqueues (`continue`), parks (`waiting`),
+   * retries with backoff, or kicks off compensation.
    */
   async advance(runId: string): Promise<void> {
-    const workflow = await this.db.transaction(async (tx) => {
+    const shouldContinue = await this.db.transaction(async (tx) => {
       const row = await tx.queryOne<RunRow>(
         `SELECT id, workflow_name, input, status, state, current_step, result, error, created_at, updated_at
          FROM "strav_workflow_runs" WHERE id = $1 FOR UPDATE`,
         [runId],
       )
       if (!row) throw new RunNotFoundError(runId)
-      if (row.status === 'completed' || row.status === 'failed') return null
+      if (row.status === 'completed' || row.status === 'failed') return false
 
       const wf = this.registry.get(row.workflow_name)
-      const state = parseJson(row.state) as {
-        results: Record<string, unknown>
-        stepAttempts: Record<string, number>
-      }
+      const state = parseJson(row.state) as RunState
+      ensureStateShape(state)
       const input = parseJson(row.input) as Record<string, unknown>
 
       if (row.current_step >= wf.steps.length) {
         await this.markCompleted(tx, runId, state.results)
-        return null
+        return false
       }
 
-      const step = wf.steps[row.current_step]!
+      const node = wf.steps[row.current_step] as DurableNode
 
-      // Idempotent replay — if we already journaled this step, skip
-      // the handler and just advance the cursor.
+      // Idempotent replay — if the node was already journaled
+      // completed, skip the handler.
       const journaled = await tx.queryOne<JournalRow>(
         `SELECT id, run_id, step_name, status, result, error, attempts, completed_at
          FROM "strav_workflow_journal" WHERE run_id = $1 AND step_name = $2`,
-        [runId, step.name],
+        [runId, node.name],
       )
       if (journaled?.status === 'completed') {
-        state.results[step.name] = parseJson(journaled.result)
+        state.results[node.name] = parseJson(journaled.result)
         await this.advanceCursor(tx, runId, row.current_step + 1, state)
-        // Continue outside the transaction so we don't hold the row
-        // lock across the next handler invocation.
-        return { wf, runId, status: 'continue' as const }
+        return true
       }
 
-      const attempt = (state.stepAttempts[step.name] ?? 0) + 1
+      const attempt = (state.stepAttempts[node.name] ?? 0) + 1
       const ctx: DurableContext = {
         input,
         results: state.results,
         runId,
         attempt,
       }
-      try {
-        const result = await step.handler(ctx)
-        await tx.execute(
-          `INSERT INTO "strav_workflow_journal"
-             (id, run_id, step_name, status, result, error, attempts, completed_at, created_at, updated_at)
-           VALUES ($1, $2, $3, 'completed', $4::jsonb, NULL, $5, now(), now(), now())`,
-          [ulid(), runId, step.name, JSON.stringify(result ?? null), attempt],
-        )
-        state.results[step.name] = result
-        delete state.stepAttempts[step.name]
-        await this.advanceCursor(tx, runId, row.current_step + 1, state)
-        return { wf, runId, status: 'continue' as const }
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err)
-        this.logger?.warn('Durable step failed', {
-          runId,
-          step: step.name,
-          attempt,
-          error: message,
-        })
-        if (attempt < step.maxAttempts) {
-          state.stepAttempts[step.name] = attempt
-          await tx.execute(
-            `UPDATE "strav_workflow_runs" SET state = $1::jsonb, updated_at = now() WHERE id = $2`,
-            [JSON.stringify(state), runId],
-          )
-          const delaySec = Math.max(0, step.backoff(attempt))
-          await this.queue.dispatchLater(delaySec, this.advanceJob, { runId })
-          return null
-        }
-        // Terminal — journal the failure, mark compensating, kick off
-        // compensation. The compensate handler walks back from the
-        // step BEFORE this one (no compensator for the step that
-        // just failed; there's nothing to roll back since the work
-        // didn't commit).
-        await tx.execute(
-          `INSERT INTO "strav_workflow_journal"
-             (id, run_id, step_name, status, result, error, attempts, completed_at, created_at, updated_at)
-           VALUES ($1, $2, $3, 'failed', NULL, $4, $5, now(), now(), now())`,
-          [ulid(), runId, step.name, message, attempt],
-        )
-        await tx.execute(
-          `UPDATE "strav_workflow_runs"
-             SET status = 'compensating', state = $1::jsonb, error = $2, updated_at = now()
-           WHERE id = $3`,
-          [JSON.stringify(state), message, runId],
-        )
-        await this.queue.dispatch(this.compensateJob, { runId })
-        return null
-      }
+      const outcome = await this.runNode(tx, node, ctx, state, runId, attempt)
+      return this.applyOutcome(tx, runId, row.current_step, node, state, outcome)
     })
 
-    // If the step succeeded (or was already journaled), re-enter to
-    // advance the next one. We do this OUTSIDE the original
-    // transaction so each step holds the row lock for the minimum
-    // necessary window — important when steps make external API
-    // calls that can be slow.
-    if (workflow?.status === 'continue') {
+    if (shouldContinue) {
       await this.queue.dispatch(this.advanceJob, { runId })
     }
   }
 
   /**
+   * Wake a run parked on a `waitForSignal` node. Writes the journal
+   * entry with `payload` as the node's result, clears the awaiting
+   * marker, and dispatches a fresh advance job to resume the next
+   * node. No-op when no run is awaiting `signalName`.
+   */
+  async signal(runId: string, signalName: string, payload?: unknown): Promise<boolean> {
+    return this.db.transaction(async (tx) => {
+      const row = await tx.queryOne<RunRow>(
+        `SELECT id, workflow_name, input, status, state, current_step, result, error, created_at, updated_at
+         FROM "strav_workflow_runs" WHERE id = $1 FOR UPDATE`,
+        [runId],
+      )
+      if (!row) throw new RunNotFoundError(runId)
+      if (row.status !== 'waiting') return false
+      const state = parseJson(row.state) as RunState
+      ensureStateShape(state)
+      const awaiting = state.awaitingSignals ?? {}
+      const matchEntry = Object.entries(awaiting).find(([, name]) => name === signalName)
+      if (matchEntry === undefined) return false
+      const [nodeName] = matchEntry
+      // Journal the wake-up so replay sees the signal as already received.
+      await tx.execute(
+        `INSERT INTO "strav_workflow_journal"
+           (id, run_id, step_name, status, result, error, attempts, completed_at, created_at, updated_at)
+         VALUES ($1, $2, $3, 'completed', $4::jsonb, NULL, 1, now(), now(), now())`,
+        [ulid(), runId, nodeName, JSON.stringify(payload ?? null)],
+      )
+      delete awaiting[nodeName]
+      state.awaitingSignals = awaiting
+      state.results[nodeName] = payload ?? null
+      await tx.execute(
+        `UPDATE "strav_workflow_runs"
+           SET status = 'running', state = $1::jsonb, current_step = current_step + 1, updated_at = now()
+         WHERE id = $2`,
+        [JSON.stringify(state), runId],
+      )
+      await this.queue.dispatch(this.advanceJob, { runId })
+      return true
+    })
+  }
+
+  /**
    * Compensate handler. Walks the journal in reverse, calling each
    * registered compensator. Compensators that throw are logged but
-   * don't halt the rollback — the rest still run. When the walk
-   * finishes the run lands in `failed`.
+   * don't halt the rollback. Only `step` nodes carry compensators in
+   * V2 — other node types are skipped.
    */
   async compensate(runId: string): Promise<void> {
     await this.db.transaction(async (tx) => {
@@ -287,7 +292,8 @@ export class DurableRunner {
       if (row.status !== 'compensating') return
 
       const wf = this.registry.get(row.workflow_name)
-      const state = parseJson(row.state) as { results: Record<string, unknown> }
+      const state = parseJson(row.state) as RunState
+      ensureStateShape(state)
       const input = parseJson(row.input) as Record<string, unknown>
 
       const journal = await tx.query<JournalRow>(
@@ -295,20 +301,16 @@ export class DurableRunner {
          FROM "strav_workflow_journal" WHERE run_id = $1 ORDER BY completed_at ASC`,
         [runId],
       )
-      // Build an ordered list of successfully-completed step names so we
-      // can walk back through `wf.steps` in declaration order and find
-      // each compensator. Failed-step rows are skipped — they hold no
-      // committed work to roll back.
-      const completedNames = new Set(
-        journal.filter((j) => j.status === 'completed').map((j) => j.step_name),
-      )
-      const stepsByName = new Map<string, DurableStep>(wf.steps.map((s) => [s.name, s]))
+      const completedNames = journal
+        .filter((j) => j.status === 'completed')
+        .map((j) => j.step_name)
+      const stepsByName = new Map<string, DurableNode>(wf.steps.map((s) => [s.name, s]))
 
       for (const name of [...completedNames].reverse()) {
-        const step = stepsByName.get(name)
-        if (!step?.compensate) continue
+        const node = stepsByName.get(name)
+        if (node?.type !== 'step' || !node.compensate) continue
         try {
-          await step.compensate({
+          await (node as DurableStep).compensate?.({
             input,
             results: state.results,
             runId,
@@ -332,10 +334,316 @@ export class DurableRunner {
     })
   }
 
+  // ─── Node-type dispatch ──────────────────────────────────────────────────
+
+  private async runNode(
+    tx: Tx,
+    node: DurableNode,
+    ctx: DurableContext,
+    state: RunState,
+    runId: string,
+    attempt: number,
+  ): Promise<Outcome> {
+    switch (node.type) {
+      case 'step':
+        return this.runStepLike(node, ctx, attempt, () => node.handler(ctx))
+      case 'sleep':
+        return this.runSleep(node, ctx, state, attempt)
+      case 'waitForSignal':
+        return this.runWaitForSignal(node, ctx, state)
+      case 'parallel':
+        return this.runStepLike(node, ctx, attempt, async () => {
+          const entries = Object.entries(node.branches)
+          const results = await Promise.all(
+            entries.map(async ([key, handler]) => [key, await handler(ctx)] as const),
+          )
+          return Object.fromEntries(results)
+        })
+      case 'route':
+        return this.runStepLike(node, ctx, attempt, async () => {
+          const key = await node.select(ctx)
+          const handler = node.branches[key]
+          if (handler === undefined) {
+            throw new DurableError(
+              `DurableRunner: route "${node.name}" returned unknown branch "${key}". Branches: ${Object.keys(node.branches).join(', ')}`,
+            )
+          }
+          const result = await handler(ctx)
+          return { branch: key, result }
+        })
+      case 'loop':
+        return this.runLoop(tx, node, ctx, state, runId, attempt)
+      case 'childWorkflow':
+        return this.runChildWorkflow(tx, node, ctx, state, runId, attempt)
+    }
+  }
+
+  /** Common retry/failure envelope for nodes that look like one handler. */
+  private async runStepLike(
+    node: { name: string; maxAttempts: number; backoff: (n: number) => number },
+    ctx: DurableContext,
+    attempt: number,
+    fn: () => Promise<unknown>,
+  ): Promise<Outcome> {
+    try {
+      const value = await fn()
+      return { kind: 'completed', value, attempt }
+    } catch (err) {
+      const error = err instanceof Error ? err.message : String(err)
+      this.logger?.warn('Durable node failed', {
+        runId: ctx.runId,
+        node: node.name,
+        attempt,
+        error,
+      })
+      if (attempt < node.maxAttempts) {
+        return { kind: 'retry', attempt, delaySec: Math.max(0, node.backoff(attempt)) }
+      }
+      return { kind: 'failed', attempt, error }
+    }
+  }
+
+  private async runSleep(
+    node: import('./types.ts').DurableSleep,
+    ctx: DurableContext,
+    state: RunState,
+    attempt: number,
+  ): Promise<Outcome> {
+    const requested =
+      typeof node.delay === 'number' ? node.delay : await node.delay(ctx)
+    const delaySec = Math.max(0, Math.floor(requested))
+    const sleepKey = `__sleep__${node.name}`
+    const previouslyDispatched = (state as unknown as Record<string, unknown>)[sleepKey] as
+      | { dispatchedAt: number }
+      | undefined
+    if (previouslyDispatched !== undefined) {
+      const elapsedSec = (Date.now() - previouslyDispatched.dispatchedAt) / 1000
+      if (elapsedSec >= delaySec) {
+        return { kind: 'completed', value: { sleptSec: delaySec }, attempt }
+      }
+      // Spurious early wake-up — re-park.
+      return { kind: 'waiting', delaySec: Math.max(1, delaySec - elapsedSec) }
+    }
+    ;(state as unknown as Record<string, unknown>)[sleepKey] = { dispatchedAt: Date.now() }
+    return { kind: 'waiting', delaySec }
+  }
+
+  private async runWaitForSignal(
+    node: import('./types.ts').DurableWaitForSignal,
+    ctx: DurableContext,
+    state: RunState,
+  ): Promise<Outcome> {
+    const name = typeof node.signalName === 'string' ? node.signalName : node.signalName(ctx)
+    const awaiting = state.awaitingSignals ?? {}
+    awaiting[node.name] = name
+    state.awaitingSignals = awaiting
+    return { kind: 'waiting' }
+  }
+
+  private async runLoop(
+    tx: Tx,
+    node: import('./types.ts').DurableLoop,
+    ctx: DurableContext,
+    state: RunState,
+    runId: string,
+    attempt: number,
+  ): Promise<Outcome> {
+    const loops = state.loopState ?? {}
+    const slot = loops[node.name] ?? { iteration: 0, results: [] }
+    loops[node.name] = slot
+    state.loopState = loops
+
+    // Idempotent replay for this iteration — if the per-iteration
+    // journal row already exists, treat the iteration as done.
+    const iterName = `${node.name}#${slot.iteration}`
+    const iterJournal = await tx.queryOne<JournalRow>(
+      `SELECT id, run_id, step_name, status, result, error, attempts, completed_at
+       FROM "strav_workflow_journal" WHERE run_id = $1 AND step_name = $2`,
+      [runId, iterName],
+    )
+    if (iterJournal?.status === 'completed') {
+      slot.results.push(parseJson(iterJournal.result))
+      slot.iteration += 1
+    }
+
+    if (slot.iteration >= node.maxIterations) {
+      return { kind: 'failed', attempt, error: `loop exceeded maxIterations (${node.maxIterations})` }
+    }
+
+    let keepGoing: boolean
+    try {
+      keepGoing = await node.condition(ctx, slot.iteration)
+    } catch (err) {
+      return {
+        kind: 'failed',
+        attempt,
+        error: err instanceof Error ? err.message : String(err),
+      }
+    }
+    if (!keepGoing) {
+      return { kind: 'completed', value: [...slot.results], attempt }
+    }
+
+    try {
+      const value = await node.body({ ...ctx, iteration: slot.iteration })
+      // Journal this iteration before bumping; failure mid-write
+      // will replay this same iteration on resume (journal lookup
+      // above short-circuits).
+      await tx.execute(
+        `INSERT INTO "strav_workflow_journal"
+           (id, run_id, step_name, status, result, error, attempts, completed_at, created_at, updated_at)
+         VALUES ($1, $2, $3, 'completed', $4::jsonb, NULL, $5, now(), now(), now())`,
+        [ulid(), runId, iterName, JSON.stringify(value ?? null), attempt],
+      )
+      slot.results.push(value)
+      slot.iteration += 1
+      // Keep current_step pinned; re-dispatch advance to evaluate
+      // the next iteration in its own transaction.
+      await tx.execute(
+        `UPDATE "strav_workflow_runs" SET state = $1::jsonb, updated_at = now() WHERE id = $2`,
+        [JSON.stringify(state), runId],
+      )
+      // 'continue' via a sentinel — applyOutcome's `completed` path
+      // is reserved for cursor-advancing nodes; here we want to
+      // re-enter advance without moving the cursor.
+      return { kind: 'waiting', delaySec: 0 }
+    } catch (err) {
+      const error = err instanceof Error ? err.message : String(err)
+      if (attempt < node.maxAttempts) {
+        return { kind: 'retry', attempt, delaySec: Math.max(0, node.backoff(attempt)) }
+      }
+      return { kind: 'failed', attempt, error }
+    }
+  }
+
+  private async runChildWorkflow(
+    tx: Tx,
+    node: import('./types.ts').DurableChildWorkflow,
+    ctx: DurableContext,
+    state: RunState,
+    runId: string,
+    attempt: number,
+  ): Promise<Outcome> {
+    const children = state.childRunIds ?? {}
+    state.childRunIds = children
+    let childId = children[node.name]
+
+    if (childId === undefined) {
+      let spec: { name: string; input?: Record<string, unknown> }
+      try {
+        spec = await node.start(ctx)
+      } catch (err) {
+        const error = err instanceof Error ? err.message : String(err)
+        if (attempt < 1) {
+          return { kind: 'retry', attempt, delaySec: 0 }
+        }
+        return { kind: 'failed', attempt, error }
+      }
+      childId = await this.start(spec.name, spec.input ?? {})
+      children[node.name] = childId
+      await tx.execute(
+        `UPDATE "strav_workflow_runs" SET state = $1::jsonb, updated_at = now() WHERE id = $2`,
+        [JSON.stringify(state), runId],
+      )
+      return { kind: 'waiting', delaySec: node.pollIntervalSec }
+    }
+
+    const child = await tx.queryOne<RunRow>(
+      `SELECT id, workflow_name, input, status, state, current_step, result, error, created_at, updated_at
+       FROM "strav_workflow_runs" WHERE id = $1`,
+      [childId],
+    )
+    if (!child) {
+      return {
+        kind: 'failed',
+        attempt,
+        error: `child workflow run "${childId}" disappeared`,
+      }
+    }
+    if (child.status === 'completed') {
+      return { kind: 'completed', value: parseJson(child.result), attempt }
+    }
+    if (child.status === 'failed') {
+      return {
+        kind: 'failed',
+        attempt,
+        error: child.error ?? 'child workflow failed without error message',
+      }
+    }
+    // pending / running / waiting / compensating → keep polling.
+    return { kind: 'waiting', delaySec: node.pollIntervalSec }
+  }
+
+  // ─── Outcome → state mutation ───────────────────────────────────────────
+
+  private async applyOutcome(
+    tx: Tx,
+    runId: string,
+    currentStep: number,
+    node: DurableNode,
+    state: RunState,
+    outcome: Outcome,
+  ): Promise<boolean> {
+    switch (outcome.kind) {
+      case 'completed':
+        await tx.execute(
+          `INSERT INTO "strav_workflow_journal"
+             (id, run_id, step_name, status, result, error, attempts, completed_at, created_at, updated_at)
+           VALUES ($1, $2, $3, 'completed', $4::jsonb, NULL, $5, now(), now(), now())`,
+          [ulid(), runId, node.name, JSON.stringify(outcome.value ?? null), outcome.attempt],
+        )
+        state.results[node.name] = outcome.value
+        delete state.stepAttempts[node.name]
+        if (node.type === 'loop' && state.loopState !== undefined) {
+          delete state.loopState[node.name]
+        }
+        if (node.type === 'childWorkflow' && state.childRunIds !== undefined) {
+          delete state.childRunIds[node.name]
+        }
+        clearSleepKey(state, node)
+        await this.advanceCursor(tx, runId, currentStep + 1, state)
+        return true
+      case 'retry':
+        state.stepAttempts[node.name] = outcome.attempt
+        await tx.execute(
+          `UPDATE "strav_workflow_runs" SET state = $1::jsonb, updated_at = now() WHERE id = $2`,
+          [JSON.stringify(state), runId],
+        )
+        await this.queue.dispatchLater(outcome.delaySec, this.advanceJob, { runId })
+        return false
+      case 'failed':
+        await tx.execute(
+          `INSERT INTO "strav_workflow_journal"
+             (id, run_id, step_name, status, result, error, attempts, completed_at, created_at, updated_at)
+           VALUES ($1, $2, $3, 'failed', NULL, $4, $5, now(), now(), now())`,
+          [ulid(), runId, node.name, outcome.error, outcome.attempt],
+        )
+        await tx.execute(
+          `UPDATE "strav_workflow_runs"
+             SET status = 'compensating', state = $1::jsonb, error = $2, updated_at = now()
+           WHERE id = $3`,
+          [JSON.stringify(state), outcome.error, runId],
+        )
+        await this.queue.dispatch(this.compensateJob, { runId })
+        return false
+      case 'waiting':
+        await tx.execute(
+          `UPDATE "strav_workflow_runs"
+             SET status = 'waiting', state = $1::jsonb, updated_at = now()
+           WHERE id = $2`,
+          [JSON.stringify(state), runId],
+        )
+        if (outcome.delaySec !== undefined) {
+          await this.queue.dispatchLater(outcome.delaySec, this.advanceJob, { runId })
+        }
+        return false
+    }
+  }
+
   // ─── Internal helpers ────────────────────────────────────────────────────
 
   private async markCompleted(
-    tx: Database | { execute: (s: string, p: unknown[]) => Promise<number> },
+    tx: Tx,
     runId: string,
     results: Record<string, unknown>,
   ): Promise<void> {
@@ -344,7 +652,7 @@ export class DurableRunner {
          SET status = 'completed', state = $1::jsonb, result = $2::jsonb, updated_at = now()
        WHERE id = $3`,
       [
-        JSON.stringify({ results, stepAttempts: {} }),
+        JSON.stringify({ ...emptyState(), results }),
         JSON.stringify(results),
         runId,
       ],
@@ -352,10 +660,10 @@ export class DurableRunner {
   }
 
   private async advanceCursor(
-    tx: { execute: (s: string, p: unknown[]) => Promise<number> },
+    tx: Tx,
     runId: string,
     nextStep: number,
-    state: { results: Record<string, unknown>; stepAttempts: Record<string, number> },
+    state: RunState,
   ): Promise<void> {
     await tx.execute(
       `UPDATE "strav_workflow_runs"
@@ -368,6 +676,22 @@ export class DurableRunner {
 
 // ─── Pure helpers ────────────────────────────────────────────────────────
 
+function emptyState(): RunState {
+  return { results: {}, stepAttempts: {} }
+}
+
+function ensureStateShape(state: RunState): void {
+  if (state.results === undefined) state.results = {}
+  if (state.stepAttempts === undefined) state.stepAttempts = {}
+}
+
+function clearSleepKey(state: RunState, node: DurableNode): void {
+  const key = `__sleep__${node.name}`
+  if (key in state) {
+    delete (state as unknown as Record<string, unknown>)[key]
+  }
+}
+
 function parseJson(value: unknown): unknown {
   if (value === null || value === undefined) return value
   if (typeof value === 'string') return JSON.parse(value)
@@ -375,7 +699,7 @@ function parseJson(value: unknown): unknown {
 }
 
 function toSnapshot(row: RunRow): RunSnapshot {
-  const state = parseJson(row.state) as { results?: Record<string, unknown> } | null
+  const state = parseJson(row.state) as RunState | null
   return {
     id: row.id,
     workflowName: row.workflow_name,

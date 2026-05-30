@@ -23,10 +23,10 @@
  * `tenants.withTenant(...)` get per-tenant isolation for free.
  */
 
-// biome-ignore lint/style/useImportType: PostgresDatabase value import for the container path that wires PgvectorDriver.
-import { PostgresDatabase } from '@strav/database'
 // biome-ignore lint/style/useImportType: BrainManager value import for @inject() param-type metadata.
 import { BrainManager } from '@strav/brain'
+// biome-ignore lint/style/useImportType: PostgresDatabase value import for the container path that wires PgvectorDriver.
+import { PostgresDatabase } from '@strav/database'
 // biome-ignore lint/style/useImportType: Application value import for the container handle.
 import { Application, inject, ulid } from '@strav/kernel'
 import { createChunker } from './chunking/chunker.ts'
@@ -34,13 +34,13 @@ import { MemoryDriver } from './drivers/memory/memory_driver.ts'
 import { PgvectorDriver } from './drivers/pgvector/pgvector_driver.ts'
 import { EmbeddingError, RagError } from './rag_error.ts'
 import type {
-  ChunkingConfig,
   Chunk,
   Chunker,
+  ChunkingConfig,
   RagConfig,
+  RetrievedDocument,
   RetrieveOptions,
   RetrieveResult,
-  RetrievedDocument,
   StoreConfig,
   VectorDocument,
 } from './types.ts'
@@ -168,7 +168,7 @@ export class RagManager {
       strategy: options.chunking?.strategy ?? this.config.chunking.strategy,
       chunkSize: options.chunking?.chunkSize ?? this.config.chunking.chunkSize,
       overlap: options.chunking?.overlap ?? this.config.chunking.overlap,
-      ...(options.chunking?.separators ?? this.config.chunking.separators
+      ...((options.chunking?.separators ?? this.config.chunking.separators)
         ? { separators: options.chunking?.separators ?? this.config.chunking.separators }
         : {}),
     }
@@ -198,10 +198,10 @@ export class RagManager {
       })
       embeddings = result.embeddings as number[][]
     } catch (cause) {
-      throw new EmbeddingError(
-        `RagManager.ingest: embedding ${texts.length} chunks failed.`,
-        { context: { collection: fullCollection }, cause },
-      )
+      throw new EmbeddingError(`RagManager.ingest: embedding ${texts.length} chunks failed.`, {
+        context: { collection: fullCollection },
+        cause,
+      })
     }
 
     const documents: VectorDocument[] = chunks.map((chunk, i) => ({
@@ -223,13 +223,8 @@ export class RagManager {
 
   // ─── Retrieve ─────────────────────────────────────────────────────────
 
-  async retrieve(
-    query: string,
-    options: RetrieveOptions = {},
-  ): Promise<RetrieveResult> {
-    const fullCollection = this.collectionName(
-      options.collection ?? this.config.default,
-    )
+  async retrieve(query: string, options: RetrieveOptions = {}): Promise<RetrieveResult> {
+    const fullCollection = this.collectionName(options.collection ?? this.config.default)
     const start = performance.now()
 
     let embedding: number[]
@@ -240,24 +235,23 @@ export class RagManager {
       })
       embedding = result.embeddings[0] as number[]
     } catch (cause) {
-      throw new EmbeddingError(
-        `RagManager.retrieve: embedding query failed.`,
-        { context: { collection: fullCollection }, cause },
-      )
+      throw new EmbeddingError(`RagManager.retrieve: embedding query failed.`, {
+        context: { collection: fullCollection },
+        cause,
+      })
     }
 
+    const finalTopK = options.topK
+    const fetchK = options.rerank !== undefined ? (options.rerankPool ?? finalTopK) : finalTopK
+
     const queryOpts: { topK?: number; threshold?: number; filter?: Record<string, unknown> } = {}
-    if (options.topK !== undefined) queryOpts.topK = options.topK
+    if (fetchK !== undefined) queryOpts.topK = fetchK
     if (options.threshold !== undefined) queryOpts.threshold = options.threshold
     if (options.filter !== undefined) queryOpts.filter = options.filter
 
-    const result = await this.store(options.store).query(
-      fullCollection,
-      embedding,
-      queryOpts,
-    )
+    const result = await this.store(options.store).query(fullCollection, embedding, queryOpts)
 
-    const matches: RetrievedDocument[] = result.matches.map((m) => ({
+    let matches: RetrievedDocument[] = result.matches.map((m) => ({
       id: m.id,
       content: m.content,
       score: m.score,
@@ -265,6 +259,13 @@ export class RagManager {
       metadata: m.metadata,
       ...(m.sourceId !== undefined ? { sourceId: m.sourceId } : {}),
     }))
+
+    if (options.rerank !== undefined && matches.length > 0) {
+      matches = [...(await options.rerank.rerank(query, matches))]
+      if (finalTopK !== undefined && matches.length > finalTopK) {
+        matches = matches.slice(0, finalTopK)
+      }
+    }
 
     return {
       query,

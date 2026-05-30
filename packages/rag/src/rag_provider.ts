@@ -16,17 +16,13 @@
  * via a real `config/rag.ts`.
  */
 
-// biome-ignore lint/style/useImportType: PostgresDatabase value import — required when any pgvector store is configured. Loaded conditionally below.
-import { PostgresDatabase } from '@strav/database'
 // biome-ignore lint/style/useImportType: BrainManager value import for c.resolve.
 import { BrainManager } from '@strav/brain'
-import {
-  type Application,
-  ConfigError,
-  ConfigRepository,
-  ServiceProvider,
-} from '@strav/kernel'
+// biome-ignore lint/style/useImportType: PostgresDatabase value import — required when any pgvector store is configured. Loaded conditionally below.
+import { PostgresDatabase } from '@strav/database'
+import { type Application, ConfigError, ConfigRepository, ServiceProvider } from '@strav/kernel'
 import { RagManager, type RagManagerOptions } from './rag_manager.ts'
+import { RetrievableRegistry } from './retrievable_registry.ts'
 import type { RagConfig } from './types.ts'
 
 export class RagProvider extends ServiceProvider {
@@ -34,6 +30,7 @@ export class RagProvider extends ServiceProvider {
   override readonly dependencies = ['config', 'brain']
 
   override register(app: Application): void {
+    app.singleton(RetrievableRegistry, () => new RetrievableRegistry())
     app.singleton(RagManager, (c) => {
       const raw = c.resolve(ConfigRepository).get('rag') as Partial<RagConfig> | undefined
       const config = applyDefaults(raw)

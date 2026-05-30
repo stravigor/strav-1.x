@@ -47,9 +47,5 @@ export interface VectorStore {
   deleteBySource(collection: string, sourceId: string): Promise<void>
   flush(collection: string): Promise<void>
 
-  query(
-    collection: string,
-    vector: readonly number[],
-    options?: QueryOptions,
-  ): Promise<QueryResult>
+  query(collection: string, vector: readonly number[], options?: QueryOptions): Promise<QueryResult>
 }

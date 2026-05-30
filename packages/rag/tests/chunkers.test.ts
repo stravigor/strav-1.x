@@ -64,10 +64,7 @@ describe('RecursiveChunker', () => {
     const out = new RecursiveChunker(25, 0).chunk(input)
     // chunkSize is 25 chars. "first paragraph." (16) + "\n\n" + "second paragraph." (17) = 35 > 25,
     // so they split. "second paragraph." + "\n\n" + "third." (6) = 25, exactly fits → merged.
-    expect(out.map((c) => c.content)).toEqual([
-      'first paragraph.',
-      'second paragraph.\n\nthird.',
-    ])
+    expect(out.map((c) => c.content)).toEqual(['first paragraph.', 'second paragraph.\n\nthird.'])
   })
 
   test('falls through separator levels when paragraphs are too big', () => {

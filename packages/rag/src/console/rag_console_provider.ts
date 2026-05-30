@@ -10,8 +10,9 @@
 import { ConsoleProvider } from '@strav/cli'
 import { RagFlush } from './rag_flush.ts'
 import { RagList } from './rag_list.ts'
+import { RagReindex } from './rag_reindex.ts'
 
 export class RagConsoleProvider extends ConsoleProvider {
   override readonly name = 'console.rag'
-  override readonly commands = [RagFlush, RagList] as const
+  override readonly commands = [RagFlush, RagList, RagReindex] as const
 }

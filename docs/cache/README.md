@@ -25,6 +25,7 @@ Lives in its own package rather than `@strav/kernel` so the kernel stays free of
 | `MemcachedCache` (subpath) | Text-protocol client over `Bun.connect`. Atomic `incr`/`decr` (with seed-via-`add` for missing keys), `add` for put-if-absent, locks via `add`. **`tags()` throws** — Memcached has no native sets or SCAN. `flush` runs server-wide `flush_all` |
 | `MemcachedCacheProvider` (subpath) | Wires `MemcachedCache` under the same `Cache` token. Reads `host` + `port` from `config.cache` |
 | `MemcachedClient` (subpath) | The text-protocol client itself, exposed for apps that need direct Memcached access without the Cache wrapper |
+| `CacheConsoleProvider` + `CacheClear` / `CacheForget` / `CacheList` (subpath `@strav/cache/console`) | `bun strav cache:clear` / `cache:forget {key}` / `cache:list` console commands. Register `CacheConsoleProvider` alongside the cache provider in `bootstrap/providers.ts` |
 
 ## Install
 
@@ -267,6 +268,28 @@ For `increment` / `decrement` on missing keys, Memcached returns `NOT_FOUND` (it
 - [`guides/invalidation.md`](./guides/invalidation.md) — TTL-based, event-based, tag-based, versioned keys, cascading invalidation, lazy refresh, when cache invalidation is the wrong question, the 5-question self-check before caching.
 - [`guides/testing.md`](./guides/testing.md) — `MemoryCache` with deterministic clock, hit/miss assertions via call counters, real-driver integration tests with `is*Available()` skip, `StubCache` for arg-shape unit tests, testing invalidation, coverage targets.
 
+## CLI commands
+
+```ts
+// bootstrap/providers.ts
+import { RedisCacheProvider } from '@strav/cache/redis'
+import { CacheConsoleProvider } from '@strav/cache/console'
+
+export default [
+  // ...
+  new RedisCacheProvider(),
+  new CacheConsoleProvider(),
+]
+```
+
+```bash
+bun strav cache:list                    # show driver + config (passwords masked)
+bun strav cache:forget views:home       # drop one key
+bun strav cache:clear --force           # flush every entry (--force skips the confirm)
+```
+
+All three resolve through the `Cache` token so the same commands work against memory, Postgres, Redis, or Memcached without rewiring. `cache:clear` runs `Cache.flush()`, which is prefix-scoped on Redis (never `FLUSHDB`) but server-wide on Memcached.
+
 ## When NOT to cache
 
 - A query that takes <10ms — caching adds round-trip overhead that may dominate.
@@ -275,6 +298,6 @@ For `increment` / `decrement` on missing keys, Memcached returns `NOT_FOUND` (it
 
 ## Pairs with
 
-- **`@strav/cli`'s `cache:clear` + `cache:forget` commands** — wired against the `Cache` token, so they work with either driver. (Shipping in a follow-up CLI slice.)
+- **`cache:clear` / `cache:forget` / `cache:list` console commands** — ship in `@strav/cache/console`. Register `CacheConsoleProvider` alongside your cache provider; the commands resolve through the `Cache` token so they work with every driver.
 - **`@strav/http`'s response-caching middleware** — `cache:public,5m,...` reads/writes through the configured `Cache`. (Shipping in a follow-up HTTP slice.)
 - **`@strav/view`'s response-cache layer** — same backplane.

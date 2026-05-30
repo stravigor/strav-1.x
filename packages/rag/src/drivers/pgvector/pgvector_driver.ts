@@ -34,7 +34,6 @@ import {
   type PostgresDatabase,
 } from '@strav/database'
 import { VectorQueryError } from '../../rag_error.ts'
-import { ragVectorSchema } from '../../vectors/rag_vector_schema.ts'
 import type {
   QueryOptions,
   QueryResult,
@@ -43,6 +42,7 @@ import type {
   VectorMatch,
 } from '../../types.ts'
 import type { VectorStore } from '../../vector_store.ts'
+import { ragVectorSchema } from '../../vectors/rag_vector_schema.ts'
 
 export interface PgvectorDriverOptions {
   /** PostgresDatabase instance — typically resolved from the container. */
@@ -99,18 +99,12 @@ export class PgvectorDriver implements VectorStore {
   }
 
   async deleteCollection(collection: string): Promise<void> {
-    await this.exec().execute(
-      `DELETE FROM "${this.table}" WHERE "collection" = $1`,
-      [collection],
-    )
+    await this.exec().execute(`DELETE FROM "${this.table}" WHERE "collection" = $1`, [collection])
   }
 
   // ─── Mutations ────────────────────────────────────────────────────────
 
-  async upsert(
-    collection: string,
-    documents: readonly VectorDocument[],
-  ): Promise<void> {
+  async upsert(collection: string, documents: readonly VectorDocument[]): Promise<void> {
     if (documents.length === 0) return
     // pgvector accepts the vector as a stringified array literal —
     // `[0.12,0.34,...]` — cast with `::vector` at the boundary.
@@ -167,10 +161,7 @@ export class PgvectorDriver implements VectorStore {
   }
 
   async flush(collection: string): Promise<void> {
-    await this.exec().execute(
-      `DELETE FROM "${this.table}" WHERE "collection" = $1`,
-      [collection],
-    )
+    await this.exec().execute(`DELETE FROM "${this.table}" WHERE "collection" = $1`, [collection])
   }
 
   // ─── Query ────────────────────────────────────────────────────────────
@@ -194,7 +185,9 @@ export class PgvectorDriver implements VectorStore {
     if (options.filter) {
       for (const [key, value] of Object.entries(options.filter)) {
         params.push(JSON.stringify(value))
-        where.push(`"metadata" @> jsonb_build_object('${escapeJsonbKey(key)}', $${params.length}::jsonb)`)
+        where.push(
+          `"metadata" @> jsonb_build_object('${escapeJsonbKey(key)}', $${params.length}::jsonb)`,
+        )
       }
     }
 
@@ -221,10 +214,10 @@ export class PgvectorDriver implements VectorStore {
     try {
       rows = await this.exec().query(sql, params)
     } catch (cause) {
-      throw new VectorQueryError(
-        `pgvector query failed for collection "${collection}".`,
-        { context: { collection, table: this.table }, cause },
-      )
+      throw new VectorQueryError(`pgvector query failed for collection "${collection}".`, {
+        context: { collection, table: this.table },
+        cause,
+      })
     }
 
     const matches: VectorMatch[] = rows.map((r) => ({

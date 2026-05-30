@@ -6,7 +6,7 @@
  */
 
 import { describe, expect, test } from 'bun:test'
-import { BrainManager } from '@strav/brain'
+import type { BrainManager } from '@strav/brain'
 import { MemoryDriver } from '../src/drivers/memory/memory_driver.ts'
 import { EmbeddingError, RagError } from '../src/rag_error.ts'
 import { RagManager } from '../src/rag_manager.ts'
@@ -199,8 +199,7 @@ describe('RagManager — retrieve', () => {
     const m = new RagManager({
       config: baseConfig,
       brain: brainStub({
-        embed: async (texts) =>
-          texts.map((t) => (t === 'query' ? [1, 0] : [0.9, 0.1])),
+        embed: async (texts) => texts.map((t) => (t === 'query' ? [1, 0] : [0.9, 0.1])),
       }),
     })
     await m.createCollection('articles')
@@ -239,8 +238,6 @@ describe('RagManager — retrieve', () => {
       brain: brainStub({ embedThrows: new Error('boom') }),
     })
     await m.createCollection('articles')
-    await expect(m.retrieve('q', { collection: 'articles' })).rejects.toBeInstanceOf(
-      EmbeddingError,
-    )
+    await expect(m.retrieve('q', { collection: 'articles' })).rejects.toBeInstanceOf(EmbeddingError)
   })
 })

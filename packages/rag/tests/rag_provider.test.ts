@@ -6,12 +6,7 @@
 
 import { describe, expect, test } from 'bun:test'
 import { BrainManager } from '@strav/brain'
-import {
-  Application,
-  ConfigError,
-  ConfigRepository,
-  ServiceProvider,
-} from '@strav/kernel'
+import { Application, ConfigError, ConfigRepository, ServiceProvider } from '@strav/kernel'
 import { MemoryDriver } from '../src/drivers/memory/memory_driver.ts'
 import { RagManager } from '../src/rag_manager.ts'
 import { RagProvider } from '../src/rag_provider.ts'
@@ -39,7 +34,7 @@ class StubBrainProvider extends ServiceProvider {
   override readonly name = 'brain'
   override readonly dependencies = ['config']
   override register(app: Application): void {
-    app.singleton(BrainManager, () => ({} as unknown as BrainManager))
+    app.singleton(BrainManager, () => ({}) as unknown as BrainManager)
   }
 }
 

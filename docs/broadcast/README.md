@@ -2,7 +2,7 @@
 
 In-process and multi-node pub/sub for Strav 1.0. The package exposes the `Broadcaster` abstraction every consumer injects, plus two concrete drivers — `MemoryBroadcaster` (single-node) and `PostgresBroadcaster` (multi-node via a polled ledger table). Apps swap providers in `bootstrap/providers.ts`; the rest of the codebase stays driver-agnostic.
 
-> **Status: 1.0.0-alpha.** Memory + Postgres drivers shipped. Pairs with `router.sse()` in `@strav/http` and `@strav/notification/broadcast` to fan-out notifications to live SSE clients. No Redis backplane yet (no consumers asking for it); apps that need one write a small driver against the `Broadcaster` contract.
+> **Status: 1.0.0-alpha.** Memory + Postgres + Redis drivers shipped. Pairs with `router.sse()` in `@strav/http` and `@strav/notification/broadcast` to fan-out notifications to live SSE clients.
 
 ## What's here
 
@@ -18,6 +18,8 @@ In-process and multi-node pub/sub for Strav 1.0. The package exposes the `Broadc
 | `PostgresBroadcastProvider` (subpath) | Wires `PostgresBroadcaster` under the same `Broadcaster` token |
 | `applyBroadcastMigration` (subpath) | Emits DDL for the ledger + the retention sweep's `created_at` index |
 | `broadcastEventSchema` (subpath) | The `@strav/database` schema entry — register with your `SchemaRegistry` so `generateMigration` picks it up |
+| `RedisBroadcaster` (subpath) | Redis Pub/Sub backplane. Two `Bun.RedisClient` instances under the hood — one for publish, one for subscribe (Bun's client locks into pub/sub mode after `subscribe(...)`) |
+| `RedisBroadcastProvider` (subpath) | Wires `RedisBroadcaster` under the same `Broadcaster` token. Reads `config.broadcast.url` |
 
 ## Install
 
@@ -131,6 +133,41 @@ export default {
 ```
 
 For the memory driver, the `MemoryBroadcastConfig` shape mirrors `MemoryBroadcasterOptions` (`{ driver: 'memory', maxBufferSize?, onOverflow? }`).
+
+## Multi-node — Redis backplane
+
+Lower-latency alternative to the Postgres ledger. End-to-end is one network hop — no polling floor. Pick this once publish rates climb past a few hundred messages/sec, or when subscribers fan out widely.
+
+```ts
+import { RedisBroadcastProvider } from '@strav/broadcast/redis'
+
+// bootstrap/providers.ts
+export default [
+  new ConfigProvider({ /* ... */ }),
+  new LoggerProvider(),
+  new RedisBroadcastProvider(),
+]
+```
+
+```ts
+// config/broadcast.ts
+import type { RedisBroadcastConfig } from '@strav/broadcast/redis'
+
+export default {
+  driver: 'redis',
+  url: process.env.REDIS_URL ?? 'redis://127.0.0.1:6379',
+  maxBufferSize: 1000,              // per-subscription buffer cap
+} satisfies RedisBroadcastConfig
+```
+
+### How the Redis driver works
+
+- Two `Bun.RedisClient` instances — one for `PUBLISH`, one for `SUBSCRIBE`. Bun's client enters a sticky pub/sub mode after `subscribe(...)` that blocks most other commands; splitting the clients keeps publishes from being gated on the subscribe-mode lock.
+- `publish(channel, event)` JSON-encodes the event and calls `PUBLISH channel payload`.
+- `subscribe(channel)` opens a local subscription via an embedded `MemoryBroadcaster` and, on the first subscriber for a channel, issues a single upstream `SUBSCRIBE`. When the last local subscriber drops, the upstream `UNSUBSCRIBE` fires.
+- Subscribers always start from "events published from now on" — same contract as the Postgres driver. No historical replay.
+
+No table to migrate; Redis Pub/Sub is fire-and-forget. If you need replay-on-reconnect, run the Postgres driver alongside (different `Broadcaster` instance behind a named token) or write a stream-backed driver against the `Broadcaster` contract.
 
 ## Channel authorization
 

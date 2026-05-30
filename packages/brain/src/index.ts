@@ -1,11 +1,17 @@
 // Public API of @strav/brain.
 //
-// V1: BrainDriver interface + AnthropicBrainDriver, BrainManager, Thread,
-// BrainProvider service-wiring, prompt caching.
-// V2 (this slice): tools + agents — defineTool, Agent base + AgentRunner,
-// BrainManager.runTools / .agent(Class), BrainDriver.runWithTools.
-// Still deferred: MCP, embeddings, streaming agent loops, server-side
-// tools, structured outputs, other providers.
+// Shipped:
+//   - `BrainDriver` contract + concrete drivers — Anthropic, OpenAI
+//     (Chat + Responses), Gemini, DeepSeek, Ollama, openai-compat.
+//   - `BrainManager` + `Thread` (persisted history, compaction) + the
+//     `BrainProvider` service wiring + prompt-cache plumbing.
+//   - Tools — `defineTool`, `Agent` base + `AgentRunner`,
+//     `runWithTools` + `streamWithTools` (agentic + streaming loops).
+//   - Structured outputs — `generate`, `runWithToolsAndSchema`,
+//     `streamWithToolsAndSchema` (JSON-Schema constrained replies).
+//   - MCP — server-side (Anthropic) + local client (`@strav/brain/mcp`).
+//   - Embeddings (`embed`), audio transcription (`transcribe`),
+//     human-in-the-loop suspend/resume.
 
 export { Agent } from './agent.ts'
 export type { AgentGenerateResult } from './agent_generate_result.ts'

@@ -19,14 +19,14 @@ import { RagManager } from '../rag_manager.ts'
 
 export class RagFlush extends Command {
   static signature = 'rag:flush {collection} {--store=} {--force}'
-  static description = 'Delete every vector in a collection (on the active or --store= named store).'
+  static description =
+    'Delete every vector in a collection (on the active or --store= named store).'
   static providers = ['config', 'logger', 'brain', 'rag']
 
   override async execute({ args, flags }: ExecuteArgs): Promise<number> {
     const collection = args.collection as string
-    const storeName = typeof flags.store === 'string' && flags.store.length > 0
-      ? flags.store
-      : undefined
+    const storeName =
+      typeof flags.store === 'string' && flags.store.length > 0 ? flags.store : undefined
 
     const manager = this.app.resolve(RagManager)
     const fullCollection = manager.collectionName(collection)
@@ -43,9 +43,7 @@ export class RagFlush extends Command {
     }
 
     await manager.store(storeName).flush(fullCollection)
-    this.success(
-      `Flushed collection "${fullCollection}" on store "${storeLabel}".`,
-    )
+    this.success(`Flushed collection "${fullCollection}" on store "${storeLabel}".`)
     return ExitCode.Success
   }
 }

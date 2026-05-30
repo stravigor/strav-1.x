@@ -113,4 +113,13 @@ The mixin only requires `query()`, `findMany(ids)`, and `static schema` from the
 
 ## CLI
 
-See [CLI commands](./cli.md) for `rag:flush` + `rag:list`. A `rag:reindex <repository>` command isn't in V1 — apps that want one ship a custom command that resolves their repository and calls `reindexAll()`.
+`rag:reindex {name|--all}` resolves a registered retrievable through `RetrievableRegistry` and calls `reindexAll(batch)`. Register repos in a service provider:
+
+```ts
+import { RetrievableRegistry } from '@strav/rag'
+
+const registry = app.resolve(RetrievableRegistry)
+registry.register('articles', ArticleRepository)
+```
+
+Then `bun strav rag:reindex articles` or `bun strav rag:reindex --all`. See [CLI commands](./cli.md) for the full flag list and the `rag:flush` / `rag:list` companions.

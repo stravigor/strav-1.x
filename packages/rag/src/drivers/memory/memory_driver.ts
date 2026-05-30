@@ -21,12 +21,7 @@
  */
 
 import { CollectionNotFoundError } from '../../rag_error.ts'
-import type {
-  QueryOptions,
-  QueryResult,
-  VectorDocument,
-  VectorMatch,
-} from '../../types.ts'
+import type { QueryOptions, QueryResult, VectorDocument, VectorMatch } from '../../types.ts'
 import type { VectorStore } from '../../vector_store.ts'
 
 interface StoredDoc {
@@ -55,10 +50,7 @@ export class MemoryDriver implements VectorStore {
     this.dimensions.delete(collection)
   }
 
-  async upsert(
-    collection: string,
-    documents: readonly VectorDocument[],
-  ): Promise<void> {
+  async upsert(collection: string, documents: readonly VectorDocument[]): Promise<void> {
     const bucket = this.requireBucket(collection)
     for (const doc of documents) {
       const id = doc.id ?? crypto.randomUUID()

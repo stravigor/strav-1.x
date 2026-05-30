@@ -35,7 +35,10 @@ export class RagError extends StravError {
     super(
       message,
       { code: options.code ?? 'rag.error', status: options.status ?? 500 },
-      { ...(options.context ? { context: options.context } : {}), ...(options.cause !== undefined ? { cause: options.cause } : {}) },
+      {
+        ...(options.context ? { context: options.context } : {}),
+        ...(options.cause !== undefined ? { cause: options.cause } : {}),
+      },
     )
   }
 }
@@ -54,7 +57,10 @@ export class CollectionNotFoundError extends RagError {
 }
 
 export class VectorQueryError extends RagError {
-  constructor(message: string, options: { context?: Record<string, unknown>; cause?: unknown } = {}) {
+  constructor(
+    message: string,
+    options: { context?: Record<string, unknown>; cause?: unknown } = {},
+  ) {
     super(message, {
       code: 'rag.vector_query',
       status: 500,
@@ -65,7 +71,10 @@ export class VectorQueryError extends RagError {
 }
 
 export class EmbeddingError extends RagError {
-  constructor(message: string, options: { context?: Record<string, unknown>; cause?: unknown } = {}) {
+  constructor(
+    message: string,
+    options: { context?: Record<string, unknown>; cause?: unknown } = {},
+  ) {
     super(message, {
       code: 'rag.embedding',
       status: 500,

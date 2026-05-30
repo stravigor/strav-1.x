@@ -1,10 +1,19 @@
 # @strav/durable
 
-Crash-resumable workflows for Strav 1.0 — sequential `.step()` execution on top of `@strav/queue` and Postgres. A workflow run survives process restarts: each step is its own crash boundary, completed steps are journaled by name (replays skip what's already done), failures retry with backoff, and exhausted retries trigger reverse-order saga compensation.
+Crash-resumable workflows for Strav 1.0 on top of `@strav/queue` and Postgres. A workflow run survives process restarts: each node is its own crash boundary, completed nodes are journaled by name (replays skip what's already done), failures retry with backoff, and exhausted retries trigger reverse-order saga compensation.
 
-> **Status: 1.0.0-alpha.11 — M5 slice 4 (durable foundation).**
-> Shipping: **`DurableWorkflow`** builder (sequential `.step()` with `compensate? + maxAttempts? + backoff?`), **`defineDurable(name, fn)`** factory, **`WorkflowRegistry`** name → workflow lookup, **`DurableRunner`** engine (start / find / advance / compensate) — each `advance` runs inside one DB transaction with `SELECT FOR UPDATE` on the run row, **`DurableAdvanceJob`** + **`DurableCompensateJob`** queue Jobs that delegate to the runner, **`DurableProvider`** service provider (binds runner + workflow registry, registers schemas with `SchemaRegistry`, eager-resolves at boot), **`strav_workflow_runs`** + **`strav_workflow_journal`** schemas, **per-step retries** (default 3 attempts, exponential backoff capped at 60s), **saga compensation** (reverse-order over completed-journal entries; compensator throws are logged but don't halt the rollback), **typed errors** (`DurableError`, `RunNotFoundError`, `WorkflowNotRegisteredError`).
-> Deferred: **`.parallel` / `.route` / `.loop`** (each its own slice — sequential covers most real use cases), **`.sleep(duration)`** (use `queue.dispatchLater` from inside a step today), **`.waitForSignal(name)`** (external resume — needs an HTTP / API surface that lands separately), **`.childWorkflow`** (composable runs), **status state machine via `@strav/machine`** (V1 uses a plain string column; the existing surface already supports machine integration when it lands), **`durable:status` / `durable:cancel` console commands** (waits on a CLI integration slice), **per-attempt journaling** (V1 only journals terminal step outcomes — in-flight retry counters live on the run row).
+> **Status: 1.0.0-alpha.** Full builder surface:
+> - **`.step(name, handler, opts?)`** — sequential, retried, optionally saga-compensated.
+> - **`.sleep(name, delay)`** — park the run for N seconds (or a context-aware deadline).
+> - **`.waitForSignal(name, signalName)`** — pause until `runner.signal(runId, name, payload?)` fires; payload becomes the node's result.
+> - **`.parallel(name, branches)`** — fan-out via `Promise.all`; whole-or-nothing failure.
+> - **`.route(name, select, branches)`** — pick one of N branches by predicate.
+> - **`.loop(name, condition, body)`** — repeat while `condition()` holds; each iteration is its own journal row keyed `<name>#<i>`.
+> - **`.childWorkflow(name, start)`** — spawn another registered workflow and wait for it via parent-side polling.
+>
+> Plus the engine: **`DurableRunner`** (`start` / `advance` / `signal` / `compensate` / `find`), **`DurableAdvanceJob`** + **`DurableCompensateJob`** queue Jobs, **`DurableProvider`** service provider, **`strav_workflow_runs`** + **`strav_workflow_journal`** schemas, **per-node retries** (default 3 attempts, exponential backoff capped at 60s), **saga compensation** (reverse-order over completed-journal entries), **typed errors** (`DurableError`, `RunNotFoundError`, `WorkflowNotRegisteredError`).
+>
+> Deferred: status state machine via `@strav/machine`, `durable:status` / `durable:cancel` console commands, per-attempt journaling (V1 only journals terminal node outcomes), per-branch compensators on `.parallel` (only `.step` carries `compensate?` today).
 
 ## Install
 
@@ -84,19 +93,62 @@ export class OnboardController {
 
 The first `runner.start()` returns immediately. Workers pick up the `durable.advance` jobs, walk every step in order, and journal each result. If `subscribeToPlan` exhausts its retries, the runner enqueues a `durable.compensate` job; the worker walks back through the journal and runs `subscribeToPlan` and `sendWelcomeEmail`'s compensators in reverse (most-recent-first).
 
+## V2 node types
+
+Every node lives in the same flat builder; the runner switches on `type` to know how to drive it. Each node still occupies one slot in the integer cursor — sub-state lives in `state` JSONB so no schema migration is required.
+
+```ts
+defineDurable('checkout', (w) =>
+  w
+    .parallel('verifyAndPrice', {
+      verify:  async (ctx) => fraud.check(ctx.input.cart),
+      price:   async (ctx) => pricing.quote(ctx.input.cart),
+      stock:   async (ctx) => warehouse.reserve(ctx.input.cart),
+    })
+    .route(
+      'paymentRail',
+      (ctx) => (ctx.results.verifyAndPrice as { price: { total: number } }).price.total > 10_000 ? 'wire' : 'card',
+      {
+        wire: async (ctx) => bank.wireRequest(ctx.input.userId, ctx.results),
+        card: async (ctx) => stripe.charge(ctx.input.userId, ctx.results),
+      },
+    )
+    .waitForSignal('riskApproval', 'risk.approve')      // resumed by `runner.signal(runId, 'risk.approve', {...})`
+    .sleep('settlementBuffer', 24 * 60 * 60)             // park 24h
+    .childWorkflow('fulfillment', async (ctx) => ({
+      name: 'fulfillment',
+      input: { orderId: (ctx.results.paymentRail as { result: { orderId: string } }).result.orderId },
+    }))
+    .loop(
+      'sendReceipts',
+      (_ctx, i) => i < 3,                                // retry up to 3 times
+      async (ctx) => mail.send(new ReceiptMail(ctx.input.userId, ctx.iteration)),
+    ),
+)
+```
+
+External resume for `waitForSignal`:
+
+```ts
+// HTTP handler on POST /webhooks/risk
+await durable.signal(runId, 'risk.approve', { decision: 'approve', officer: 'risk.bot' })
+```
+
+The signal payload becomes `ctx.results.riskApproval` for every later node.
+
 ## What's here
 
 | Symbol | Purpose |
 |---|---|
-| `DurableWorkflow` | Builder. `.step(name, handler, { compensate?, maxAttempts?, backoff? })`. Steps are journaled by name — duplicates throw at registration |
+| `DurableWorkflow` | Builder. `.step` / `.sleep` / `.waitForSignal` / `.parallel` / `.route` / `.loop` / `.childWorkflow`. Every node is journaled by name — duplicates throw at registration |
 | `defineDurable(name, fn)` | Sugar over `new DurableWorkflow(name)` matching `defineSchema` / `defineMachine` / `defineWorkflow` |
 | `WorkflowRegistry` | Name → workflow lookup. Apps register workflows on it; the runner uses it to resolve workflows when advancing a run |
-| `DurableRunner` | Engine. `start(name, input) → runId`, `find(runId) → snapshot`, `advance(runId)` (job handler), `compensate(runId)` (job handler) |
+| `DurableRunner` | Engine. `start(name, input) → runId`, `find(runId) → snapshot`, `advance(runId)` (job handler), `compensate(runId)` (job handler), `signal(runId, signalName, payload?)` to wake a `waitForSignal` node |
 | `DurableAdvanceJob` / `DurableCompensateJob` | Queue Jobs that delegate to the runner. Both use `maxAttempts = 1` — retry semantics live inside the runner |
 | `DurableProvider` | ServiceProvider. Binds runner + registry, registers schemas with `SchemaRegistry`, eager-resolves at boot |
 | `workflowRunsSchema` / `workflowJournalSchema` | The two tables. Runs hold the durable record + in-flight retry counters; journal is the per-step idempotency log |
 | `JOURNAL_UNIQUE_INDEX` | Name of the composite UNIQUE the provider provisions on `(run_id, step_name)` — belt-and-suspenders against duplicate journal writes |
-| `RunSnapshot` / `RunStatus` | The shape `runner.find` returns. `RunStatus` is `pending` / `running` / `compensating` / `completed` / `failed` |
+| `RunSnapshot` / `RunStatus` | The shape `runner.find` returns. `RunStatus` is `pending` / `running` / `waiting` / `compensating` / `completed` / `failed` |
 | `DurableContext` | What handlers receive: `{ input, results, runId, attempt }` |
 | `DurableError` / `RunNotFoundError` / `WorkflowNotRegisteredError` | Typed `StravError`s |
 

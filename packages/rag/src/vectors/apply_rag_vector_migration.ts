@@ -30,11 +30,7 @@
  * the helper itself.
  */
 
-import {
-  emitCreateTable,
-  type DatabaseExecutor,
-  type SchemaRegistry,
-} from '@strav/database'
+import { type DatabaseExecutor, emitCreateTable, type SchemaRegistry } from '@strav/database'
 import { ragVectorSchema } from './rag_vector_schema.ts'
 
 export interface ApplyRagVectorMigrationOptions {

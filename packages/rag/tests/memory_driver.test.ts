@@ -41,9 +41,7 @@ describe('MemoryDriver — query semantics', () => {
   test('cosine similarity: identical vectors score 1', async () => {
     const d = driver()
     await d.createCollection('a', 3)
-    await d.upsert('a', [
-      { id: '1', content: 'identical', embedding: [1, 0, 0], metadata: {} },
-    ])
+    await d.upsert('a', [{ id: '1', content: 'identical', embedding: [1, 0, 0], metadata: {} }])
     const r = await d.query('a', [1, 0, 0])
     expect(r.matches[0]?.score).toBeCloseTo(1, 5)
   })
@@ -53,9 +51,7 @@ describe('MemoryDriver — query semantics', () => {
     // so 0 → 0.5.
     const d = driver()
     await d.createCollection('a', 2)
-    await d.upsert('a', [
-      { id: '1', content: 'orthogonal', embedding: [1, 0], metadata: {} },
-    ])
+    await d.upsert('a', [{ id: '1', content: 'orthogonal', embedding: [1, 0], metadata: {} }])
     const r = await d.query('a', [0, 1])
     expect(r.matches[0]?.score).toBeCloseTo(0.5, 5)
   })

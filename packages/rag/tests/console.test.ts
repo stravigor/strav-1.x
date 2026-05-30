@@ -5,11 +5,11 @@
  */
 
 import { describe, expect, test } from 'bun:test'
-import { BrainManager } from '@strav/brain'
+import type { BrainManager } from '@strav/brain'
 import { Application, type CommandContext, ConsoleOutput } from '@strav/kernel'
 import { RagFlush } from '../src/console/rag_flush.ts'
 import { RagList } from '../src/console/rag_list.ts'
-import { MemoryDriver } from '../src/drivers/memory/memory_driver.ts'
+import type { MemoryDriver } from '../src/drivers/memory/memory_driver.ts'
 import { RagManager } from '../src/rag_manager.ts'
 import type { RagConfig } from '../src/types.ts'
 
@@ -50,7 +50,12 @@ function buildCtx(app: Application): {
 function makeApp(config: RagConfig): Application {
   const app = new Application()
   const brain = {
-    embed: async () => ({ embeddings: [[1, 0]], model: 'stub', usage: { inputTokens: 0 }, raw: null }),
+    embed: async () => ({
+      embeddings: [[1, 0]],
+      model: 'stub',
+      usage: { inputTokens: 0 },
+      raw: null,
+    }),
   } as unknown as BrainManager
   const manager = new RagManager({ config, brain })
   app.singleton(RagManager, () => manager)
@@ -96,14 +101,10 @@ describe('rag:flush', () => {
     const manager = app.resolve(RagManager)
     await manager.createCollection('articles')
     const driver = manager.store() as MemoryDriver
-    await driver.upsert('articles', [
-      { id: 'v_1', content: 'a', embedding: [1, 0], metadata: {} },
-    ])
+    await driver.upsert('articles', [{ id: 'v_1', content: 'a', embedding: [1, 0], metadata: {} }])
 
     const env = buildCtx(app)
-    const exit = await new RagFlush().handle(
-      env.ctx(['articles'], { force: true }),
-    )
+    const exit = await new RagFlush().handle(env.ctx(['articles'], { force: true }))
     expect(exit).toBe(0)
     expect(env.stdout.text()).toContain('Flushed collection "articles"')
     const result = await driver.query('articles', [1, 0])
@@ -116,9 +117,7 @@ describe('rag:flush', () => {
     await manager.createCollection('articles')
 
     const env = buildCtx(app)
-    await new RagFlush().handle(
-      env.ctx(['articles'], { force: true }),
-    )
+    await new RagFlush().handle(env.ctx(['articles'], { force: true }))
     expect(env.stdout.text()).toContain('"tenant_42_articles"')
   })
 
@@ -131,9 +130,7 @@ describe('rag:flush', () => {
     await manager.createCollection('articles', { store: 'alt' })
 
     const env = buildCtx(app)
-    const exit = await new RagFlush().handle(
-      env.ctx(['articles'], { force: true, store: 'alt' }),
-    )
+    const exit = await new RagFlush().handle(env.ctx(['articles'], { force: true, store: 'alt' }))
     expect(exit).toBe(0)
     expect(env.stdout.text()).toContain('on store "alt"')
   })

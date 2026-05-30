@@ -97,9 +97,7 @@ describe('PgvectorDriver — upsert', () => {
 
   test('mints id when omitted', async () => {
     const { db, driver } = make()
-    await driver.upsert('articles', [
-      { content: 'hello', embedding: [0.1, 0.2], metadata: {} },
-    ])
+    await driver.upsert('articles', [{ content: 'hello', embedding: [0.1, 0.2], metadata: {} }])
     const q = db.queries[0]!
     expect(q.params[0]).toBeTruthy()
     expect(typeof q.params[0]).toBe('string')
@@ -206,9 +204,9 @@ describe('PgvectorDriver — query', () => {
 
   test('rejects filter keys containing NUL bytes', async () => {
     const { driver } = make()
-    await expect(
-      driver.query('a', [0, 1], { filter: { 'bad\0key': 'x' } }),
-    ).rejects.toBeInstanceOf(VectorQueryError)
+    await expect(driver.query('a', [0, 1], { filter: { 'bad\0key': 'x' } })).rejects.toBeInstanceOf(
+      VectorQueryError,
+    )
   })
 })
 

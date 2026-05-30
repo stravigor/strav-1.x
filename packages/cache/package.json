@@ -10,7 +10,8 @@
     "./memory": "./src/drivers/memory/index.ts",
     "./postgres": "./src/drivers/postgres/index.ts",
     "./redis": "./src/drivers/redis/index.ts",
-    "./memcached": "./src/drivers/memcached/index.ts"
+    "./memcached": "./src/drivers/memcached/index.ts",
+    "./console": "./src/console/index.ts"
   },
   "files": [
     "src",
@@ -23,6 +24,7 @@
     "access": "public"
   },
   "dependencies": {
+    "@strav/cli": "workspace:*",
     "@strav/kernel": "workspace:*"
   },
   "peerDependencies": {

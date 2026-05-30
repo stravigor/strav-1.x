@@ -149,3 +149,42 @@ function applyBroadcastMigration(
 **No replay on subscribe.** Subscribers only receive events published after they subscribe. Apps that need replay (e.g. SSE `Last-Event-ID` recovery) query the table directly and emit historical events into their handler before iterating the live subscription.
 
 **Errors.** `publish` wraps both serialisation failures and DB-side INSERT errors as `BroadcastPublishError` with `context.channel` + `context.event` + the original error preserved as `cause`. The polling loop swallows errors silently — a transient DB blip shouldn't tear the broadcaster down, and apps wire visibility through the database driver's own logging.
+
+## `@strav/broadcast/redis`
+
+```ts
+class RedisBroadcaster extends Broadcaster {
+  constructor(options: RedisBroadcasterOptions)
+  upstreamSubscribed(channel: string): boolean    // diagnostics for tests
+}
+
+interface RedisBroadcasterClient {
+  publish(channel: string, message: string): Promise<number>
+  subscribe(channel: string, listener: (message: string, channel: string) => void): Promise<number>
+  unsubscribe(channel: string): Promise<void>
+  close(): void
+}
+
+interface RedisBroadcasterOptions {
+  url?: string                       // required unless pub + sub are injected
+  pub?: RedisBroadcasterClient       // custom publisher client (tests)
+  sub?: RedisBroadcasterClient       // custom subscriber client (tests)
+  maxBufferSize?: number             // forwarded to internal MemoryBroadcaster
+  onOverflow?: (channel: string, droppedEvent: BroadcastEvent) => void
+}
+
+class RedisBroadcastProvider extends ServiceProvider {
+  name = 'broadcast'
+  dependencies = ['config']
+}
+
+interface RedisBroadcastConfig extends Omit<RedisBroadcasterOptions, 'pub' | 'sub'> {
+  driver: 'redis'
+}
+```
+
+**Wire shape.** Two `Bun.RedisClient` instances under the hood — one for `PUBLISH`, one for `SUBSCRIBE`. Bun's client enters a sticky pub/sub mode after `subscribe(...)` that blocks most other commands until `unsubscribe()`; splitting publish + subscribe avoids the lock. Multiple in-process subscribers to the same channel share one upstream `SUBSCRIBE`; the upstream `UNSUBSCRIBE` fires when the last local subscriber drops.
+
+**No replay on subscribe.** Same contract as the Postgres driver — subscribers only receive events published after their `subscribe()`. Apps that need replay layer the Postgres driver alongside, or write a stream-backed custom driver.
+
+**Errors.** `publish` wraps both `JSON.stringify` failures and `PUBLISH` errors as `BroadcastPublishError`. The subscribe listener silently drops non-JSON payloads — apps sharing the Redis instance with other publishers shouldn't crash the broadcaster.
