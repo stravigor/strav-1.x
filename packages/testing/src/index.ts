@@ -31,3 +31,11 @@ export {
 // Cache availability probes — also re-exported under
 // `@strav/testing/cache` for the same reason.
 export { isMemcachedAvailable, isRedisAvailable } from './cache/index.ts'
+
+// Storage helpers — also re-exported under `@strav/testing/storage`.
+export {
+  createTempStorageRoot,
+  ensureS3Bucket,
+  isS3Available,
+  type TempStorageRoot,
+} from './storage/index.ts'

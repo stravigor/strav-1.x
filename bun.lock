@@ -223,6 +223,16 @@
         "@types/bun": ">=1.3.14",
       },
     },
+    "packages/storage": {
+      "name": "@strav/storage",
+      "version": "1.0.0-alpha.25",
+      "dependencies": {
+        "@strav/kernel": "workspace:*",
+      },
+      "peerDependencies": {
+        "@types/bun": ">=1.3.14",
+      },
+    },
     "packages/testing": {
       "name": "@strav/testing",
       "version": "1.0.0-alpha.25",
@@ -509,6 +519,8 @@
     "@strav/rag": ["@strav/rag@workspace:packages/rag"],
 
     "@strav/social": ["@strav/social@workspace:packages/social"],
+
+    "@strav/storage": ["@strav/storage@workspace:packages/storage"],
 
     "@strav/testing": ["@strav/testing@workspace:packages/testing"],
 
