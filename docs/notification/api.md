@@ -229,6 +229,27 @@ if (Math.abs(Math.floor(Date.now() / 1000) - Number(ts)) > 300) {
 - Non-2xx response: `context.status` carries the upstream status, `context.retryable` is `true` for 5xx / 408 / 429, the first 1KB of the response body lives under `context.responseBody`.
 - Network failure / timeout: `context.retryable = true`, original error preserved as `cause`.
 
+## `@strav/notification/broadcast`
+
+```ts
+class BroadcastNotificationDriver implements NotificationDriver
+class BroadcastNotificationProvider extends ServiceProvider  // declares 'notification.broadcast', deps ['notification', 'broadcast']
+
+interface BroadcastNotificationPayload {
+  channel: string                          // target pub/sub channel
+  event?: string                           // default: notification subclass name
+  data: unknown                            // JSON-serialisable
+}
+
+type BroadcastChannelConfig = { driver: 'broadcast' }   // no provider-specific knobs
+```
+
+Reads `notification.toBroadcast(notifiable): BroadcastNotificationPayload | Promise<BroadcastNotificationPayload>` and calls `Broadcaster.publish(channel, { id, event, data })` with `id = NotificationContext.id` so SSE clients can match the broadcast event to the dispatch record (e.g. for de-duplication when the same notification was also recorded to the database).
+
+Skips delivery (`{ delivered: false }`, no throw) when `toBroadcast` is absent — same opt-out semantics as the mail / webhook drivers. Throws `NotificationDeliveryError` if the hook throws or the underlying `Broadcaster.publish` fails. The broadcast `channel` lands under `context.broadcastChannel` so the failure record points at the right pub/sub destination.
+
+Apps wiring this driver register `BroadcastProvider` (or `PostgresBroadcastProvider`) from `@strav/broadcast` BEFORE `BroadcastNotificationProvider` so the `Broadcaster` token is bound when the channel factory is resolved.
+
 ## `@strav/notification/tenanted`
 
 ```ts

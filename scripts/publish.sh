@@ -63,9 +63,9 @@ ALL_PACKAGES=(
   view queue social payment machine
 
   # Tier 4 — depend on tier 3
-  mail durable brain
+  mail broadcast durable brain
 
-  # Tier 5a — depend on tier 4 (notification consumes mail)
+  # Tier 5a — depend on tier 4 (notification consumes mail + broadcast)
   notification
 
   # Tier 5 — depend on tier 4

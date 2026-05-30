@@ -82,3 +82,9 @@ export {
   resolveRoute,
   type SingleActionClass,
 } from './router/index.ts'
+export {
+  encodeSSEEvent,
+  type SSEEvent,
+  sseResponse,
+  type SSEResponseOptions,
+} from './sse/index.ts'

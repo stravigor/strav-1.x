@@ -29,6 +29,7 @@ router.match('GET', '/users/42')
 | `options(pattern, handler)` | OPTIONS |
 | `head(pattern, handler)` | HEAD |
 | `any(pattern, handler)` | every verb (returns `Route[]`) |
+| `sse(pattern, handler, options?)` | GET; streams `text/event-stream` |
 
 Each returns a `Route` (or `Route[]` for `any`). The `handler` slot accepts four shapes:
 
@@ -78,6 +79,63 @@ resolveRoute(router, 'users.show', { id: 42 }, { abs: true, host: 'example.com' 
 ```
 
 Missing required params throw `ConfigError`. Optional params (`:id?`) may be omitted.
+
+### Server-sent events — `router.sse(pattern, handler, options?)`
+
+Registers a GET route whose handler returns (or *is*) an `AsyncIterable<SSEEvent>`. The router wraps the iterable in a `text/event-stream` response with the correct framing headers, heartbeats every 15s by default, and runs the iterator's `return()` when the client disconnects so generators run their `finally` blocks.
+
+```ts
+import { Broadcaster } from '@strav/broadcast'
+import type { HttpContext, SSEEvent } from '@strav/http'
+
+@inject()
+class LiveOrdersController {
+  constructor(private readonly broadcaster: Broadcaster) {}
+
+  async *subscribe(ctx: HttpContext): AsyncGenerator<SSEEvent> {
+    const channel = `private-orders.${ctx.request.params.tenant}`
+    const auth = await this.broadcaster.authorizeFor(channel, ctx.auth?.user)
+    if (!auth.authorized) throw new AuthorizationError('not allowed on this channel')
+
+    const sub = this.broadcaster.subscribe(channel)
+    try {
+      for await (const event of sub) {
+        yield { id: event.id, event: event.event, data: event.data }
+      }
+    } finally {
+      await sub.unsubscribe()
+    }
+  }
+}
+
+router.sse('/live/orders/:tenant', [LiveOrdersController, 'subscribe'])
+```
+
+**`SSEEvent` shape:**
+
+```ts
+interface SSEEvent {
+  data?: unknown           // strings written as-is; non-strings JSON.stringify'd
+  event?: string           // named event channel (client: addEventListener('tick', ...))
+  id?: string              // enables Last-Event-ID replay tracking
+  retry?: number           // override client reconnection delay (ms)
+  comment?: string         // writes a `: comment` line — used for heartbeats
+}
+```
+
+Multi-line `data` is emitted as one `data:` line per source line — the WHATWG spec requires it; without it clients receive truncated payloads.
+
+**`SSEResponseOptions`:**
+
+| Option | Default | Effect |
+|---|---|---|
+| `heartbeatMs` | `15000` | Interval between `: heartbeat` comment lines. Set `0` to disable |
+| `signal` | `ctx.request.raw.signal` | `AbortSignal` that closes the stream + runs `iterator.return()`. The router fills this in from the request when omitted |
+| `headers` | — | Extra response headers merged onto the defaults |
+
+**Headers set automatically:** `content-type: text/event-stream; charset=utf-8`, `cache-control: no-cache, no-transform`, `connection: keep-alive`, `x-accel-buffering: no` (disables nginx response buffering).
+
+For one-off SSE responses outside the router (e.g. inside a middleware or a controller you're invoking by hand), the same wrapper is exposed as `sseResponse(iterable, options?)`. The `encodeSSEEvent(event)` helper returns the wire bytes for one record — useful when writing a custom transport.
 
 ## `Route`
 

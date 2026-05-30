@@ -1,7 +1,7 @@
 {
   "name": "@strav/notification",
   "version": "1.0.0-alpha.24",
-  "description": "Strav multi-channel notifications — NotificationManager fan-out across channel drivers (mail / database / log / webhook). Manager+drivers shape; new channels register via `manager.extend(name, factory)`. Broadcast / Discord / SMS channels ship in follow-up slices.",
+  "description": "Strav multi-channel notifications — NotificationManager fan-out across channel drivers (mail / database / log / webhook / broadcast). Manager+drivers shape; new channels register via `manager.extend(name, factory)`. Discord / SMS channels ship in follow-up slices.",
   "type": "module",
   "main": "./src/index.ts",
   "types": "./src/index.ts",
@@ -11,6 +11,7 @@
     "./database": "./src/drivers/database/index.ts",
     "./log": "./src/drivers/log/index.ts",
     "./webhook": "./src/drivers/webhook/index.ts",
+    "./broadcast": "./src/drivers/broadcast/index.ts",
     "./tenanted": "./src/drivers/database/tenanted/index.ts"
   },
   "files": [
@@ -27,11 +28,15 @@
     "@strav/kernel": "workspace:*"
   },
   "peerDependencies": {
+    "@strav/broadcast": "workspace:*",
     "@strav/database": "workspace:*",
     "@strav/mail": "workspace:*",
     "@types/bun": ">=1.3.14"
   },
   "peerDependenciesMeta": {
+    "@strav/broadcast": {
+      "optional": true
+    },
     "@strav/database": {
       "optional": true
     },

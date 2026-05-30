@@ -1,0 +1,15 @@
+{
+  "name": "@strav-tests/m4_5-broadcast",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "M4.5 end-to-end smoke — boots PostgresBroadcastProvider + NotificationProvider + BroadcastNotificationProvider against real Postgres. Proves the polling backplane fans events across the boundary (publisher → ledger row → poller → in-process subscriber), the SSE response runtime wraps the resulting AsyncIterable, and the broadcast notification channel reaches end consumers via NotificationManager.send.",
+  "dependencies": {
+    "@strav/broadcast": "workspace:*",
+    "@strav/database": "workspace:*",
+    "@strav/http": "workspace:*",
+    "@strav/kernel": "workspace:*",
+    "@strav/notification": "workspace:*",
+    "@strav/testing": "workspace:*"
+  }
+}

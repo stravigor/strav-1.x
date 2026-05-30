@@ -15,6 +15,9 @@
  */
 
 import { ConfigError } from '@strav/kernel'
+import type { HttpContext } from '../context/types.ts'
+import type { SSEEvent } from '../sse/sse_event.ts'
+import { sseResponse, type SSEResponseOptions } from '../sse/sse_response.ts'
 import { Route } from './route.ts'
 import { type MatchResult, RouteTrie } from './trie.ts'
 import type { CompiledRoute, HttpMethod, RouteGroupOptions, RouteHandler } from './types.ts'
@@ -58,6 +61,36 @@ export class Router {
   }
   head<T = unknown>(pattern: string, handler: RouteHandler<T>): Route {
     return this.add('HEAD', pattern, handler as RouteHandler)
+  }
+
+  /**
+   * Register a server-sent-events endpoint.
+   *
+   * The handler returns (or is) an `AsyncIterable<SSEEvent>` — most
+   * commonly an `async function*` generator. The router wraps the
+   * returned iterable into a `text/event-stream` response (correct
+   * framing + reverse-proxy headers + heartbeats + abort-aware
+   * cleanup), registers a GET route at `pattern`, and lets the
+   * standard middleware chain run unchanged.
+   *
+   * Pass `options` to override the heartbeat interval (default 15s) or
+   * append response headers.
+   */
+  sse(
+    pattern: string,
+    handler:
+      | ((ctx: HttpContext) => AsyncIterable<SSEEvent> | Promise<AsyncIterable<SSEEvent>>)
+      | ((ctx: HttpContext) => AsyncGenerator<SSEEvent, void, void>),
+    options: SSEResponseOptions = {},
+  ): Route {
+    const wrapped = async (ctx: HttpContext): Promise<Response> => {
+      const iterable = await handler(ctx)
+      return sseResponse(iterable, {
+        ...options,
+        signal: options.signal ?? ctx.request.raw.signal,
+      })
+    }
+    return this.add('GET', pattern, wrapped as RouteHandler)
   }
 
   /** Register the same handler for every HTTP verb. */
