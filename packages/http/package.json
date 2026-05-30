@@ -1,6 +1,6 @@
 {
   "name": "@strav/http",
-  "version": "1.0.0-alpha.26",
+  "version": "1.0.0-alpha.27",
   "description": "Strav HTTP layer — Router, HttpKernel, HttpContext, middleware composition",
   "type": "module",
   "main": "./src/index.ts",
