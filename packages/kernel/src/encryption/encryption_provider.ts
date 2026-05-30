@@ -29,6 +29,14 @@ import { AesGcm256Cipher, Cipher, parseEncryptionKey } from './cipher.ts'
 export interface EncryptionConfig {
   /** 32-byte key; hex (64 chars) or base64 (44 chars padded) or Uint8Array. */
   key: string | Uint8Array
+  /**
+   * Optional ring of previous keys. Encryption always uses `key`;
+   * decryption falls through `key` → `previousKeys[0]` → `previousKeys[1]`
+   * → ... until one verifies. Use during rotation: keep the old key
+   * here for as long as legacy ciphertext (or blind-index columns
+   * computed under the old key) still lives in the database.
+   */
+  previousKeys?: ReadonlyArray<string | Uint8Array>
 }
 
 export class EncryptionProvider extends ServiceProvider {
@@ -47,7 +55,8 @@ export class EncryptionProvider extends ServiceProvider {
       }
       const cfg = raw as EncryptionConfig
       const key = parseEncryptionKey(cfg.key)
-      return new AesGcm256Cipher(key)
+      const previousKeys = (cfg.previousKeys ?? []).map((k) => parseEncryptionKey(k))
+      return new AesGcm256Cipher({ key, previousKeys })
     })
   }
 

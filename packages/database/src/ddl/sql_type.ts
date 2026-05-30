@@ -4,7 +4,7 @@
  * The single place every DDL emitter consults to translate a `FieldKind`
  * into the column type that goes into `CREATE TABLE` / `ALTER TABLE ADD
  * COLUMN`. References resolve through the `SchemaRegistry` so the FK column
- * adopts the target table's PK type — which is how `t.reference('user_id')
+ * adopts the target table's PK type — which is how `t.foreign('user_id')
  * .to(User)` ends up emitting `char(26)` (matching `User.id`) instead of
  * a guessed default.
  *

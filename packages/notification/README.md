@@ -1,6 +1,6 @@
 # @strav/notification
 
-Multi-channel notifications for Strav 1.0. One fluent surface (`notifications.send(notifiable, notification)`) that fan-outs to ≥1 channel drivers — mail / database / log / webhook / broadcast today; Discord / SMS channels in follow-up slices.
+Multi-channel notifications for Strav 1.0. One fluent surface (`notifications.send(notifiable, notification)`) that fan-outs to ≥1 channel drivers — mail / database / log / webhook / broadcast / discord / sse today; SMS channel in a follow-up slice.
 
 ```ts
 import { BaseNotification, type Notifiable, NotificationManager } from '@strav/notification'
@@ -32,5 +32,7 @@ Canonical docs live in [`docs/notification/README.md`](../../docs/notification/R
 | Log | `@strav/notification/log` | Routes through `@strav/kernel`'s `Logger`. Useful for dev + tests. |
 | Webhook | `@strav/notification/webhook` | POSTs a signed JSON envelope (`x-strav-signature: sha256=...` over `${timestamp}.${body}`) to a configured endpoint. Exports `verifyWebhookSignature` for receiver-side validation. |
 | Broadcast | `@strav/notification/broadcast` | Publishes a `BroadcastEvent` via `@strav/broadcast`'s `Broadcaster`. Pairs with `router.sse(...)` so live UI clients receive the same dispatch. |
+| Discord | `@strav/notification/discord` | POSTs `notification.toDiscord(notifiable)` to a Discord webhook URL. Returns a string (shorthand for `{ content }`) or a `DiscordMessage` with `embeds` / `components` / per-message `webhookUrl` override. Per-recipient URLs via `notifiable.discordWebhookUrl`. |
+| SSE | `@strav/notification/sse` | In-process pub/sub. Reads `notification.toSSE(notifiable)` and pushes to every active subscriber for that notifiable. HTTP handlers consume subscriptions via `driver.subscribe(id, { notifiableType? })` + `sseResponse()` from `@strav/http`. |
 
-Deferred: Discord, SMS channel drivers. Apps register custom channels via `manager.extend(name, factory)`.
+Deferred: SMS channel driver. Apps register custom channels via `manager.extend(name, factory)`.

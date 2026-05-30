@@ -1,9 +1,9 @@
 // Public API of @strav/notification.
 //
 // V1: NotificationManager facade + NotificationDriver interface +
-// BaseNotification abstract class + Notifiable interface + four
-// channel drivers under subpaths (./mail, ./database, ./log, ./webhook).
-// Broadcast / SSE / Discord / SMS channels deferred to future slices.
+// BaseNotification abstract class + Notifiable interface + channel
+// drivers under subpaths (./mail, ./database, ./log, ./webhook,
+// ./broadcast, ./discord, ./sse). SMS channel follows in a later slice.
 
 export {
   MockNotificationDriver,

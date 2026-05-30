@@ -184,7 +184,10 @@ class SpyDb implements Database {
 describe('Repository — explicit { tx } parameter', () => {
   test('routes through the supplied tx, not the default db', async () => {
     const db = new SpyDb()
-    const repo = new UserRepository({ db: db as unknown as PostgresDatabase, events: new EventBus() })
+    const repo = new UserRepository({
+      db: db as unknown as PostgresDatabase,
+      events: new EventBus(),
+    })
     await db.transaction(async (tx) => {
       await repo.find('id-1', { tx })
     })
@@ -194,7 +197,10 @@ describe('Repository — explicit { tx } parameter', () => {
 
   test('without opts, uses the default db (no transaction)', async () => {
     const db = new SpyDb()
-    const repo = new UserRepository({ db: db as unknown as PostgresDatabase, events: new EventBus() })
+    const repo = new UserRepository({
+      db: db as unknown as PostgresDatabase,
+      events: new EventBus(),
+    })
     await repo.find('id-1')
     expect(db.defaultCalls.length).toBe(1)
     expect(db.txCalls.length).toBe(0)
@@ -205,7 +211,10 @@ describe('Repository — ambient UoW.run scope', () => {
   test('Repository.find inside uow.run uses the tx automatically', async () => {
     const db = new SpyDb()
     const uow = new UnitOfWork(db, new EventBus())
-    const repo = new UserRepository({ db: db as unknown as PostgresDatabase, events: new EventBus() })
+    const repo = new UserRepository({
+      db: db as unknown as PostgresDatabase,
+      events: new EventBus(),
+    })
     await uow.run(async () => {
       await repo.find('id-1')
     })
@@ -216,7 +225,10 @@ describe('Repository — ambient UoW.run scope', () => {
   test('explicit { tx } overrides the ambient scope', async () => {
     const db = new SpyDb()
     const uow = new UnitOfWork(db, new EventBus())
-    const repo = new UserRepository({ db: db as unknown as PostgresDatabase, events: new EventBus() })
+    const repo = new UserRepository({
+      db: db as unknown as PostgresDatabase,
+      events: new EventBus(),
+    })
     // Build an explicit "other" tx that ISN'T the one UoW will open.
     const otherTx: DatabaseExecutor = {
       query: async () => [],

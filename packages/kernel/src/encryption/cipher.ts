@@ -13,10 +13,26 @@
  * authenticated — tampering or a wrong key throws at `final()` rather
  * than silently producing garbage.
  *
+ * **Rotation.** The cipher accepts an optional `previousKeys` ring.
+ * Encryption always uses the current key; decryption tries the current
+ * key first, then each previous key in order, returning the first
+ * successful decrypt. Old ciphertext keeps decrypting after a key swap
+ * without re-encrypting every row — production apps add the old key to
+ * `previousKeys`, rotate the env, and (optionally) re-encrypt-on-read
+ * to migrate forward over time. The envelope shape didn't change; this
+ * is a pure rotation policy, not a format version bump.
+ *
+ * **Blind index.** Encrypted columns can't be queried by equality (the
+ * IV makes every ciphertext different). `cipher.blindIndex(plaintext)`
+ * returns a deterministic HMAC-SHA256 (hex) of the plaintext under the
+ * current key — apps store it in a sidecar column (e.g. `email_index`)
+ * and query `WHERE email_index = ?` after hashing the lookup value the
+ * same way.
+ *
  * @see docs/kernel/guides/encryption.md
  */
 
-import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto'
+import { createCipheriv, createDecipheriv, createHmac, randomBytes } from 'node:crypto'
 import { ConfigError } from '../exceptions/config_error.ts'
 
 /** IV length for AES-GCM — 12 bytes (96 bits), the GCM-recommended size. */
@@ -27,8 +43,9 @@ const TAG_LEN = 16
 const KEY_LEN = 32
 
 /**
- * Base contract. Concrete subclasses override `encrypt` / `decrypt`. The
- * default impl throws — see file header for the rationale.
+ * Base contract. Concrete subclasses override `encrypt` / `decrypt` /
+ * `blindIndex`. The default impls throw — see file header for the
+ * rationale.
  */
 export class Cipher {
   encrypt(_plaintext: string): Uint8Array {
@@ -45,6 +62,35 @@ export class Cipher {
       { code: 'encryption.not-configured' },
     )
   }
+  /**
+   * Deterministic searchable hash of a plaintext value under the current
+   * key. Pair with an `_index` sidecar column so encrypted fields stay
+   * queryable by equality. The same plaintext always returns the same
+   * hash; rotating the key invalidates every previous index value, so
+   * applications that rotate must rehash on next write (the rotation
+   * design intentionally does NOT auto-rehash blind indexes — silently
+   * touching every row at boot is the worse outcome).
+   */
+  blindIndex(_plaintext: string): string {
+    throw new ConfigError(
+      'Cipher.blindIndex called but no encryption key is configured. ' +
+        'Register EncryptionProvider with `config.encryption.key` set.',
+      { code: 'encryption.not-configured' },
+    )
+  }
+}
+
+export interface AesGcm256CipherOptions {
+  /** Current key. Used for every encrypt + blind-index call. */
+  key: Uint8Array
+  /**
+   * Older keys to try (in order) when the current key fails to decrypt.
+   * Use during rotation: add the old key here, swap `key` to the new
+   * one. Old ciphertext keeps decrypting; new writes go out under the
+   * new key. Empty / omitted → no fallback, decryption with the wrong
+   * key throws as before.
+   */
+  previousKeys?: readonly Uint8Array[]
 }
 
 /**
@@ -57,18 +103,29 @@ export class Cipher {
  * with the same key breaks the security model).
  */
 export class AesGcm256Cipher extends Cipher {
-  constructor(private readonly key: Uint8Array) {
+  private readonly currentKey: Uint8Array
+  private readonly keyRing: readonly Uint8Array[]
+
+  /**
+   * Two-arg form `new AesGcm256Cipher(keyBytes)` is preserved for
+   * backward compatibility. Pass `{ key, previousKeys }` to enable
+   * rotation.
+   */
+  constructor(keyOrOptions: Uint8Array | AesGcm256CipherOptions) {
     super()
-    if (key.length !== KEY_LEN) {
-      throw new ConfigError(`AesGcm256Cipher: key must be ${KEY_LEN} bytes; got ${key.length}.`, {
-        code: 'encryption.bad-key',
-      })
+    const opts: AesGcm256CipherOptions =
+      keyOrOptions instanceof Uint8Array ? { key: keyOrOptions } : keyOrOptions
+    assertKeyLength(opts.key, 'key')
+    for (const [i, k] of (opts.previousKeys ?? []).entries()) {
+      assertKeyLength(k, `previousKeys[${i}]`)
     }
+    this.currentKey = opts.key
+    this.keyRing = [opts.key, ...(opts.previousKeys ?? [])]
   }
 
   override encrypt(plaintext: string): Uint8Array {
     const iv = randomBytes(IV_LEN)
-    const cipher = createCipheriv('aes-256-gcm', this.key, iv)
+    const cipher = createCipheriv('aes-256-gcm', this.currentKey, iv)
     const ct = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()])
     const tag = cipher.getAuthTag()
     return Uint8Array.from(Buffer.concat([iv, tag, ct]))
@@ -85,9 +142,40 @@ export class AesGcm256Cipher extends Cipher {
     const iv = buf.subarray(0, IV_LEN)
     const tag = buf.subarray(IV_LEN, IV_LEN + TAG_LEN)
     const ct = buf.subarray(IV_LEN + TAG_LEN)
-    const decipher = createDecipheriv('aes-256-gcm', this.key, iv)
-    decipher.setAuthTag(tag)
-    return Buffer.concat([decipher.update(ct), decipher.final()]).toString('utf8')
+
+    // Try the current key first; fall through to each previous key on
+    // auth-tag failure. Node's `decipher.final()` throws when the tag
+    // doesn't verify — that's the signal we're using.
+    let lastErr: unknown
+    for (const key of this.keyRing) {
+      try {
+        const decipher = createDecipheriv('aes-256-gcm', key, iv)
+        decipher.setAuthTag(tag)
+        return Buffer.concat([decipher.update(ct), decipher.final()]).toString('utf8')
+      } catch (err) {
+        lastErr = err
+      }
+    }
+    // None of the keys decrypted — surface the last error with context.
+    throw new ConfigError(
+      `AesGcm256Cipher.decrypt: ciphertext did not decrypt under any of the ${this.keyRing.length} configured key(s). Underlying error: ${(lastErr as Error)?.message ?? String(lastErr)}`,
+      { code: 'encryption.decrypt-failed' },
+    )
+  }
+
+  override blindIndex(plaintext: string): string {
+    // HMAC-SHA256(currentKey, plaintext) → 64-char hex. Deterministic
+    // and keyed — observers without the key can't compute the index.
+    return createHmac('sha256', this.currentKey).update(plaintext, 'utf8').digest('hex')
+  }
+}
+
+function assertKeyLength(key: Uint8Array, label: string): void {
+  if (key.length !== KEY_LEN) {
+    throw new ConfigError(
+      `AesGcm256Cipher: ${label} must be ${KEY_LEN} bytes; got ${key.length}.`,
+      { code: 'encryption.bad-key' },
+    )
   }
 }
 

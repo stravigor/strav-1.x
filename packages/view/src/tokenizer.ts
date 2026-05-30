@@ -80,6 +80,8 @@ const DIRECTIVES = new Set([
   'route',
   'asset',
   'island',
+  'islands',
+  'css',
   'raw',
   'endraw',
   'escape',

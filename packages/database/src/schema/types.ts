@@ -132,14 +132,19 @@ export interface SchemaTenancy {
 
 /**
  * A relationship declaration on a schema. Drives `QueryBuilder.with(...)`
- * eager loading; doesn't affect DDL emission (FK columns are declared
- * separately via `t.reference(...)`).
+ * eager loading; doesn't affect DDL emission (FK columns + pivot tables
+ * are declared separately via `t.foreign(...)` / `defineSchema(...)`).
  *
- * V1 supports `hasMany` (one-to-many — parent has many children whose
- * `foreignKey` column points back) and `belongsTo` (the inverse —
- * the row owns a single related row identified by a local
- * `foreignKey` column). `hasOne` + `belongsToMany` are follow-up
- * slices.
+ * V1 supports four kinds:
+ *   - `hasMany` — parent has many children whose `foreignKey` column
+ *     points back to the parent's PK.
+ *   - `hasOne` — like `hasMany` but the eager-load result is a single
+ *     row or null instead of an array. Useful for 1:1 records that live
+ *     in a separate table (a user's profile, a post's draft snapshot).
+ *   - `belongsTo` — inverse of `hasMany`/`hasOne`. THIS row carries the
+ *     `foreignKey` column pointing at the target's PK.
+ *   - `belongsToMany` — many-to-many via a pivot table. The pivot row
+ *     joins `parentKey` on this side to `targetKey` on the target side.
  */
 export type SchemaRelation =
   | {
@@ -152,6 +157,15 @@ export type SchemaRelation =
       foreignKey: string
     }
   | {
+      kind: 'hasOne'
+      /** Accessor name on the parent row (e.g. `profile` on a user). */
+      name: string
+      /** Target schema name (the child table, e.g. `'profile'`). */
+      target: string
+      /** Column on the CHILD that points back to the parent's PK. */
+      foreignKey: string
+    }
+  | {
       kind: 'belongsTo'
       /** Accessor name on this row (e.g. `author` on a post). */
       name: string
@@ -159,6 +173,19 @@ export type SchemaRelation =
       target: string
       /** Column on THIS row holding the parent's PK. */
       foreignKey: string
+    }
+  | {
+      kind: 'belongsToMany'
+      /** Accessor name on this row (e.g. `roles` on a user). */
+      name: string
+      /** Target schema name (the other entity, e.g. `'role'`). */
+      target: string
+      /** Pivot table name (e.g. `'user_role'`). */
+      pivot: string
+      /** Column on the pivot pointing at THIS row's PK. */
+      parentKey: string
+      /** Column on the pivot pointing at the target's PK. */
+      targetKey: string
     }
 
 /** Compiled schema returned from `defineSchema()`. */

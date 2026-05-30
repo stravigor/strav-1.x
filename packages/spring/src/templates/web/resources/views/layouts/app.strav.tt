@@ -4,12 +4,43 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>@yield('title', '{{projectName}}')</title>
-  <link rel="stylesheet" href="/assets/app.css" />
+  <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            primary: '#ff4433',
+            'on-surface': '#000000',
+            'on-surface-variant': '#666666',
+            outline: '#e5e5e5',
+            surface: '#ffffff',
+          },
+          fontFamily: {
+            sans: ['system-ui', '-apple-system', 'sans-serif'],
+            mono: ['ui-monospace', 'SFMono-Regular', 'Menlo', 'Monaco', 'Consolas', 'monospace'],
+          },
+        },
+      },
+    }
+  </script>
+  @css
 </head>
-<body>
-  <main>
+<body class="min-h-screen flex flex-col selection:bg-primary selection:text-white bg-grid-precision">
+  <main class="flex-grow w-full mx-auto px-6 md:px-12 py-16 md:py-24 max-w-[800px]">
     @yield('content')
   </main>
-  <script type="module" src="/assets/islands/islands.js" defer></script>
+
+  <footer class="border-t border-black bg-white py-12 px-6 md:px-12 mt-auto">
+    <div class="max-w-[1400px] mx-auto flex flex-col md:flex-row justify-between items-center gap-8">
+      <div class="text-[10px] font-mono tracking-[0.3em] uppercase text-on-surface-variant">
+        © 2026 Strav
+      </div>
+      <div class="flex gap-12">
+        <a class="text-sm font-bold uppercase tracking-tighter hover:text-primary transition-colors" href="https://strav.dev">Docs</a>
+        <a class="text-sm font-bold uppercase tracking-tighter hover:text-primary transition-colors" href="https://github.com/strav/strav">Repository</a>
+      </div>
+    </div>
+  </footer>
 </body>
 </html>

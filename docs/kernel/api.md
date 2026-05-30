@@ -344,16 +344,46 @@ The shape of the data the repository wraps. Each top-level key typically corresp
 Binds `ConfigRepository` and arranges the freeze-on-`app:booted` contract.
 
 ```ts
-import { ConfigProvider } from '@strav/kernel'
+class ConfigProvider extends ServiceProvider {
+  constructor(data?: ConfigData)
+  static fromDirectory(
+    directoryOrOptions?: string | { directory?: string; cwd?: string; overrides?: ConfigData },
+  ): Promise<ConfigProvider>
+}
+```
 
-// In bootstrap/providers.ts
-import appConfig from '../config/app.ts'
-import dbConfig from '../config/database.ts'
+Two construction modes:
 
-export default [
-  new ConfigProvider({ app: appConfig, database: dbConfig }),
-  // ... other providers
-]
+**Auto-discovery (recommended)** — scans `<cwd>/config/*.{ts,js,mts,mjs}` and keys the merged map by basename. `config/app.ts` → `config.app.*`, `config/database.ts` → `config.database.*`, etc. Files / sub-directories whose name starts with `.` or `_` are skipped; sub-directories are NOT recursed.
+
+```ts
+// bootstrap/providers.ts
+export async function providers(): Promise<ServiceProvider[]> {
+  return [
+    await ConfigProvider.fromDirectory('config'),
+    // ... other providers
+  ]
+}
+
+// bin/strav.ts
+const exitCode = await runCli({ ..., defaultProviders: await providers() })
+```
+
+Pass `overrides` to overlay environment-specific values without touching the on-disk `config/` tree:
+
+```ts
+await ConfigProvider.fromDirectory({
+  directory: 'config',
+  overrides: { app: { debug: true } },
+})
+```
+
+Sections whose file has no default export are skipped with a stderr warning (typo guard). Missing directories throw at discovery time, not at boot.
+
+**Explicit map** — back-compat constructor for tests and one-off apps that prefer to wire imports by hand:
+
+```ts
+new ConfigProvider({ app: appConfig, database: dbConfig })
 ```
 
 `ConfigProvider` has no dependencies (`name = 'config'`, `dependencies = []`), so it registers first. Other providers can `c.resolve<ConfigRepository>('config')` in their `register()` and `boot()` methods.

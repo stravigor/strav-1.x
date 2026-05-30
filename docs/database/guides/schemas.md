@@ -81,8 +81,8 @@ t.encrypted('ssn')                      // bytea column; pair with `@encrypt` on
 ### References
 
 ```ts
-t.reference('user_id').to(userSchema).onDelete('cascade')
-t.reference('account_id').to('account').onDelete('restrict')   // string also works
+t.foreign('user_id').to(userSchema).onDelete('cascade')
+t.foreign('account_id').to('account').onDelete('restrict')   // string also works
 ```
 
 Defaults: `onDelete: 'restrict'`. The migration runner will (in the next slice) emit `FOREIGN KEY ... REFERENCES ... ON DELETE ...` automatically. Today, hand-write the FK in the migration if you need it.

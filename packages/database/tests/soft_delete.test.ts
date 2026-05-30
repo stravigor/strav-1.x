@@ -206,7 +206,10 @@ describe('Repository.delete — soft-delete path', () => {
       created_at: new Date(),
       updated_at: new Date(),
     }
-    const repo = new UserRepository({ db: db as unknown as PostgresDatabase, events: new EventBus() })
+    const repo = new UserRepository({
+      db: db as unknown as PostgresDatabase,
+      events: new EventBus(),
+    })
     await repo.delete(makeUser('u-1'))
     expect(db.queriedOne).toHaveLength(1)
     expect(nonNull(db.queriedOne[0]).sql).toContain('UPDATE "user" SET "deleted_at" = now()')
@@ -215,7 +218,10 @@ describe('Repository.delete — soft-delete path', () => {
 
   test('schema WITHOUT softDeletes: emits DELETE (hard path)', async () => {
     const db = new SpyDb()
-    const repo = new EventLogRepository({ db: db as unknown as PostgresDatabase, events: new EventBus() })
+    const repo = new EventLogRepository({
+      db: db as unknown as PostgresDatabase,
+      events: new EventBus(),
+    })
     const log = new EventLog()
     log.id = 'e-1'
     log.action = 'signup'
@@ -261,7 +267,10 @@ describe('Repository.delete — soft-delete path', () => {
       created_at: new Date(),
       updated_at: new Date(),
     }
-    const repo = new UserRepository({ db: db as unknown as PostgresDatabase, events: new EventBus() })
+    const repo = new UserRepository({
+      db: db as unknown as PostgresDatabase,
+      events: new EventBus(),
+    })
     const result = (await repo.delete(makeUser('u-1'))) as User
     expect(result.deleted_at).toEqual(trashedAt)
   })
@@ -285,7 +294,10 @@ describe('Repository.delete — soft-delete path', () => {
 describe('Repository.forceDelete', () => {
   test('always hard-deletes, even on a soft-deletes schema', async () => {
     const db = new SpyDb()
-    const repo = new UserRepository({ db: db as unknown as PostgresDatabase, events: new EventBus() })
+    const repo = new UserRepository({
+      db: db as unknown as PostgresDatabase,
+      events: new EventBus(),
+    })
     await repo.forceDelete(makeUser('u-1'))
     expect(db.executed).toHaveLength(1)
     expect(nonNull(db.executed[0]).sql).toContain('DELETE FROM "user"')
@@ -355,7 +367,10 @@ describe('Repository.restore', () => {
 
   test('throws on a schema without t.softDeletes()', async () => {
     const db = new SpyDb()
-    const repo = new EventLogRepository({ db: db as unknown as PostgresDatabase, events: new EventBus() })
+    const repo = new EventLogRepository({
+      db: db as unknown as PostgresDatabase,
+      events: new EventBus(),
+    })
     const log = new EventLog()
     log.id = 'e-1'
     log.action = 'signup'
@@ -366,7 +381,10 @@ describe('Repository.restore', () => {
   test('throws NotFoundError when the row no longer exists', async () => {
     const db = new SpyDb()
     db.scriptedRow = null // RETURNING * returns nothing
-    const repo = new UserRepository({ db: db as unknown as PostgresDatabase, events: new EventBus() })
+    const repo = new UserRepository({
+      db: db as unknown as PostgresDatabase,
+      events: new EventBus(),
+    })
     await expect(repo.restore(makeUser('u-gone', 'a@b.com', new Date()))).rejects.toThrow(
       /no longer exists/,
     )
@@ -380,7 +398,10 @@ describe('Repository.restore', () => {
 describe('Repository.find / findMany — soft-delete scope', () => {
   test('find() emits SELECT … WHERE deleted_at IS NULL AND id = $1', async () => {
     const db = new SpyDb()
-    const repo = new UserRepository({ db: db as unknown as PostgresDatabase, events: new EventBus() })
+    const repo = new UserRepository({
+      db: db as unknown as PostgresDatabase,
+      events: new EventBus(),
+    })
     await repo.find('u-1')
     const select = nonNull(db.queriedOne[0])
     expect(select.sql).toContain('WHERE "deleted_at" IS NULL AND "id" = $1')
@@ -389,7 +410,10 @@ describe('Repository.find / findMany — soft-delete scope', () => {
   test('findMany() emits SELECT … WHERE deleted_at IS NULL AND id IN (…)', async () => {
     const db = new SpyDb()
     db.scriptedRows = []
-    const repo = new UserRepository({ db: db as unknown as PostgresDatabase, events: new EventBus() })
+    const repo = new UserRepository({
+      db: db as unknown as PostgresDatabase,
+      events: new EventBus(),
+    })
     await repo.findMany(['u-1', 'u-2'])
     const select = nonNull(db.queried[0])
     expect(select.sql).toContain('WHERE "deleted_at" IS NULL AND "id" IN ($1, $2)')
@@ -404,7 +428,10 @@ describe('Repository.find / findMany — soft-delete scope', () => {
       created_at: new Date(),
       updated_at: new Date(),
     }
-    const repo = new UserRepository({ db: db as unknown as PostgresDatabase, events: new EventBus() })
+    const repo = new UserRepository({
+      db: db as unknown as PostgresDatabase,
+      events: new EventBus(),
+    })
     const user = await repo.query().withTrashed().where('id', 'u-1').first()
     expect(user?.deleted_at).toBeInstanceOf(Date)
     const select = nonNull(db.queriedOne[0])

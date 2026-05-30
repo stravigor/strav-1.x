@@ -20,7 +20,7 @@ const green = (s: string): string => `\x1b[32m${s}\x1b[0m`
 const red = (s: string): string => `\x1b[31m${s}\x1b[0m`
 const cyan = (s: string): string => `\x1b[36m${s}\x1b[0m`
 
-const SPRING_VERSION = '1.0.0-alpha.28'
+const SPRING_VERSION = '1.0.0-alpha.29'
 
 function printUsage(): void {
   process.stdout.write(`

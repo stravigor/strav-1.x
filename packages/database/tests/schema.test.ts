@@ -88,7 +88,7 @@ describe('SchemaBuilder — primitive fields', () => {
     const user = defineSchema('user', Archetype.Entity, (t) => t.id())
     const s = defineSchema('lead', Archetype.Entity, (t) => {
       t.id()
-      t.reference('user_id').to(user).onDelete('cascade')
+      t.foreign('user_id').to(user).onDelete('cascade')
     })
     const field = s.fields[1] as ReferenceField
     expect(field).toMatchObject({

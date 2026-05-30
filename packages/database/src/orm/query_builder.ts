@@ -24,11 +24,14 @@
  *
  * Cursor pagination + chunk are read-only by design — they require
  * exactly one `.orderBy(col, dir)` to anchor the cursor (the PK is the
- * auto-tiebreaker) and don't compose with `.cte()` / `.union()`.
+ * auto-tiebreaker) and don't compose with `.cte()` / `.union()` / joins.
  *
- * Still deferred:
- *   - Explicit `.join()` / `.leftJoin()` — `.with(...)` covers the
- *     N+1-prevention use case via separate batched SELECTs.
+ * Joins (`.join` / `.leftJoin` / `.crossJoin`) emit the JOIN clauses
+ * after FROM, before WHERE. When joins are present the soft-delete
+ * predicate is qualified (`"main_table"."deleted_at" IS NULL`) to keep
+ * the column reference unambiguous; user-supplied WHERE columns are
+ * still treated as bare identifiers, so callers writing joined queries
+ * pass already-qualified names (`'users.email'`).
  */
 
 import { type Cipher, NotFoundError } from '@strav/kernel'
@@ -158,12 +161,36 @@ interface UnionClause {
   body: SubBuilderBody
 }
 
+type JoinKind = 'inner' | 'left' | 'cross'
+
+interface JoinClause {
+  kind: JoinKind
+  table: string
+  /** ON clause columns. Undefined for CROSS JOIN. */
+  leftColumn?: string
+  rightColumn?: string
+}
+
 /**
  * Compile a CTE / union body into the shared `params` array. For a
  * `QueryBuilder`, delegate to its `_compile`. For a raw `{ sql, params
  * }`, renumber `$N` placeholders by the current offset so they line up
  * with the accumulator.
  */
+/**
+ * Quote a column reference that may be `'table.column'`, `'table.*'`, or
+ * a bare `'column'`. Each dotted segment is quoted separately; `*` stays
+ * as-is (so `'users.*'` → `"users".*`). Apps writing joined queries can
+ * pass qualified names without worrying about double-quote placement.
+ */
+function quoteColumnRef(ref: string): string {
+  if (!ref.includes('.')) return ref === '*' ? '*' : quoteIdent(ref)
+  return ref
+    .split('.')
+    .map((seg) => (seg === '*' ? '*' : quoteIdent(seg)))
+    .join('.')
+}
+
 function compileSubBody(body: SubBuilderBody, params: unknown[]): string {
   if (body instanceof QueryBuilder) {
     return body._compile(params)
@@ -193,6 +220,8 @@ export class QueryBuilder<TModel extends object = Record<string, unknown>> {
   private readonly withs: WithClause[] = []
   /** Union / Union ALL bodies appended after the main SELECT. */
   private readonly unions: UnionClause[] = []
+  /** JOIN clauses emitted between FROM and WHERE, in registration order. */
+  private readonly joins: JoinClause[] = []
   /** Override for the FROM clause — e.g. `.from('cte_name')` when reading from a CTE. */
   private fromOverride: string | undefined
 
@@ -440,6 +469,45 @@ export class QueryBuilder<TModel extends object = Record<string, unknown>> {
     return next
   }
 
+  /**
+   * INNER JOIN `table` ON `leftColumn = rightColumn`. The shorthand
+   * covers the equi-join case (the vast majority of application joins);
+   * non-equality conditions still need a CTE or raw SQL.
+   *
+   * Column names are quoted as identifiers — pass already-qualified
+   * names (`'users.id'`) when the same column name exists in both
+   * tables to keep the reference unambiguous.
+   *
+   * ```ts
+   * await orders.query()
+   *   .join('users', 'users.id', 'orders.user_id')
+   *   .where('users.role', 'admin')
+   *   .get()
+   * ```
+   */
+  join(table: string, leftColumn: string, rightColumn: string): QueryBuilder<TModel> {
+    const next = this.clone()
+    next.joins.push({ kind: 'inner', table, leftColumn, rightColumn })
+    return next
+  }
+
+  /** LEFT JOIN form of {@link join}. */
+  leftJoin(table: string, leftColumn: string, rightColumn: string): QueryBuilder<TModel> {
+    const next = this.clone()
+    next.joins.push({ kind: 'left', table, leftColumn, rightColumn })
+    return next
+  }
+
+  /**
+   * CROSS JOIN `table` — Cartesian product, no ON clause. Useful with a
+   * `generate_series(...)` table from a CTE, or for tally tables.
+   */
+  crossJoin(table: string): QueryBuilder<TModel> {
+    const next = this.clone()
+    next.joins.push({ kind: 'cross', table })
+    return next
+  }
+
   // ─── Build ─────────────────────────────────────────────────────────────────
 
   /** Compile to `{ sql, params }`. Used by every terminal method that returns rows. */
@@ -459,15 +527,16 @@ export class QueryBuilder<TModel extends object = Record<string, unknown>> {
   _compile(params: unknown[]): string {
     const withClause = this.compileWithClause(params)
     const cols = this.selectColumns
-      ? this.selectColumns.map(quoteIdent).join(', ')
+      ? this.selectColumns.map(quoteColumnRef).join(', ')
       : selectColumnList(this.schema)
     const fromName = this.fromOverride ?? this.schema.name
-    const where = this.compileWhere(params)
+    const joins = this.compileJoins()
+    const where = this.compileWhere(params, fromName)
     const order = this.compileOrder()
     const tail = `${where}${order}${this.limitN !== undefined ? ` LIMIT ${this.limitN}` : ''}${
       this.offsetN !== undefined ? ` OFFSET ${this.offsetN}` : ''
     }`
-    const main = `SELECT ${cols} FROM ${quoteIdent(fromName)}${tail}`
+    const main = `SELECT ${cols} FROM ${quoteIdent(fromName)}${joins}${tail}`
     const unions = this.compileUnions(params)
     return `${withClause}${main}${unions}`
   }
@@ -589,9 +658,9 @@ export class QueryBuilder<TModel extends object = Record<string, unknown>> {
     if (after !== undefined && before !== undefined) {
       throw new Error('QueryBuilder.cursorPaginate: pass `after` OR `before`, not both.')
     }
-    if (this.withs.length > 0 || this.unions.length > 0) {
+    if (this.withs.length > 0 || this.unions.length > 0 || this.joins.length > 0) {
       throw new Error(
-        'QueryBuilder.cursorPaginate: cursor pagination does not compose with `.cte()` / `.union()` in V1. Use `.paginate({ page, perPage })` instead.',
+        'QueryBuilder.cursorPaginate: cursor pagination does not compose with `.cte()` / `.union()` / `.join()` in V1. Use `.paginate({ page, perPage })` instead.',
       )
     }
     if (this.orders.length !== 1) {
@@ -725,9 +794,8 @@ export class QueryBuilder<TModel extends object = Record<string, unknown>> {
   async count(): Promise<number> {
     const params: unknown[] = []
     const where = this.compileWhere(params)
-    const { sql } = {
-      sql: `SELECT COUNT(*) AS count FROM ${quoteIdent(this.schema.name)}${where}`,
-    }
+    const joins = this.compileJoins()
+    const sql = `SELECT COUNT(*) AS count FROM ${quoteIdent(this.schema.name)}${joins}${where}`
     const row = await this.db.queryOne<{ count: number | string }>(sql, params)
     return row ? Number(row.count) : 0
   }
@@ -736,7 +804,8 @@ export class QueryBuilder<TModel extends object = Record<string, unknown>> {
   async exists(): Promise<boolean> {
     const params: unknown[] = []
     const where = this.compileWhere(params)
-    const sql = `SELECT 1 FROM ${quoteIdent(this.schema.name)}${where} LIMIT 1`
+    const joins = this.compileJoins()
+    const sql = `SELECT 1 FROM ${quoteIdent(this.schema.name)}${joins}${where} LIMIT 1`
     const row = await this.db.queryOne(sql, params)
     return row !== null
   }
@@ -746,11 +815,15 @@ export class QueryBuilder<TModel extends object = Record<string, unknown>> {
     const params: unknown[] = []
     const where = this.compileWhere(params)
     const order = this.compileOrder()
-    const sql = `SELECT ${quoteIdent(column)} FROM ${quoteIdent(this.schema.name)}${where}${order}${
+    const joins = this.compileJoins()
+    // Strip a leading `table.` for the row-lookup key — Postgres returns
+    // bare column names for SELECTs like `SELECT "users"."name"`.
+    const lookupKey = column.includes('.') ? (column.split('.').pop() as string) : column
+    const sql = `SELECT ${quoteColumnRef(column)} FROM ${quoteIdent(this.schema.name)}${joins}${where}${order}${
       this.limitN !== undefined ? ` LIMIT ${this.limitN}` : ''
     }${this.offsetN !== undefined ? ` OFFSET ${this.offsetN}` : ''}`
     const rows = await this.db.query<Record<string, unknown>>(sql, params)
-    return rows.map((r) => r[column] as T)
+    return rows.map((r) => r[lookupKey] as T)
   }
 
   // ─── Internals ─────────────────────────────────────────────────────────────
@@ -790,32 +863,50 @@ export class QueryBuilder<TModel extends object = Record<string, unknown>> {
 
       const target = this.registry.getOrFail(relation.target)
 
-      if (relation.kind === 'hasMany') {
-        // Parent's PK (`id`) → child's foreignKey column.
+      if (relation.kind === 'hasMany' || relation.kind === 'hasOne') {
+        // Parent's PK (`id`) → child's foreignKey column. Same SQL shape;
+        // `hasOne` collapses each parent's matches to a single row (or null).
         const parentIds = parents
           .map((p) => (p as Record<string, unknown>).id)
           .filter((id) => id !== undefined && id !== null)
+        const emptyValue: unknown = relation.kind === 'hasMany' ? [] : null
         if (parentIds.length === 0) {
           for (const parent of parents) {
-            ;(parent as Record<string, unknown>)[name] = []
+            ;(parent as Record<string, unknown>)[name] = emptyValue
           }
           continue
         }
         const placeholders = parentIds.map((_, i) => `$${i + 1}`).join(', ')
         const childSql = `SELECT * FROM ${quoteIdent(target.name)} WHERE ${quoteIdent(relation.foreignKey)} IN (${placeholders})`
         const children = await this.db.query<Record<string, unknown>>(childSql, parentIds)
-        const byParent = new Map<unknown, Record<string, unknown>[]>()
-        for (const row of children) {
-          const fk = row[relation.foreignKey]
-          const list = byParent.get(fk) ?? []
-          list.push(row)
-          byParent.set(fk, list)
+        if (relation.kind === 'hasMany') {
+          const byParent = new Map<unknown, Record<string, unknown>[]>()
+          for (const row of children) {
+            const fk = row[relation.foreignKey]
+            const list = byParent.get(fk) ?? []
+            list.push(row)
+            byParent.set(fk, list)
+          }
+          for (const parent of parents) {
+            const id = (parent as Record<string, unknown>).id
+            ;(parent as Record<string, unknown>)[name] = byParent.get(id) ?? []
+          }
+        } else {
+          // hasOne — first match wins; later matches indicate a data
+          // anomaly the caller should fix at the schema level (unique
+          // index on the FK). We do NOT throw — apps debugging this
+          // benefit from seeing a row rather than an exception.
+          const byParent = new Map<unknown, Record<string, unknown>>()
+          for (const row of children) {
+            const fk = row[relation.foreignKey]
+            if (!byParent.has(fk)) byParent.set(fk, row)
+          }
+          for (const parent of parents) {
+            const id = (parent as Record<string, unknown>).id
+            ;(parent as Record<string, unknown>)[name] = byParent.get(id) ?? null
+          }
         }
-        for (const parent of parents) {
-          const id = (parent as Record<string, unknown>).id
-          ;(parent as Record<string, unknown>)[name] = byParent.get(id) ?? []
-        }
-      } else {
+      } else if (relation.kind === 'belongsTo') {
         // belongsTo: parent's foreignKey column → target's PK (`id`).
         const fkValues = parents
           .map((p) => (p as Record<string, unknown>)[relation.foreignKey])
@@ -838,6 +929,46 @@ export class QueryBuilder<TModel extends object = Record<string, unknown>> {
           const fk = (parent as Record<string, unknown>)[relation.foreignKey]
           ;(parent as Record<string, unknown>)[name] = byId.get(fk) ?? null
         }
+      } else {
+        // belongsToMany: one JOIN query against the pivot returns
+        // (parent_key, target row) tuples. The synthetic
+        // `__strav_parent_key` alias surfaces the pivot side without
+        // colliding with target columns, then we bucket by it.
+        const parentIds = parents
+          .map((p) => (p as Record<string, unknown>).id)
+          .filter((id) => id !== undefined && id !== null)
+        if (parentIds.length === 0) {
+          for (const parent of parents) {
+            ;(parent as Record<string, unknown>)[name] = []
+          }
+          continue
+        }
+        const placeholders = parentIds.map((_, i) => `$${i + 1}`).join(', ')
+        const pivotTbl = quoteIdent(relation.pivot)
+        const targetTbl = quoteIdent(target.name)
+        const parentCol = quoteIdent(relation.parentKey)
+        const targetCol = quoteIdent(relation.targetKey)
+        const sql =
+          `SELECT ${targetTbl}.*, ${pivotTbl}.${parentCol} AS "__strav_parent_key" ` +
+          `FROM ${targetTbl} ` +
+          `JOIN ${pivotTbl} ON ${pivotTbl}.${targetCol} = ${targetTbl}."id" ` +
+          `WHERE ${pivotTbl}.${parentCol} IN (${placeholders})`
+        const rows = await this.db.query<Record<string, unknown>>(sql, parentIds)
+        const byParent = new Map<unknown, Record<string, unknown>[]>()
+        for (const row of rows) {
+          const pkRef = row.__strav_parent_key
+          // Strip the synthetic key before handing the row to the app —
+          // the parent_key would leak across rows otherwise and confuse
+          // any `toJSON()` serialiser.
+          delete row.__strav_parent_key
+          const list = byParent.get(pkRef) ?? []
+          list.push(row)
+          byParent.set(pkRef, list)
+        }
+        for (const parent of parents) {
+          const id = (parent as Record<string, unknown>).id
+          ;(parent as Record<string, unknown>)[name] = byParent.get(id) ?? []
+        }
       }
     }
   }
@@ -859,8 +990,28 @@ export class QueryBuilder<TModel extends object = Record<string, unknown>> {
     next.eagerLoads.push(...this.eagerLoads)
     next.withs.push(...this.withs)
     next.unions.push(...this.unions)
+    next.joins.push(...this.joins)
     next.fromOverride = this.fromOverride
     return next
+  }
+
+  /**
+   * Build the JOIN clauses to slot between FROM and WHERE. Empty string
+   * when no joins are registered. Each fragment leads with a space so
+   * it concatenates cleanly after the FROM identifier.
+   */
+  private compileJoins(): string {
+    if (this.joins.length === 0) return ''
+    return this.joins
+      .map((j) => {
+        const tbl = quoteIdent(j.table)
+        if (j.kind === 'cross') return ` CROSS JOIN ${tbl}`
+        const keyword = j.kind === 'left' ? 'LEFT JOIN' : 'JOIN'
+        const left = quoteColumnRef(j.leftColumn as string)
+        const right = quoteColumnRef(j.rightColumn as string)
+        return ` ${keyword} ${tbl} ON ${left} = ${right}`
+      })
+      .join('')
   }
 
   /**
@@ -892,7 +1043,7 @@ export class QueryBuilder<TModel extends object = Record<string, unknown>> {
       .join('')
   }
 
-  private compileWhere(params: unknown[]): string {
+  private compileWhere(params: unknown[], fromName: string = this.schema.name): string {
     const fragments: string[] = []
 
     // Soft-delete default scope: schemas declared with t.softDeletes() get
@@ -900,11 +1051,17 @@ export class QueryBuilder<TModel extends object = Record<string, unknown>> {
     // requested `withTrashed()` (include) or `onlyTrashed()` (only).
     if (this.trashedScope !== 'include' && schemaHasSoftDelete(this.schema)) {
       const op = this.trashedScope === 'only' ? 'IS NOT NULL' : 'IS NULL'
-      fragments.push(`${quoteIdent('deleted_at')} ${op}`)
+      // Qualify with the FROM table when joins are present — otherwise
+      // `deleted_at` is ambiguous if any joined table also carries one.
+      const col =
+        this.joins.length > 0
+          ? `${quoteIdent(fromName)}.${quoteIdent('deleted_at')}`
+          : quoteIdent('deleted_at')
+      fragments.push(`${col} ${op}`)
     }
 
     for (const clause of this.wheres) {
-      const ident = quoteIdent(clause.column)
+      const ident = quoteColumnRef(clause.column)
       switch (clause.op) {
         case 'is null':
           fragments.push(`${ident} IS NULL`)
@@ -942,7 +1099,9 @@ export class QueryBuilder<TModel extends object = Record<string, unknown>> {
 
   private compileOrder(): string {
     if (this.orders.length === 0) return ''
-    const fragments = this.orders.map((o) => `${quoteIdent(o.column)} ${o.direction.toUpperCase()}`)
+    const fragments = this.orders.map(
+      (o) => `${quoteColumnRef(o.column)} ${o.direction.toUpperCase()}`,
+    )
     return ` ORDER BY ${fragments.join(', ')}`
   }
 }

@@ -69,7 +69,7 @@ export interface RenderContext {
   include: (name: string, data: Record<string, unknown>) => Promise<string>
   section: (name: string, body: string) => void
   setValue: (name: string, value: unknown) => void
-  yieldSection: (name: string) => string
+  yieldSection: (name: string, fallback?: string) => string
   push: (name: string, body: string) => void
   prepend: (name: string, body: string) => void
   stackOf: (name: string) => string
@@ -77,6 +77,8 @@ export interface RenderContext {
   method: (verb: string) => string
   route: (name: string, params?: Record<string, unknown>) => string
   asset: (path: string) => string
+  islandsScript: () => string
+  cssLink: (name?: string) => string
   component: (name: string, props: Record<string, unknown>, slot: string) => Promise<string>
   island: (name: string, props: Record<string, unknown>) => Promise<string>
 }
@@ -223,8 +225,18 @@ export function compile(tokens: readonly Token[]): CompilationResult {
       }
       case 'yield': {
         requireArgs(name, args, line)
-        const yieldName = evalStringLiteral(args ?? '', line, '@yield')
-        out.line(`__out += __ctx.yieldSection(${JSON.stringify(yieldName)})`)
+        // `@yield('content')` — emit the section.
+        // `@yield('title', 'default')` — emit the section, falling
+        // back to the literal default when the child template didn't
+        // call `@section('title')`. Same shape as Blade.
+        const { name: yieldName, fallback } = splitYieldArgs(args ?? '', line)
+        if (fallback === undefined) {
+          out.line(`__out += __ctx.yieldSection(${JSON.stringify(yieldName)})`)
+        } else {
+          out.line(
+            `__out += __ctx.yieldSection(${JSON.stringify(yieldName)}, ${JSON.stringify(fallback)})`,
+          )
+        }
         break
       }
 
@@ -286,6 +298,26 @@ export function compile(tokens: readonly Token[]): CompilationResult {
         requireArgs(name, args, line)
         out.line(`__out += __ctx.asset(${args})`)
         break
+      case 'islands':
+        // `@islands` / `@islands()` — emit the script tag for the
+        // bundled `islands.js`. Path resolves through the engine's
+        // asset manifest, so the URL carries the versioning fingerprint
+        // (manifest entry → `/assets/islands/islands.abc123.js`, or
+        // mtime fallback → `?v=<hash>`).
+        out.line('__out += __ctx.islandsScript()')
+        break
+      case 'css': {
+        // `@css` / `@css()` — emit links for every configured entry.
+        // `@css('name')` — emit only the named entry. Same versioning
+        // path as `@islands`.
+        if (args === undefined || args === null || args.trim() === '') {
+          out.line('__out += __ctx.cssLink()')
+        } else {
+          const name = evalStringLiteral(args, line, '@css')
+          out.line(`__out += __ctx.cssLink(${JSON.stringify(name)})`)
+        }
+        break
+      }
 
       // ─── Explicit escape ─────────────────────────────────────────────
       case 'escape':
@@ -440,6 +472,20 @@ function splitSetArgs(args: string, line: number): { name: string; value: string
   const value = args.slice(comma + 1).trim()
   if (value === '') throw compileError('@set expects a value after the name.', line)
   return { name, value }
+}
+
+/** `@yield('name')` or `@yield('name', 'default')` — both literals. */
+function splitYieldArgs(
+  args: string,
+  line: number,
+): { name: string; fallback: string | undefined } {
+  const comma = findTopLevelComma(args)
+  if (comma === -1) {
+    return { name: evalStringLiteral(args, line, '@yield'), fallback: undefined }
+  }
+  const name = evalStringLiteral(args.slice(0, comma), line, '@yield')
+  const fallback = evalStringLiteral(args.slice(comma + 1), line, '@yield (default)')
+  return { name, fallback }
 }
 
 /** `@include('name')` or `@include('name', { ...data })`. */

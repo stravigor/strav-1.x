@@ -204,6 +204,50 @@ describe('ConfigProvider', () => {
     expect(p.dependencies).toEqual([])
   })
 
+  test('ConfigProvider.fromDirectory scans + auto-keys + applies overrides', async () => {
+    const { mkdtemp, writeFile, rm } = await import('node:fs/promises')
+    const { tmpdir } = await import('node:os')
+    const { join } = await import('node:path')
+
+    const dir = await mkdtemp(join(tmpdir(), 'cfg-discover-'))
+    try {
+      await writeFile(join(dir, 'app.ts'), `export default { name: 'auto-app' }`, 'utf8')
+      await writeFile(
+        join(dir, 'database.ts'),
+        `export default { host: 'auto-db' }`,
+        'utf8',
+      )
+      // Underscore-prefix is skipped.
+      await writeFile(join(dir, '_local.ts'), `export default { skipped: true }`, 'utf8')
+      // Non-ts files are ignored.
+      await writeFile(join(dir, 'notes.md'), `not a config`, 'utf8')
+
+      const provider = await ConfigProvider.fromDirectory({
+        directory: dir,
+        overrides: { app: { name: 'overlay' } },
+      })
+      const app = new Application().use(provider)
+      await app.start({ signalHandlers: false })
+
+      const config = app.resolve(ConfigRepository)
+      expect(config.get('app.name')).toBe('overlay') // override wins
+      expect(config.get('database.host')).toBe('auto-db')
+      expect(config.get('_local.skipped')).toBeUndefined()
+      expect(config.get('local.skipped')).toBeUndefined()
+      expect(config.get('notes')).toBeUndefined()
+
+      await app.shutdown()
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  test('ConfigProvider.fromDirectory throws when directory is missing', async () => {
+    await expect(
+      ConfigProvider.fromDirectory({ directory: '/nonexistent/strav-cfg-test' }),
+    ).rejects.toThrow(/could not read/)
+  })
+
   test('config is mutable during register/boot (before app:booted fires)', async () => {
     const app = new Application()
 

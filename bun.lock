@@ -171,15 +171,23 @@
       "dependencies": {
         "@strav/kernel": "workspace:*",
       },
+      "devDependencies": {
+        "@strav/broadcast": "workspace:*",
+        "@strav/database": "workspace:*",
+        "@strav/http": "workspace:*",
+        "@strav/mail": "workspace:*",
+      },
       "peerDependencies": {
         "@strav/broadcast": "workspace:*",
         "@strav/database": "workspace:*",
+        "@strav/http": "workspace:*",
         "@strav/mail": "workspace:*",
         "@types/bun": ">=1.3.14",
       },
       "optionalPeers": [
         "@strav/broadcast",
         "@strav/database",
+        "@strav/http",
         "@strav/mail",
       ],
     },

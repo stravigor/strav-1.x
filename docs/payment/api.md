@@ -133,6 +133,65 @@ interface NormalizedWebhookEvent {
 
 `MockDriver` — in-memory reference implementation. `unsupported(provider, op, reason?)` — helper drivers use to stub out methods they don't support.
 
+### Billable mixin
+
+```ts
+class Billable implements BillableStorage {
+  payment_customers?: Record<string, string>          // default storage field
+
+  paymentCustomerId(provider: string): string | undefined
+  setPaymentCustomerId(provider: string, id: string): void | Promise<void>
+
+  customer(manager, provider?): Promise<PaymentCustomer | null>
+  createCustomer(manager, input, provider?): Promise<PaymentCustomer>
+  customerOrCreate(manager, input, provider?): Promise<PaymentCustomer>
+
+  charge(manager, input: Omit<CreateChargeInput, 'customer'>, provider?): Promise<PaymentCharge>
+  subscribe(manager, input: Omit<CreateSubscriptionInput, 'customer'>, provider?): Promise<PaymentSubscription>
+  paymentMethods(manager, provider?): Promise<PaymentMethod[]>
+
+  subscriptions(ledger, provider): Promise<PaymentSubscriptionRow[]>
+  invoices(ledger, provider, opts?: { limit? }): Promise<PaymentInvoiceRow[]>
+  hasActiveSubscription(ledger, provider): Promise<boolean>
+  subscribedToPrice(ledger, priceId, provider): Promise<boolean>
+}
+
+interface BillableStorage {
+  paymentCustomerId(provider: string): string | undefined
+  setPaymentCustomerId(provider: string, id: string): void | Promise<void>
+}
+
+function billable<TBase>(Base: TBase): TBase & Ctor<Billable>
+```
+
+Cashier-style billing helper. Apps extend `Billable` directly, or use `billable(BaseModel)` to layer it onto an existing class. The `Billable` methods take `PaymentManager` / `PaymentLedger` **explicitly per call** — no implicit container lookup, same trade-off `@strav/notification`'s mixin avoids.
+
+```ts
+class User extends billable(Model) {
+  static schema = userSchema
+  // ...
+}
+
+await user.createCustomer(payments, { email: user.email })
+await user.charge(payments, { amount: 4900, currency: 'usd', paymentMethod: 'pm_card' })
+const subs = await user.subscriptions(payments.ledger!, 'stripe')
+const onPro = await user.subscribedToPrice(payments.ledger!, 'price_pro', 'stripe')
+```
+
+**Storage default.** The base implementation reads/writes a `payment_customers: Record<provider, string>` jsonb field on the model. Apps that already have that column work zero-config; apps with a different layout (e.g. a single `stripe_customer_id` column) override `paymentCustomerId()` + `setPaymentCustomerId()`.
+
+**Why `Billable` and `billable()`.** New domain models extend `Billable` directly. Apps that already extend `Model` or another base class use `billable(Model)` for prototype-merged behaviour — both routes produce the same surface.
+
+Helpers below feed the mixin's ledger reads. They're public API on `PaymentLedger`:
+
+```ts
+class PaymentLedger {
+  customerByProviderId(provider, providerId): Promise<PaymentCustomerRow | null>
+  subscriptionsForCustomer(provider, customerProviderId): Promise<PaymentSubscriptionRow[]>
+  invoicesForCustomer(provider, customerProviderId, opts?: { limit? }): Promise<PaymentInvoiceRow[]>
+}
+```
+
 ## `@strav/payment/stripe`
 
 | Export | Notes |

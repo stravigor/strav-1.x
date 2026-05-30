@@ -84,7 +84,7 @@ const a = defineSchema('a', Archetype.Entity, (t) => {
 })
 const b = defineSchema('b', Archetype.Entity, (t) => {
   t.id()
-  t.reference('a_id').to(a)
+  t.foreign('a_id').to(a)
 })
 // Run the generator. Later, hand-write a migration that adds the FK from a → b.
 ```

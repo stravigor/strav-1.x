@@ -183,6 +183,59 @@ export default (app: App) => {
     expect(result.islands).toEqual(['charts.Bar'])
   })
 
+  test('multi-source: namespaces prefix island names', async () => {
+    const authDir = join(tmpRoot, 'auth-islands')
+    const billingDir = join(tmpRoot, 'billing-islands')
+    await mkdir(authDir, { recursive: true })
+    await mkdir(billingDir, { recursive: true })
+    await writeFile(join(inputDir, 'Counter.vue'), `<template><div /></template>`, 'utf8')
+    await writeFile(join(authDir, 'LoginForm.vue'), `<template><div /></template>`, 'utf8')
+    await writeFile(join(billingDir, 'Checkout.vue'), `<template><div /></template>`, 'utf8')
+
+    const result = await buildIslands({
+      sources: [
+        { inputDir }, // anonymous host source
+        { inputDir: authDir, namespace: 'auth' },
+        { inputDir: billingDir, namespace: 'billing' },
+      ],
+      outputDir,
+      external: ['vue'],
+    })
+
+    expect(new Set(result.islands)).toEqual(
+      new Set(['Counter', 'auth.LoginForm', 'billing.Checkout']),
+    )
+  })
+
+  test('multi-source: rejects >1 anonymous source', async () => {
+    const otherDir = join(tmpRoot, 'other')
+    await mkdir(otherDir, { recursive: true })
+    await expect(
+      buildIslands({
+        sources: [{ inputDir }, { inputDir: otherDir }],
+        outputDir,
+        external: ['vue'],
+      }),
+    ).rejects.toThrow(/at most one source may omit `namespace`/)
+  })
+
+  test('multi-source: rejects duplicate namespaces', async () => {
+    const a = join(tmpRoot, 'a')
+    const b = join(tmpRoot, 'b')
+    await mkdir(a, { recursive: true })
+    await mkdir(b, { recursive: true })
+    await expect(
+      buildIslands({
+        sources: [
+          { inputDir: a, namespace: 'admin' },
+          { inputDir: b, namespace: 'admin' },
+        ],
+        outputDir,
+        external: ['vue'],
+      }),
+    ).rejects.toThrow(/duplicate namespace 'admin'/)
+  })
+
   test('honors a custom filename', async () => {
     await writeFile(join(inputDir, 'A.vue'), `<template><div /></template>`, 'utf8')
     const result = await buildIslands({

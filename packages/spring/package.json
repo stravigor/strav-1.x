@@ -1,6 +1,6 @@
 {
   "name": "@strav/spring",
-  "version": "1.0.0-alpha.28",
+  "version": "1.0.0-alpha.29",
   "description": "Strav project scaffolder — `bunx @strav/spring my-app` writes a working app skeleton (bin/, bootstrap/, config/, routes/, …) per spec/directory-structure.md. Two templates: --api (headless REST) and --web (Vue islands + .strav views). Runtime-independent of the framework — no @strav/* runtime deps.",
   "type": "module",
   "main": "./src/index.ts",

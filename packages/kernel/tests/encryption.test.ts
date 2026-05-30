@@ -169,3 +169,137 @@ describe('EncryptionProvider', () => {
     expect(p.name).toBe('encryption')
   })
 })
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Key rotation (previousKeys)
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('AesGcm256Cipher — rotation', () => {
+  test('options-form constructor accepts a current key + previous-keys ring', () => {
+    const k1 = Uint8Array.from(randomBytes(32))
+    const k2 = Uint8Array.from(randomBytes(32))
+    expect(() => new AesGcm256Cipher({ key: k1, previousKeys: [k2] })).not.toThrow()
+  })
+
+  test('decrypts ciphertext written under a previous key after rotation', () => {
+    const oldKey = Uint8Array.from(randomBytes(32))
+    const newKey = Uint8Array.from(randomBytes(32))
+
+    const oldCipher = new AesGcm256Cipher(oldKey)
+    const ct = oldCipher.encrypt('secret-value')
+
+    // After rotation: app boots with new key + old in previousKeys.
+    const rotated = new AesGcm256Cipher({ key: newKey, previousKeys: [oldKey] })
+    expect(rotated.decrypt(ct)).toBe('secret-value')
+  })
+
+  test('new writes go out under the current key', () => {
+    const oldKey = Uint8Array.from(randomBytes(32))
+    const newKey = Uint8Array.from(randomBytes(32))
+
+    const rotated = new AesGcm256Cipher({ key: newKey, previousKeys: [oldKey] })
+    const ct = rotated.encrypt('fresh')
+
+    // A cipher with ONLY the new key can decrypt fresh writes.
+    expect(new AesGcm256Cipher(newKey).decrypt(ct)).toBe('fresh')
+    // A cipher with ONLY the old key cannot.
+    expect(() => new AesGcm256Cipher(oldKey).decrypt(ct)).toThrow()
+  })
+
+  test('walks every previous key in order until one verifies', () => {
+    const k1 = Uint8Array.from(randomBytes(32))
+    const k2 = Uint8Array.from(randomBytes(32))
+    const k3 = Uint8Array.from(randomBytes(32))
+
+    const ctUnderK3 = new AesGcm256Cipher(k3).encrypt('three-rotations-ago')
+    const rotated = new AesGcm256Cipher({ key: k1, previousKeys: [k2, k3] })
+    expect(rotated.decrypt(ctUnderK3)).toBe('three-rotations-ago')
+  })
+
+  test('throws with a clear message when no key in the ring verifies', () => {
+    const k1 = Uint8Array.from(randomBytes(32))
+    const k2 = Uint8Array.from(randomBytes(32))
+    const k3 = Uint8Array.from(randomBytes(32))
+
+    const ct = new AesGcm256Cipher(k1).encrypt('mystery')
+    const rotated = new AesGcm256Cipher({ key: k2, previousKeys: [k3] })
+    expect(() => rotated.decrypt(ct)).toThrow(/did not decrypt under any of the 2 configured key/)
+  })
+
+  test('rejects previous keys with the wrong length at construction time', () => {
+    const k1 = Uint8Array.from(randomBytes(32))
+    expect(() => new AesGcm256Cipher({ key: k1, previousKeys: [new Uint8Array(16)] })).toThrow(
+      /previousKeys\[0\] must be 32 bytes/,
+    )
+  })
+
+  test('EncryptionProvider parses config.encryption.previousKeys (hex / base64 / Uint8Array)', async () => {
+    const newKey = Uint8Array.from(randomBytes(32))
+    const oldKey = Uint8Array.from(randomBytes(32))
+
+    // Encrypt under the OLD key with a standalone cipher.
+    const ct = new AesGcm256Cipher(oldKey).encrypt('via-provider')
+
+    // Boot an Application with rotation config; resolve Cipher, decrypt.
+    const app = new Application()
+    app.useProviders([
+      new ConfigProvider({
+        encryption: {
+          key: Buffer.from(newKey).toString('hex'),
+          previousKeys: [Buffer.from(oldKey).toString('base64')],
+        },
+      }),
+      new EncryptionProvider(),
+    ])
+    await app.start({ signalHandlers: false })
+    try {
+      const cipher = app.resolve(Cipher)
+      expect(cipher.decrypt(ct)).toBe('via-provider')
+    } finally {
+      await app.shutdown()
+    }
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// blindIndex
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('AesGcm256Cipher — blindIndex', () => {
+  test('returns a 64-char hex string', () => {
+    const cipher = new AesGcm256Cipher(KEY_BYTES)
+    const hex = cipher.blindIndex('user@example.com')
+    expect(hex).toMatch(/^[0-9a-f]{64}$/)
+  })
+
+  test('deterministic — same input under the same key returns the same hex', () => {
+    const cipher = new AesGcm256Cipher(KEY_BYTES)
+    expect(cipher.blindIndex('hi')).toBe(cipher.blindIndex('hi'))
+  })
+
+  test('different keys produce different hashes for the same input', () => {
+    const k1 = Uint8Array.from(randomBytes(32))
+    const k2 = Uint8Array.from(randomBytes(32))
+    expect(new AesGcm256Cipher(k1).blindIndex('x')).not.toBe(
+      new AesGcm256Cipher(k2).blindIndex('x'),
+    )
+  })
+
+  test('different inputs produce different hashes under the same key', () => {
+    const cipher = new AesGcm256Cipher(KEY_BYTES)
+    expect(cipher.blindIndex('a')).not.toBe(cipher.blindIndex('b'))
+  })
+
+  test('always uses the CURRENT key (rotation does not change existing index values for the new key)', () => {
+    const oldKey = Uint8Array.from(randomBytes(32))
+    const newKey = Uint8Array.from(randomBytes(32))
+    const rotated = new AesGcm256Cipher({ key: newKey, previousKeys: [oldKey] })
+    // Whatever the rotated cipher returns, it must equal what a fresh
+    // cipher built from the same current key produces.
+    expect(rotated.blindIndex('x')).toBe(new AesGcm256Cipher(newKey).blindIndex('x'))
+  })
+
+  test('base-class blindIndex throws when no encryption is configured', () => {
+    expect(() => new Cipher().blindIndex('x')).toThrow(/no encryption key is configured/)
+  })
+})

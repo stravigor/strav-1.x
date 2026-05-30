@@ -32,14 +32,51 @@
  */
 
 import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
 import { join, parse as parsePath, relative, resolve, sep } from 'node:path'
 import { TemplateError } from '../template_error.ts'
 import { vueSfcPlugin } from './vue_plugin.ts'
 
-export interface BuildIslandsOptions {
+/**
+ * One island source — a directory of `.vue` files plus an optional
+ * namespace that prefixes every component name from that source.
+ *
+ * Modular apps organise islands per module (`app/modules/auth/islands`,
+ * `app/modules/billing/islands`) and pass each as a source with a
+ * unique namespace. Component names then look like `auth.LoginForm`,
+ * `billing.Checkout` in templates — collision-proof, route-aware.
+ *
+ * At most one source may omit `namespace` — that's the host app's
+ * anonymous "root" islands. Components from it use their bare
+ * filename (`Counter`). Every other source must declare a namespace.
+ */
+export interface IslandSource {
   /** Directory containing `*.vue` islands. Recursively scanned. */
   inputDir: string
+  /**
+   * Optional namespace prefix. When set, every island name from this
+   * source is emitted as `<namespace>.<originalName>`. Templates
+   * reference it as `@island('<namespace>.<name>', { ... })`.
+   */
+  namespace?: string
+}
+
+export interface BuildIslandsOptions {
+  /**
+   * Directory containing `*.vue` islands — the single-source
+   * shorthand. Use `sources` instead for modular apps with multiple
+   * island trees.
+   *
+   * Mutually exclusive with `sources`. When both are set, `sources`
+   * wins.
+   */
+  inputDir?: string
+  /**
+   * Multiple island sources merged into a single bundle. Each source
+   * contributes `.vue` files and any root-level `setup.*` to the
+   * shared Vue app. Useful when the host app organises islands per
+   * module, or when vendor packages ship their own islands.
+   */
+  sources?: readonly IslandSource[]
   /**
    * Where to write the bundled `islands.js`. Created if missing.
    * Most apps point this at `public/assets/islands/` so the file
@@ -76,58 +113,129 @@ export interface BuildIslandsResult {
 const SETUP_FILENAME_RE = /^setup(\..+)?\.(ts|js|mts|mjs)$/
 
 export async function buildIslands(opts: BuildIslandsOptions): Promise<BuildIslandsResult> {
-  const inputDir = resolve(opts.inputDir)
+  if (opts.inputDir === undefined && opts.sources === undefined) {
+    throw new TemplateError(
+      'buildIslands: pass either `inputDir` (single source) or `sources` (multi-source).',
+    )
+  }
+
+  // Normalise: turn the single-`inputDir` form into a one-source list
+  // so the rest of the pipeline only deals with the multi-source shape.
+  const sources: readonly IslandSource[] =
+    opts.sources !== undefined
+      ? opts.sources
+      : [{ inputDir: opts.inputDir as string }]
+
+  // At most one anonymous (no namespace) source.
+  const anon = sources.filter((s) => s.namespace === undefined || s.namespace === '')
+  if (anon.length > 1) {
+    throw new TemplateError(
+      `buildIslands: at most one source may omit \`namespace\`. Got ${anon.length} anonymous sources.`,
+      { context: { anonymousSources: anon.map((s) => s.inputDir) } },
+    )
+  }
+  // Namespace uniqueness.
+  const seenNs = new Set<string>()
+  for (const s of sources) {
+    if (s.namespace === undefined || s.namespace === '') continue
+    if (seenNs.has(s.namespace)) {
+      throw new TemplateError(
+        `buildIslands: duplicate namespace '${s.namespace}' across sources.`,
+        { context: { namespace: s.namespace } },
+      )
+    }
+    seenNs.add(s.namespace)
+  }
+
   const outputDir = resolve(opts.outputDir)
   const filename = opts.filename ?? 'islands.js'
 
-  const { vueFiles, setupFiles } = await discoverInputs(inputDir)
-
   await mkdir(outputDir, { recursive: true })
 
-  if (vueFiles.length === 0) {
+  // Discover every source in parallel, then merge.
+  const perSource = await Promise.all(
+    sources.map(async (src) => {
+      const abs = resolve(src.inputDir)
+      const discovered = await discoverInputs(abs)
+      return { absDir: abs, namespace: src.namespace, ...discovered }
+    }),
+  )
+
+  const islands: Array<{ name: string; path: string }> = []
+  const setupFiles: string[] = []
+  const seenNames = new Map<string, string>()
+
+  for (const src of perSource) {
+    for (const path of src.vueFiles) {
+      const bare = islandNameFor(src.absDir, path)
+      const name =
+        src.namespace !== undefined && src.namespace !== ''
+          ? `${src.namespace}.${bare}`
+          : bare
+      const existing = seenNames.get(name)
+      if (existing !== undefined) {
+        throw new TemplateError(
+          `Duplicate island name '${name}' — two .vue files resolve to the same island ('${existing}' and '${path}').`,
+          { context: { name, files: [existing, path] } },
+        )
+      }
+      seenNames.set(name, path)
+      islands.push({ name, path })
+    }
+    setupFiles.push(...src.setupFiles)
+  }
+  // Stable ordering for setup files across all sources.
+  setupFiles.sort()
+
+  if (islands.length === 0) {
     return { output: '', islands: [], setups: [] }
   }
 
-  // Map each .vue file to its island name, validating no duplicates.
-  const islands: Array<{ name: string; path: string }> = []
-  const seenNames = new Map<string, string>()
-  for (const path of vueFiles) {
-    const name = islandNameFor(inputDir, path)
-    const existing = seenNames.get(name)
-    if (existing !== undefined) {
-      throw new TemplateError(
-        `Duplicate island name '${name}' — two .vue files resolve to the same island ('${existing}' and '${path}').`,
-        { context: { name, files: [existing, path] } },
-      )
-    }
-    seenNames.set(name, path)
-    islands.push({ name, path })
-  }
-
-  // Write the virtual entry to a sibling temp dir so the bundler's
-  // `[name]` token maps cleanly to `<filename>` in `outputDir`.
-  const entryDir = await mkdtemp(join(tmpdir(), 'strav-islands-entry-'))
+  // Write the virtual entry inside the FIRST source's directory, NOT
+  // `os.tmpdir()` — when Bun.build resolves `import 'vue'` from the
+  // synthetic entry, it walks up the file's directory tree looking
+  // for `node_modules/`. An entry under `/tmp` lands outside the
+  // project root and resolves nothing; an entry under a project
+  // source dir walks up into the app's `node_modules/vue/` cleanly.
+  const entryRoot = perSource[0]?.absDir ?? resolve(opts.inputDir ?? '.')
+  const entryDir = await mkdtemp(join(entryRoot, '.strav-build-entry-'))
   try {
     const entryName = parsePath(filename).name
     const entryPath = join(entryDir, `${entryName}.ts`)
     await writeFile(entryPath, generateEntry(islands, setupFiles), 'utf8')
 
-    const result = await Bun.build({
-      entrypoints: [entryPath],
-      outdir: outputDir,
-      naming: filename,
-      target: 'browser',
-      minify: opts.minify ?? true,
-      sourcemap: opts.sourcemap === true ? 'inline' : 'none',
-      external: opts.external,
-      plugins: [vueSfcPlugin()],
-    })
+    let result: Awaited<ReturnType<typeof Bun.build>>
+    try {
+      result = await Bun.build({
+        entrypoints: [entryPath],
+        outdir: outputDir,
+        naming: filename,
+        target: 'browser',
+        minify: opts.minify ?? true,
+        sourcemap: opts.sourcemap === true ? 'inline' : 'none',
+        external: opts.external,
+        plugins: [vueSfcPlugin()],
+      })
+    } catch (cause) {
+      // Bun.build throws (rather than returning `{ success: false }`)
+      // for critical errors — missing peer deps, a plugin throwing in
+      // `setup`, a syntax error inside the synthetic entry. The
+      // `cause.message` is the generic `"Bundle failed"`; the real
+      // diagnostics live on `.errors` / `.logs`. Surface both so the
+      // CLI prints something the user can act on.
+      const errors = extractBunBuildMessages(cause)
+      throw new TemplateError(
+        `buildIslands: Bun.build threw — ${errors.length > 0 ? errors.join('\n') : (cause as Error).message ?? String(cause)}`,
+        { cause, context: { errors } },
+      )
+    }
 
     if (!result.success) {
       const messages = result.logs.map((l) => l.message ?? String(l)).join('\n')
-      throw new TemplateError(`buildIslands failed:\n${messages}`, {
-        context: { logs: result.logs.map((l) => l.message) },
-      })
+      throw new TemplateError(
+        `buildIslands failed:\n${messages.length > 0 ? messages : '(no diagnostic — try running without --minify)'}`,
+        { context: { logs: result.logs.map((l) => l.message) } },
+      )
     }
 
     return {
@@ -141,6 +249,31 @@ export async function buildIslands(opts: BuildIslandsOptions): Promise<BuildIsla
 }
 
 // ─── Internals ──────────────────────────────────────────────────────────────
+
+/**
+ * Bun.build throws an Error whose `.message` is the generic
+ * `"Bundle failed"`. The actual messages are attached either as an
+ * `errors` array (BuildError) or as the AggregateError-style
+ * `.errors`. Pull whichever is present so callers see real output.
+ */
+function extractBunBuildMessages(cause: unknown): string[] {
+  if (cause === null || typeof cause !== 'object') return []
+  const c = cause as { errors?: unknown; logs?: unknown }
+  const collected: string[] = []
+  const list = Array.isArray(c.errors) ? c.errors : Array.isArray(c.logs) ? c.logs : []
+  for (const entry of list) {
+    if (entry === null || entry === undefined) continue
+    if (typeof entry === 'string') {
+      collected.push(entry)
+    } else if (typeof entry === 'object' && 'message' in entry) {
+      collected.push(String((entry as { message: unknown }).message))
+    } else {
+      collected.push(String(entry))
+    }
+  }
+  return collected
+}
+
 
 interface DiscoveredInputs {
   vueFiles: string[]

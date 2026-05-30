@@ -3,10 +3,45 @@
 @set('title', '{{projectName}}')
 
 @section('content')
-  <h1>Welcome to {{projectName}}</h1>
-  <p>You're looking at <code>resources/views/pages/index.strav</code>.</p>
+  {{-- Hero --}}
+  <div class="mb-24">
+    <div class="inline-block border border-primary px-3 py-1 mb-8 text-[11px] font-mono tracking-widest uppercase text-primary">
+      V1.0.0-AI • Local Environment Active
+    </div>
+    <h1 class="text-huge mb-8">
+      The Fast Path for<br>
+      <span class="text-primary">{{projectName}}</span>
+    </h1>
+    <p class="text-xl md:text-2xl text-on-surface-variant max-w-2xl leading-tight font-medium">
+      An industrial-grade architecture for modern web applications. Engineered for speed and the uncompromising developer.
+    </p>
+  </div>
 
-  <p>The button below is a Vue 3 island — see <code>resources/ts/islands/counter.vue</code>. Run <code>bun strav view:build</code> to compile islands into <code>public/assets/islands/</code>.</p>
+  {{-- Edit these to get started --}}
+  <div class="grid gap-0 border border-black bg-white">
+    <div class="p-8 md:p-12">
+      <h2 class="text-3xl font-bold tracking-tighter mb-8 italic">Edit these to get started</h2>
 
-  @island('Counter', { start: 0 })
+      <div class="flex flex-col divide-y divide-black/10 border-t border-black/10">
+        <div class="py-4 flex flex-col md:flex-row md:justify-between md:items-center gap-2 group">
+          <code class="font-mono text-primary group-hover:underline">resources/views/pages/index.strav</code>
+          <span class="text-[10px] font-mono uppercase text-on-surface-variant">This Page</span>
+        </div>
+        <div class="py-4 flex flex-col md:flex-row md:justify-between md:items-center gap-2">
+          <code class="font-mono text-black">resources/views/layouts/app.strav</code>
+          <span class="text-[10px] font-mono uppercase text-on-surface-variant">Layout Shell</span>
+        </div>
+        <div class="py-4 flex flex-col md:flex-row md:justify-between md:items-center gap-2">
+          <code class="font-mono text-black">resources/css/app.css</code>
+          <span class="text-[10px] font-mono uppercase text-on-surface-variant">Styles</span>
+        </div>
+      </div>
+
+      <div class="mt-12 flex flex-wrap gap-4">
+        <span class="text-[10px] font-mono font-bold px-2 py-1 border border-black">BUN</span>
+        <span class="text-[10px] font-mono font-bold px-2 py-1 border border-black">TYPESCRIPT</span>
+        <span class="text-[10px] font-mono font-bold px-2 py-1 border border-primary text-primary">POSTGRESQL</span>
+      </div>
+    </div>
+  </div>
 @endsection

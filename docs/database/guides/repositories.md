@@ -249,7 +249,23 @@ const users = await this.users.query()
 .orderBy(col, 'asc' | 'desc')
 .limit(n)
 .offset(n)
+.join(table, leftCol, rightCol)                          // INNER JOIN <table> ON <left> = <right>
+.leftJoin(table, leftCol, rightCol)
+.crossJoin(table)                                        // no ON clause
 ```
+
+Column refs in WHERE / ORDER BY / SELECT / JOIN can be qualified — `'users.id'` becomes `"users"."id"`. `'users.*'` selects every column from the joined table. When any join is present, the auto soft-delete predicate is qualified with the main table so the reference stays unambiguous.
+
+```ts
+await orders.query()
+  .join('users', 'users.id', 'orders.user_id')
+  .where('users.role', 'admin')
+  .select('orders.*', 'users.name')
+  .orderBy('orders.created_at', 'desc')
+  .get()
+```
+
+For most reads, prefer `.with('relation')` over a manual join — it batches the child fetch and returns typed parents with children attached. Reach for joins when you need to filter or sort on the related table's columns, or when you need a CROSS JOIN.
 
 ### Terminals
 

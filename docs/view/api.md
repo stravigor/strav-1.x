@@ -1,6 +1,6 @@
 # @strav/view — API Reference
 
-> **Status:** Engine + islands shipped. The frozen directive set is implemented in full (including `@island`); a Vue SFC bundler (`buildIslands`) compiles each island into a self-mounting browser bundle. Pages auto-router + `view:cache` / `view:build` console commands deferred (the latter wait on `@strav/cli` in M4).
+> **Status:** Feature-complete for 1.0. Engine + islands + pages auto-router + console commands (`view:cache` / `view:clear` / `view:build`) + disk cache + asset versioning all shipped. Remaining gaps (`@csrf` / `@method` / `@route` are stubs until the `@strav/http` session + named-route map is wired in) are intentional cross-package wiring, not view-package work.
 
 ## `Token` / `TokenType`
 
@@ -92,12 +92,26 @@ Encodes `&`, `<`, `>`, `"`, `'`. `null` / `undefined` render as the empty string
 class ViewEngine {
   constructor(opts: ViewEngineOptions)
   render(name: string, data?: Record<string, unknown>): Promise<string>
+  clearCache(): void
+  clearDiskCache(): Promise<void>
+  warmCache(): Promise<{ warmed: string[]; errors: Array<{ name: string; error: unknown }> }>
+  readonly viewDirectory: string
+  readonly diskCacheDirectory: string | undefined
 }
 
 interface ViewConfig {
   directory?: string                                // default 'resources/views'
   cache?: boolean                                   // default true
   globals?: Record<string, unknown>                 // merged into every render's data
+  diskCache?: boolean | { directory?: string }     // default true → 'storage/cache/views'
+  assets?: false | AssetManifestOptions            // default {} (manifest-aware @asset)
+  islandsDir?: string                              // default 'resources/islands'
+  islandsOut?: string                              // default 'public/assets/islands'
+  pages?: {
+    autoRoute?: boolean                            // default true
+    middleware?: readonly string[]                 // empty by default
+    pagesDir?: string                              // default '<directory>/pages'
+  }
 }
 
 interface ViewEngineOptions {
@@ -109,6 +123,10 @@ interface ViewEngineOptions {
 **Name resolution.** `view.render('pages.dashboard', ...)` → `{directory}/pages/dashboard.strav`. Dots in the name become path separators. Names that resolve outside the configured `directory` throw `TemplateError` — defence against template-name path traversal.
 
 **Compilation + cache.** Tokenise + compile on first hit; cache the render function in memory keyed by template name. Disable the cache for dev (`config.view.cache = false`) so edits take effect without restart.
+
+**Disk cache.** When `cache: true` (the default), compiled output is also persisted to `config.view.diskCache.directory` (default `storage/cache/views`). On boot, the first `render()` for each template reads from disk instead of re-tokenising — useful for production where templates don't change between deploys. The on-disk key is a hash of the template source, so any edit auto-invalidates. Disk cache is a speed-up, not a correctness layer: write/read failures fall back to in-process compilation. Disable with `diskCache: false`. Wipe with `view:clear` or `ViewEngine.clearDiskCache()`.
+
+**Asset versioning.** `@asset(path)` routes through an `AssetManifest` by default. When `<publicDir>/manifest.json` exists, it maps logical paths (`'css/app.css'`) to fingerprinted output paths (`'css/app.abc123.css'`); both the Strav-flat (`{ "x": "y" }`) and Vite (`{ "x": { "file": "y" } }`) shapes are accepted. Without a manifest, the resolver falls back to `?v=<mtime-hash>` query strings when the file exists under `publicDir`. Configure via `config.view.assets` (`{ publicDir?, manifest?, prefix? }`); opt out with `assets: false` for pure pass-through.
 
 **Layout chain.** When a template `@extends('layouts.app')`, the child renders first (populating the shared section + stack pool), then the parent renders with the pool available to `@yield` / `@stack`. The chain can nest — grandparents work too. A 50-deep guard prevents infinite recursion (circular `@extends` / `@include`).
 
@@ -247,7 +265,7 @@ Reverse-routing helper. Slice 1 stub returns the route name verbatim. Real wirin
 
 ### `@asset('path/to/file')`
 
-Asset URL helper. Slice 1 returns the input path verbatim. Real implementation (versioning + bundle integration) lands with the view-build slice.
+Asset URL helper. Resolves through the `AssetManifest` configured on the engine — see the `ViewEngine` "Asset versioning" note. With a Strav-flat / Vite-style `manifest.json` present, returns the fingerprinted URL (`/css/app.abc123.css`). Without one, falls back to mtime-based query strings in dev (`/css/app.css?v=deadbe`). Set `config.view.assets = false` to get the original pass-through behaviour.
 
 ### `@raw` / `@endraw`
 
@@ -357,7 +375,7 @@ export default (app: App) => {
 
 Multiple setup files apply in alphabetical order — useful when a router setup depends on a Pinia store being available first (`setup.pinia.ts` runs before `setup.router.ts`).
 
-**Optional peer deps.** `vue` + `@vue/compiler-sfc` are declared as `peerDependenciesMeta.optional` on `@strav/view`. Apps that don't use islands never install them; apps that do, install both.
+**Peer deps.** `vue` ^3.5 + `@vue/compiler-sfc` ^3.5 are required peers on `@strav/view` — the realistic shape is "every app has some interactivity," so islands work out of the box without an extra install step. Spring's `--web` template wires them up automatically.
 
 **`external`.** Pass `external: ['vue']` to keep Vue out of the bundle (load from a CDN instead). Default: Vue inlined into `islands.js` so a single download serves the whole page.
 
@@ -478,12 +496,58 @@ Doesn't support:
 - CSS Modules.
 - Custom SFC blocks (`<docs>`, `<i18n>`, …).
 
+## `AssetManifest`
+
+```ts
+class AssetManifest {
+  constructor(opts?: AssetManifestOptions)
+  version(path: string): string
+  reload(): void
+  load(): Promise<void>
+}
+
+interface AssetManifestOptions {
+  publicDir?: string   // default 'public'
+  manifest?: string    // default '<publicDir>/manifest.json'
+  prefix?: string      // default '/'
+}
+```
+
+The implementation behind `@asset(path)`. Two modes:
+
+- **Manifest mode** — when `manifest` is present, looks up `path` in the JSON. Accepts both `{ "x": "y" }` (Strav-flat) and `{ "x": { "file": "y" } }` (Vite) shapes.
+- **Dev fallback** — when no manifest exists, appends `?v=<mtime-hash>` for files that exist under `publicDir`. URLs that don't resolve to a file pass through with just the prefix.
+
+URLs that look absolute (`https://…`, `//cdn.example.com/…`) pass through unchanged. Resolutions are cached per-call; `reload()` drops both the cache and the parsed manifest (the `view:clear` command calls this).
+
+Use directly to share the same manifest across an app — `inject(AssetManifest)` if you've registered it in the container.
+
+## `DiskCache`
+
+```ts
+class DiskCache {
+  constructor(directory: string)
+  readonly directory: string
+  keyFor(name: string, source: string): string
+  read(name: string, source: string): Promise<CompilationResult | undefined>
+  write(name: string, source: string, compiled: CompilationResult): Promise<void>
+  clear(): Promise<void>
+}
+```
+
+Persists compiled templates between process boots. The on-disk key is `<hash>.json` where the hash covers `name` + source — any template edit auto-invalidates the entry. Storage shape:
+
+```json
+{ "name": "pages.dashboard", "layout": "layouts.app", "source": "async function __render…" }
+```
+
+Read failures (corrupt JSON, missing file, bad source) return `undefined`. Write failures (read-only fs, perms) are swallowed. Disk cache is a speed-up, not a correctness layer — `ViewEngine` always falls back to in-process tokenize + compile.
+
+`ViewEngine` constructs one automatically when `config.view.cache` and `config.view.diskCache` are enabled; you only construct one directly to build out-of-band tooling (e.g. a CI step that pre-warms the cache).
+
 ## What this doesn't ship yet
 
-The engine + islands cover server-rendered templates with client-hydratable Vue pockets. Still to land:
+The engine + islands + disk cache + asset versioning cover everything the framework owns. Still to land:
 
-- **Pages auto-router** — `resources/views/pages/**/*.strav` → file-based `GET` routes, with `[slug]` + `[...rest]` segments, leading-underscore exclusion, and static-beats-dynamic precedence.
-- **Disk cache + `view:cache` console command** — precompiles every template at deploy time for one-disk-read production boot.
-- **`view:build` command** — same as `buildIslands` but driven by `@strav/cli`. Programmatic API exists today.
-- **Asset versioning** — real `asset()` URLs with content-hash query strings.
 - **Real `@csrf` / `@method` / `@route` wiring** — currently stubs; wires when `@strav/http`'s session middleware + named-route map are accessible to the engine.
+- **Response-cache middleware** — caching the rendered HTML for a route (not the compiled template) lives in `@strav/http` / `@strav/cache`, not `@strav/view`.

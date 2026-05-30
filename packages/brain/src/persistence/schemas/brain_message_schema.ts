@@ -47,7 +47,7 @@ export const brainMessageSchema = defineSchema(
   Archetype.Event,
   (t) => {
     t.id()
-    t.reference('thread_id').to(brainThreadSchema).onDelete('cascade').notNull()
+    t.foreign('thread_id').to(brainThreadSchema).onDelete('cascade').notNull()
     t.integer('turn_index').notNull()
     t.enum('role', ['user', 'assistant']).notNull()
     t.json('content').notNull()

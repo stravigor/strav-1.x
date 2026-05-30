@@ -35,7 +35,26 @@ export function vueSfcPlugin(): BunPlugin {
       // Dynamic import so the plugin only loads `@vue/compiler-sfc`
       // when an app actually builds islands. Users that don't use
       // islands never pay the import cost.
-      const sfc = await import('@vue/compiler-sfc')
+      //
+      // Resolve against `process.cwd()` (the app root) — Bun's ESM
+      // resolution from inside a nested package doesn't walk up past
+      // the package boundary the way Node's does, so a bare
+      // `import('@vue/compiler-sfc')` from this file only checks
+      // `@strav/view/node_modules/` and never sees the app's
+      // top-level install. `Bun.resolveSync` walks from `cwd`
+      // through the app's `node_modules/` chain — same path
+      // `bun bin/strav.ts` already takes for everything else.
+      let sfcPath: string
+      try {
+        sfcPath = Bun.resolveSync('@vue/compiler-sfc', process.cwd())
+      } catch (cause) {
+        throw new Error(
+          "vueSfcPlugin: '@vue/compiler-sfc' is not installed in this project. " +
+            "Run `bun add -d vue @vue/compiler-sfc` from the app root.",
+          { cause },
+        )
+      }
+      const sfc = (await import(sfcPath)) as typeof import('@vue/compiler-sfc')
       const { parse, compileScript, compileTemplate, compileStyle } = sfc
 
       build.onLoad({ filter: /\.vue$/ }, async (args) => {

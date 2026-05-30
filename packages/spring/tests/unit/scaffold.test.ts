@@ -151,8 +151,6 @@ describe('scaffold(--web)', () => {
       'resources/views/errors/404.strav',
       'resources/views/errors/500.strav',
       'resources/css/app.css',
-      'resources/ts/islands/counter.vue',
-      'resources/ts/islands/setup.ts',
     ]
     for (const file of expected) {
       expect(result.files).toContain(file)

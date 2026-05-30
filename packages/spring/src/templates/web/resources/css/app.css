@@ -1,41 +1,32 @@
-/* Bare-bones starter styles. Swap for Tailwind, vanilla-extract, or your
- * stylesheet of choice — just point the <link rel="stylesheet"> in
- * `resources/views/layouts/app.strav` at the right built output. */
-
-:root {
-  --bg: #ffffff;
-  --fg: #111111;
-  --accent: #3b82f6;
-  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
-  line-height: 1.5;
-  color-scheme: light dark;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #0f0f10;
-    --fg: #f5f5f5;
-  }
-}
+/* Spring `--web` starter — vanilla CSS that pairs with the Tailwind
+ * CDN loaded by `resources/views/layouts/app.strav`. Everything below
+ * is what Tailwind doesn't cover: the body background grid, the
+ * fluid hero type, and the global text/background colour reset.
+ *
+ * Swap for your own stylesheet of choice — point the layout's `@css`
+ * directive (resolved via `config.view.css`) at whatever you build.
+ */
 
 body {
-  margin: 0;
-  background: var(--bg);
-  color: var(--fg);
+  background-color: #ffffff;
+  color: #000000;
 }
 
-main {
-  max-width: 48rem;
-  margin: 0 auto;
-  padding: 2rem 1.25rem;
+/* Faint red grid overlay across the page. The 40px cells line up
+ * with the Tailwind 8/12-step spacing rhythm. */
+.bg-grid-precision {
+  background-size: 40px 40px;
+  background-image:
+    linear-gradient(to right,  rgba(255, 68, 51, 0.05) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255, 68, 51, 0.05) 1px, transparent 1px);
 }
 
-button {
-  cursor: pointer;
-  border-radius: 0.375rem;
-  border: 1px solid var(--accent);
-  background: var(--accent);
-  color: #fff;
-  padding: 0.5rem 1rem;
-  font: inherit;
+/* Fluid display type for the hero — clamps between 3rem at narrow
+ * widths and 5.5rem at wide. Letter-spacing tightens at scale; the
+ * line-height is sub-1 so the two stacked lines hug. */
+.text-huge {
+  font-size: clamp(3rem, 8vw, 5.5rem);
+  line-height: 0.95;
+  letter-spacing: -0.04em;
+  font-weight: 800;
 }

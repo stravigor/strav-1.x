@@ -2,7 +2,7 @@
 
 The `.strav` template engine for Strav 1.0. Full frozen directive set + Vue 3 hydration islands via `@island`. Tokenizer + compiler + `ViewEngine` + `ViewProvider` + programmatic `buildIslands` bundler.
 
-> **Status:** 1.0.0-alpha — engine + islands shipped. Pages auto-router + `view:cache` / `view:build` console commands land in subsequent slices.
+> **Status:** Feature-complete for 1.0 — engine + islands + pages auto-router + console commands (`view:cache` / `view:clear` / `view:build`) + disk cache + asset versioning all shipped.
 
 ## Install
 
@@ -10,7 +10,7 @@ The `.strav` template engine for Strav 1.0. Full frozen directive set + Vue 3 hy
 bun add @strav/view
 ```
 
-Peer: `@strav/kernel`.
+Peers: `@strav/kernel`, `vue` ^3.5, `@vue/compiler-sfc` ^3.5.
 
 ## Quick start
 
@@ -60,10 +60,6 @@ const html = await view.render('pages.dashboard', { user, items })
 
 ## Islands — shared Vue app context
 
-```bash
-bun add vue @vue/compiler-sfc    # optional peer deps
-```
-
 ```strav
 @island('Palette')
 @island('Canvas', { blocks })
@@ -92,10 +88,13 @@ Outputs ONE `islands.js` containing every island + setup hook. Apps include the 
 
 All islands run inside the same `createApp(Root)` — Pinia stores shared, plugins applied once. See `docs/view/api.md` for the bundler contract + shared-state walkthrough.
 
+## Caching + assets
+
+- Compiled templates are cached in memory AND on disk (`storage/cache/views/`, configurable via `config.view.diskCache`). The disk hash is over template source, so edits auto-invalidate. `bun strav view:clear` wipes both layers.
+- `@asset(path)` resolves through an `AssetManifest`: reads a Strav-flat or Vite `manifest.json` if present (under `config.view.assets.publicDir`, default `public/`), falls back to mtime query strings in dev. Set `config.view.assets = false` for pure pass-through.
+
 ## What's NOT here yet
 
-- Pages auto-routing (`resources/views/pages/**/*.strav` → routes).
-- Disk cache + `view:cache` / `view:build` console commands (programmatic `buildIslands` ships today; CLI wrappers wait on `@strav/cli`).
-- Real `@csrf` / `@route` / `@asset` wiring (stubs today).
+- Real `@csrf` / `@route` wiring (stubs today — wires when `@strav/http`'s session middleware and named-route map are accessible to the engine).
 
 Full reference: [`docs/view/api.md`](../../docs/view/api.md).

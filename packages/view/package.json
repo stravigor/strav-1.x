@@ -1,7 +1,7 @@
 {
   "name": "@strav/view",
-  "version": "1.0.0-alpha.28",
-  "description": "Strav view engine — .strav template language (tokenizer + compiler + ViewEngine). Slice 1: core engine; @island + bundler + pages auto-router follow.",
+  "version": "1.0.0-alpha.29",
+  "description": "Strav view engine — .strav template language. Tokenizer + compiler + ViewEngine, Vue 3 hydration islands + buildIslands, pages auto-router, console commands, disk cache, asset versioning.",
   "type": "module",
   "main": "./src/index.ts",
   "types": "./src/index.ts",
@@ -33,12 +33,6 @@
   },
   "peerDependenciesMeta": {
     "@strav/http": {
-      "optional": true
-    },
-    "vue": {
-      "optional": true
-    },
-    "@vue/compiler-sfc": {
       "optional": true
     }
   }

@@ -31,6 +31,7 @@ const local = await payment.use('asia').charges.create({
 | Core abstraction: manager, normalized DTOs, errors, capabilities, ledger schema, webhook dispatcher | `@strav/payment` |
 | Stripe driver — full coverage (customers, products, prices, subscriptions, payment methods, charges, invoices, checkout, webhooks) | `@strav/payment/stripe` |
 | Omise driver — customers, charges, refunds, card payment methods, webhooks. Products / prices / subscriptions / invoices / checkout throw `ProviderUnsupportedError` (Omise has no Stripe-equivalent model). | `@strav/payment/omise` |
+| `Billable` / `billable()` — Cashier-style mixin on domain models: `user.charge(payments, ...)`, `user.subscriptions(ledger, 'stripe')`, `user.subscribedToPrice(ledger, 'price_pro', 'stripe')` | `@strav/payment` |
 | Paddle driver | **deferred** — lands in a later release. |
 
 ## Install

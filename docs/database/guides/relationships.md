@@ -1,10 +1,10 @@
 # Relationships + eager loading + pagination
 
-V1 covers the 90% case: declare `hasMany` / `belongsTo` on the schema, eager-load via `.with('relation_name')`, paginate with `.paginate({ page, perPage })`.
+V1 covers the four relation kinds: `hasMany`, `hasOne`, `belongsTo`, `belongsToMany`. Declare them on the schema, eager-load via `.with('relation_name')`, paginate with `.paginate({ page, perPage })`.
 
 ## Declaring relations
 
-Relations live on the schema next to the field declarations. They drive `QueryBuilder.with(...)` eager loading — they don't affect DDL emission (FK columns are still declared via `t.reference(...)`).
+Relations live on the schema next to the field declarations. They drive `QueryBuilder.with(...)` eager loading — they don't affect DDL emission (FK columns are still declared via `t.foreign(...)`).
 
 ```ts
 const userSchema = defineSchema('user', Archetype.Entity, (t) => {
@@ -17,16 +17,69 @@ const userSchema = defineSchema('user', Archetype.Entity, (t) => {
 const postSchema = defineSchema('post', Archetype.Entity, (t) => {
   t.id()
   t.string('title')
-  t.reference('user_id').to(userSchema).onDelete('cascade')
+  t.foreign('user_id').to(userSchema).onDelete('cascade')
   t.timestamps()
   t.belongsTo(userSchema, { foreignKey: 'user_id', as: 'author' })
 })
 ```
 
 - **`t.hasMany(target, { foreignKey, as? })`** — one-to-many. The parent has many child rows; the child's `foreignKey` column points back to the parent's PK. `as` defaults to the target name; apps usually override to the plural (`as: 'posts'`).
-- **`t.belongsTo(target, { foreignKey, as? })`** — the inverse. THIS row carries `foreignKey` pointing at the target's PK. Apps typically pair this with `t.reference(...)` for the column itself.
+- **`t.belongsTo(target, { foreignKey?, as?, nullable?, onDelete? })`** — the inverse. THIS row owns the FK; the one call declares **both the FK column AND the relation**. `foreignKey` defaults to `<target>_id`. If you already declared the column via `t.foreign(...)` first (older two-call style), `belongsTo` notices and skips column creation — back-compat is preserved.
+
+```ts
+// Recommended one-call form
+defineSchema('post', Archetype.Entity, (t) => {
+  t.id()
+  t.string('title')
+  t.belongsTo(userSchema, { as: 'author' })   // creates user_id + relation
+  t.timestamps()
+})
+
+// Two-call form (still works; reach for it when the FK column needs flags
+// `belongsTo` doesn't surface, or when you want an FK with NO relation):
+defineSchema('post', Archetype.Entity, (t) => {
+  t.id()
+  t.foreign('user_id').to(userSchema).onDelete('cascade')
+  t.belongsTo(userSchema, { foreignKey: 'user_id', as: 'author' })
+})
+```
 
 `target` accepts a `Schema`, anything with a `.name` (the Model class fits), or a raw string.
+
+### Circular references — use string targets
+
+Two schemas that reference each other can't both import the typed `Schema` object: whichever file gets imported second will see `undefined` for the first one's symbol because the cycle hasn't resolved yet. The fix is to pass the table name as a string on the side declared first — the FK type and the eager-loader resolve against the `SchemaRegistry` at DDL emission / query time, not at schema-build time, so a forward string reference is safe.
+
+```ts
+// user_schema.ts
+import { Archetype, defineSchema } from '@strav/database'
+
+export const userSchema = defineSchema('user', Archetype.Entity, (t) => {
+  t.id()
+  t.string('email').unique()
+  t.timestamps()
+  // String target — `postSchema` doesn't exist yet at module-eval time.
+  t.hasMany('post', { foreignKey: 'user_id', as: 'posts' })
+})
+```
+
+```ts
+// post_schema.ts
+import { Archetype, defineSchema } from '@strav/database'
+import { userSchema } from './user_schema.ts'
+
+export const postSchema = defineSchema('post', Archetype.Entity, (t) => {
+  t.id()
+  t.string('title')
+  // Typed target — userSchema was imported above.
+  t.belongsTo(userSchema, { as: 'author' })
+  t.timestamps()
+})
+```
+
+The string side gives up compile-time spell-checking on the target name; the typed side keeps it. Both work the same at runtime — `app.has(SchemaRegistry)` resolves both `'user'` and `'post'` by name when DDL or `.with(...)` needs the other schema's PK type.
+
+For deeper cycles (three-way or more), use string targets on every side — they're symmetric. The registry check at boot (`validateTenantRegistry` for tenancy; the FK type resolver for everything else) surfaces typos as `'unknown schema "<name>"'` errors at app start, not in production.
 
 ## Eager loading via `.with(...)`
 
@@ -163,16 +216,80 @@ const total = await postRepo.query()
 
 Same `.orderBy(col, dir)` requirement as `.cursorPaginate`. Safe on tables of any size — no `OFFSET` scan and no risk of skipping or duplicating rows under concurrent inserts.
 
+## `hasOne` — single-row child
+
+Same wire shape as `hasMany` (the child carries the `foreignKey` back-reference), but the eager-load result is the single matching row or `null` instead of an array. Useful for 1:1 records split into a separate table — a user's profile, a post's draft snapshot.
+
+```ts
+const userSchema = defineSchema('user', Archetype.Entity, (t) => {
+  t.id()
+  t.string('email').unique()
+  t.timestamps()
+  t.hasOne('profile', { foreignKey: 'user_id', as: 'profile' })
+})
+
+const profileSchema = defineSchema('profile', Archetype.Entity, (t) => {
+  t.id()
+  t.foreign('user_id').to(userSchema)
+  t.string('bio')
+  t.timestamps()
+})
+
+const users = await userRepo.query().with('profile').get()
+// users[0].profile → { id, user_id, bio, ... } | null
+```
+
+If duplicate FK rows exist (data anomaly — fix at the schema level with a unique index on `profile.user_id`), the first match wins. The eager-loader doesn't throw; debugging is easier when you can see the data.
+
+## `belongsToMany` — many-to-many through a pivot
+
+The pivot table is its own schema. The `belongsToMany` relation only declares how to join through it — the pivot's columns + indices live in a separate `defineSchema` call.
+
+```ts
+const userSchema = defineSchema('user', Archetype.Entity, (t) => {
+  t.id()
+  t.string('email').unique()
+  t.timestamps()
+  t.belongsToMany('role', {
+    pivot: 'user_role',
+    parentKey: 'user_id',
+    targetKey: 'role_id',
+    as: 'roles',
+  })
+})
+
+const roleSchema = defineSchema('role', Archetype.Entity, (t) => {
+  t.id()
+  t.string('name').unique()
+  t.timestamps()
+})
+
+// Pivot — declare it as a normal schema so DDL, migrations, and indexes
+// are visible in one place. Naming convention: <a>_<b> alphabetised.
+const userRoleSchema = defineSchema('user_role', Archetype.Entity, (t) => {
+  t.id()
+  t.foreign('user_id').to(userSchema)
+  t.foreign('role_id').to(roleSchema)
+  t.timestamps()
+})
+
+const users = await userRepo.query().with('roles').get()
+// users[0].roles → [{ id, name, ... }, ...]
+```
+
+The eager-loader runs ONE query — a JOIN against the pivot — instead of two round-trips. The pivot's `parentKey` column surfaces internally under a synthetic `__strav_parent_key` alias used to bucket target rows by parent, then the alias is stripped before the row reaches your code.
+
+Index the pivot on `(parent_key, target_key)` (or just `parent_key` alone) so the eager-load query is index-only.
+
 ## What's NOT here
 
 Each lands as its own follow-up:
 
 - **Typed Model children** on eager-loaded relations. Today: cast. Tomorrow: a Model registry that lets QueryBuilder hydrate children to the right class.
 - **Nested eager loading** (`with('posts.comments')`). V1 is one level deep — for deeper graphs, run two queries (or wait for the syntax).
-- **`hasOne`** (one-to-one inverse) and **`belongsToMany`** (many-to-many via pivot). The pivot case needs a pivot-schema declaration; deferred.
 - **Lazy loading on Models** (`await user.posts`). Cross-package coupling — Model → Repository. Eager loading is the V1 idiom; lazy is a follow-up if there's demand.
 - **Composite-cursor pagination** (multi-column sort keys). V1 takes one column from `.orderBy(...)` + the PK as tiebreaker.
-- **Relation-aware WHERE filters** (`.whereHas('posts', q => q.where('published', true))`). Subquery-style filtering on relations. Lands with the joins/subqueries slice.
+- **Relation-aware WHERE filters** (`.whereHas('posts', q => q.where('published', true))`). Subquery-style filtering on relations. Distinct from the QB joins shipped today (those filter on already-joined tables; `.whereHas` would derive the subquery from the relation declaration).
 
 ## Wiring
 

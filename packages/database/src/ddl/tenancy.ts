@@ -72,7 +72,7 @@ export function tenantIdColumnName(tenantReg: Schema): string {
 
 /**
  * The Schema-shaped descriptor of the injected column. Same shape any
- * `t.reference(...)` produces, so the column-definition emitter handles
+ * `t.foreign(...)` produces, so the column-definition emitter handles
  * it without special-casing.
  */
 export function tenantIdColumnField(tenantReg: Schema): SchemaField {

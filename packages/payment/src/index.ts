@@ -10,6 +10,7 @@
 //   `@strav/payment-omise`. The `MockDriver` in `./drivers` is
 //   for tests and as the reference implementation.
 
+export { Billable, type BillableStorage, billable } from './billable.ts'
 export type * from './dto/index.ts'
 export {
   extractCardToken,

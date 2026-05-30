@@ -2,7 +2,7 @@
 
 The `.strav` template engine for Strav 1.0. The full frozen directive set is implemented: `@if` / `@for` / `@each` / `@extends` / `@section` / `@yield` / `@include` / `@push` / `@stack` / `@csrf` / `@method` / `@route` / `@asset` / `@raw` / `@escape` / `@component` — plus `@island` for Vue 3 hydration islands. A programmatic Vue SFC bundler (`buildIslands`) compiles each island into a self-mounting browser bundle.
 
-> **Status: 1.0.0-alpha.11 — engine + islands + pages auto-router + console commands shipped.** `resources/views/pages/**/*.strav` files are automatically registered as GET routes by `ViewProvider.boot()`. See `docs/view/guides/pages.md`.
+> **Status: feature-complete for 1.0** — engine + islands + pages auto-router + console commands + disk cache + asset versioning all shipped. `resources/views/pages/**/*.strav` files are automatically registered as GET routes by `ViewProvider.boot()`. See `docs/view/guides/pages.md`.
 
 ## Install
 
@@ -173,19 +173,26 @@ Outputs ONE `public/assets/islands/islands.js` containing every island + every `
 </head>
 ```
 
-Optional peer deps:
+`vue` + `@vue/compiler-sfc` are required peer deps — they ship in `bunx @strav/spring --web` projects by default. Apps that prefer their own bundler match the [single-bundle contract](./api.md#buildislandsopts) themselves.
 
-```bash
-bun add vue @vue/compiler-sfc
-```
+## Caching layers
 
-Apps that prefer their own bundler match the [single-bundle contract](./api.md#buildislandsopts) themselves.
+- **In-memory** (`config.view.cache`, default `true`) — `tokenize + compile` once per template; the render function stays hot in the process.
+- **On disk** (`config.view.diskCache`, default `true`) — compiled output is also persisted to `storage/cache/views/` (configurable). Cold boots skip tokenisation entirely. Keyed by content hash, so edits auto-invalidate. Wipe with `bun strav view:clear`.
+- **Pre-warm** — `bun strav view:cache` walks the views directory and compiles every `.strav` file at deploy time, populating both layers.
+
+## Asset versioning
+
+`@asset('css/app.css')` resolves through an `AssetManifest`:
+
+- With a `public/manifest.json` (Strav-flat or Vite shape) → fingerprinted URL (`/css/app.abc123.css`).
+- Without a manifest → mtime-based query string when the file exists (`/css/app.css?v=deadbe`).
+- Configure via `config.view.assets` (`{ publicDir?, manifest?, prefix? }`). Disable with `assets: false` for pure pass-through.
 
 ## What's NOT here yet
 
-- **Disk cache** — persist compiled templates across process restarts (in-memory cache resets on each boot today).
-- **Disk cache + `view:cache` / `view:build` commands** — these wait on `@strav/cli` (M4). The in-memory cache (`config.view.cache`) is the only cache layer today; `buildIslands` is the programmatic equivalent of `view:build`.
-- **Real `route()` / `asset()` helpers** — stubbed; `route()` returns the route name verbatim, `asset()` passes through. Real implementations wire when `@strav/http`'s Router and asset versioning land.
+- **Real `route()` / `@csrf` / `@method` helpers** — stubbed; `route()` returns the route name verbatim. Real implementations wire when `@strav/http`'s named-route map + session middleware are accessible to the engine.
+- **Response-cache middleware** — caching the rendered HTML for a route is `@strav/http` + `@strav/cache` territory, not `@strav/view`.
 
 ## Documentation
 

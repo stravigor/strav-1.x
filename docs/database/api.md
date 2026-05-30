@@ -153,7 +153,7 @@ t.decimal('amount', 12, 2)
 t.json<MyShape>('metadata')
 t.timestamp('paid_at', { withTimezone: false })
 t.enum('status', ['draft', 'paid', 'refunded'])
-t.reference('user_id').to(userSchema).onDelete('cascade')
+t.foreign('user_id').to(userSchema).onDelete('cascade')
 t.encrypted('ssn')
 ```
 
@@ -174,6 +174,35 @@ t.softDeletes()   // adds nullable deleted_at
 ```
 
 Both composites are idempotent — calling twice is a no-op.
+
+Relations:
+
+```ts
+t.hasMany(target, { foreignKey, as? })                          // parent → many children
+t.hasOne(target,  { foreignKey, as? })                          // parent → one child (or null)
+t.belongsTo(target, { foreignKey?, as?, nullable?, onDelete? }) // this row → one parent (column + relation)
+t.belongsToMany(target, { pivot, parentKey, targetKey, as? })   // many-to-many via pivot
+```
+
+- **`hasMany` / `hasOne`** — children whose `foreignKey` points back at the parent's PK. Declaration-only; the FK column lives on the child table.
+- **`belongsTo`** — THIS row owns the FK. Declares **both the column AND the relation** in one call. `foreignKey` defaults to `<target>_id` (e.g. `user_id` for a `user` target); pass it explicitly only when the column needs a different name. `onDelete` defaults to `'restrict'`, matching `t.foreign()`'s default. If a column with the resolved `foreignKey` name already exists on this schema (e.g. declared via `t.foreign(...)` first), `belongsTo` skips column creation and just registers the relation — the older two-call idiom keeps working.
+- **`belongsToMany`** — joins through a separately-declared pivot schema; the pivot row carries `parentKey` (FK to this entity) and `targetKey` (FK to the target).
+
+`as` defaults to the target name; apps usually override it to read naturally on the row (`as: 'posts'`, `as: 'profile'`, `as: 'roles'`). All four feed `QueryBuilder.with(name)` for eager loading — see "Eager loading" below.
+
+```ts
+// Recommended one-call form — column + relation in a single line.
+defineSchema('post', Archetype.Entity, (t) => {
+  t.id()
+  t.string('title')
+  t.belongsTo(userSchema, { as: 'author' })   // creates user_id FK + author relation
+  t.timestamps()
+})
+
+// Use `t.foreign(name).to(target)` for FK columns that DON'T need a relation
+// (e.g., audit-log columns where you don't want a parent accessor on the row).
+t.foreign('created_by_id').to(userSchema).onDelete('set null')
+```
 
 ## `SchemaRegistry`
 
@@ -358,7 +387,7 @@ Keys accept 64-char hex / base64-decoding-to-32-bytes / `Uint8Array`. Bad keys /
 
 `encryptedFieldsOf(ModelClass)`, `applyEncryptToAttrs(ModelClass, attrs, cipher)`, and `applyDecryptToRow(ModelClass, row, cipher)` are the runtime helpers. Same inheritance rules as `@hidden`.
 
-Deferred: key rotation (single key today), blind-index helpers for searching encrypted columns, per-tenant keys.
+Rotation: `config.encryption.previousKeys: (string | Uint8Array)[]` — old keys to try on decrypt after a rotation. Encryption always uses the current `key`; decrypt falls through `key` → `previousKeys[]` until one verifies. Blind index: `cipher.blindIndex(plaintext)` returns deterministic HMAC-SHA256 (64-char hex) under the current key, for equality-search sidecar columns. See [kernel encryption guide](../kernel/guides/encryption.md). Still deferred: per-tenant keys.
 
 ## `Repository<TModel>`
 
@@ -449,7 +478,7 @@ Payload types are exported from `@strav/database` as `RepositoryCreatingEvent<T>
 
 ### What's NOT automatic
 
-Explicit `.join()` / `.leftJoin()` is the only remaining QueryBuilder follow-up — see [`guides/repositories.md`](./guides/repositories.md). Everything else (soft-delete, relations + eager loading, offset + cursor pagination, `.chunk()`, CTEs + `WITH RECURSIVE` + `UNION` / `UNION ALL` + `.from(cte_name)`, queue-until-commit, `{ tx? }` routing) is wired.
+Nothing on the QueryBuilder roadmap is deferred at this point — soft-delete, all four relation kinds + eager loading, joins (`.join` / `.leftJoin` / `.crossJoin`), offset + cursor pagination, `.chunk()`, CTEs + `WITH RECURSIVE` + `UNION` / `UNION ALL` + `.from(cte_name)`, queue-until-commit, `{ tx? }` routing are all wired.
 
 ## `QueryBuilder<TModel>`
 
@@ -474,6 +503,12 @@ class QueryBuilder<TModel> {
   onlyTrashed(): QueryBuilder<TModel>
   /** Eager-load one or more declared relations. Requires a `SchemaRegistry`. */
   with(...names: string[]): QueryBuilder<TModel>
+  /** INNER JOIN <table> ON <left> = <right>. Equi-join shorthand. */
+  join(table: string, leftColumn: string, rightColumn: string): QueryBuilder<TModel>
+  /** LEFT JOIN form of join. */
+  leftJoin(table: string, leftColumn: string, rightColumn: string): QueryBuilder<TModel>
+  /** CROSS JOIN — Cartesian product, no ON clause. */
+  crossJoin(table: string): QueryBuilder<TModel>
 
   toSql(): { sql: string; params: unknown[] }
 
@@ -518,12 +553,31 @@ The default scope applies to every terminal — `get`, `first`, `firstOrFail`, `
 `.with(...names)` runs the main query, then issues ONE batched SELECT per declared relation (`WHERE fk IN (parent ids)`), and attaches results to parents. This is the N+1 prevention guarantee — for N relations on N parents, you get exactly N+1 queries.
 
 - **`hasMany`** → attaches as an array on each parent (empty for parents with no children).
+- **`hasOne`** → attaches as a single row or `null`. First match wins on duplicate FKs (data anomaly; fix at the schema level with a unique index on the FK).
 - **`belongsTo`** → attaches as a single row or `null` (foreign-key values are deduplicated before lookup).
+- **`belongsToMany`** → attaches as an array via a single JOIN through the pivot table. The pivot's `parentKey` is surfaced under a synthetic `__strav_parent_key` alias internally, used to bucket target rows, then stripped before the row reaches the app.
 - Children are plain `Record<string, unknown>` — V1 doesn't hydrate them to Model instances. Apps that need typed children cast: `user.posts as Post[]`.
-- Requires a `SchemaRegistry` to be wired on the builder via the Repository constructor; `.with()` throws otherwise. The relation name must exist on the schema (declared via `t.hasMany` / `t.belongsTo`).
+- Requires a `SchemaRegistry` to be wired on the builder via the Repository constructor; `.with()` throws otherwise. The relation name must exist on the schema (declared via `t.hasMany` / `t.hasOne` / `t.belongsTo` / `t.belongsToMany`).
 - `.with(...)` flows through every terminal — `get`, `first`, `firstOrFail`, `paginate`.
 
-See [`guides/relationships.md`](./guides/relationships.md) for the full pattern + the deferred items (typed children, nested loads, `hasOne` / `belongsToMany`, lazy loading, cursor pagination).
+See [`guides/relationships.md`](./guides/relationships.md) for the full pattern + the still-deferred items (typed children, nested loads, lazy loading, `whereHas`).
+
+### Joins
+
+`.join` / `.leftJoin` / `.crossJoin` slot JOIN clauses between FROM and WHERE, in registration order. Column references — in the join `ON` clause, in `.where(...)`, in `.orderBy(...)`, in `.select(...)` — can be qualified (`'users.id'`), bare (`'id'`), or use `'users.*'` for "every column from users". Each dotted segment is quoted as a separate Postgres identifier (`"users"."id"`).
+
+When any join is present, the auto soft-delete predicate is qualified with the main table (`"<schema>"."deleted_at" IS NULL`) so the reference stays unambiguous if a joined table also carries a `deleted_at` column.
+
+```ts
+await orders.query()
+  .join('users', 'users.id', 'orders.user_id')
+  .where('users.role', 'admin')
+  .select('orders.*', 'users.name')
+  .orderBy('orders.created_at', 'desc')
+  .get()
+```
+
+`.count()` / `.exists()` / `.pluck()` include joins (so counts reflect the join's filtering effect). `.cursorPaginate()` and `.chunk()` reject joins — they assume single-table indexes for the sort + tiebreaker. For most reads, prefer `.with('relation')` over manual joins; reach for joins when you need to filter or sort on a related table's column.
 
 ### Pagination
 
@@ -640,7 +694,7 @@ function isPrimaryKeyKind(field: SchemaField): boolean
 | `json` | `jsonb` | Always jsonb — indexable, faster on read. |
 | `timestamp` | `timestamptz` / `timestamp` | `timestamptz` by default; `t.timestamp(..., { withTimezone: false })` gets `timestamp`. |
 | `enum` | `text` + `CHECK` | Postgres ENUM types are painful to alter; text + CHECK is editable in place. |
-| `reference` | _target PK type_ | Resolves through the registry — `t.reference('user_id').to(User)` adopts `User`'s PK type. |
+| `reference` | _target PK type_ | Resolves through the registry — `t.foreign('user_id').to(User)` adopts `User`'s PK type. |
 | `encrypted` | `bytea` | Ciphertext + nonce + tag are bytes. |
 
 ### Column-definition layout
@@ -663,7 +717,7 @@ function isPrimaryKeyKind(field: SchemaField): boolean
 
 ### References
 
-`t.reference('user_id').to(User).onDelete('cascade')` requires a `SchemaRegistry` in `EmitOptions` so the FK column type can match the target PK. The emitter throws — loud-fail at migration time — if the registry is missing or doesn't contain the target schema.
+`t.foreign('user_id').to(User).onDelete('cascade')` requires a `SchemaRegistry` in `EmitOptions` so the FK column type can match the target PK. The emitter throws — loud-fail at migration time — if the registry is missing or doesn't contain the target schema.
 
 The target PK column name is read from the target schema (`User.fields[0].name`), so `t.id('code')` on the target produces `REFERENCES "country" ("code")` rather than a guessed `("id")`.
 

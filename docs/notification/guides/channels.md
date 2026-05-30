@@ -58,6 +58,12 @@ export default {
       secret:   process.env.WEBHOOK_SECRET ?? '',
     },
     broadcast: { driver: 'broadcast' },
+    discord:   {
+      driver: 'discord',
+      webhookUrl: process.env.DISCORD_WEBHOOK_URL ?? '',
+      username:  'Strav',
+    },
+    sse:       { driver: 'sse' },
   },
 } satisfies NotificationConfig
 ```
@@ -116,6 +122,8 @@ Each channel reads a specific hook on the notification:
 | `log` | `toLog(notifiable)` | `string` (logged as message) or `Record<string, unknown>` (merged into log fields) |
 | `webhook` | `toWebhook(notifiable)` | `unknown` — JSON-serialisable; wrapped in the signed envelope |
 | `broadcast` | `toBroadcast(notifiable)` | `{ channel, event?, data }` |
+| `discord` | `toDiscord(notifiable, defaults)` | `string` (shorthand for `{ content }`) OR `DiscordMessage` (`content`, `embeds`, `components`, `webhookUrl` to override the channel default, etc.) |
+| `sse` | `toSSE(notifiable)` | `string` (shorthand for `{ data }`) OR `SSEEvent` (`data`, `event?`, `id?`, `retry?`). Pushed to every active in-process subscriber for `(notifiable.id, notifiable.notifiableType)` |
 
 Hooks are optional. A channel whose hook is absent on the notification returns `{ delivered: false }` without raising — the manager records it in the dispatch result so you can audit "what didn't fire". This is intentional: the same notification can declare `via() === ['mail', 'database', 'broadcast']` and still only implement `toMail` + `toDatabase` because the broadcast variant lives elsewhere or hasn't been written yet.
 

@@ -79,7 +79,7 @@ describe('view:clear', () => {
     const exit = await new ViewClear().handle(env.ctx())
     expect(exit).toBe(0)
     expect(cleared).toBe(true)
-    expect(env.stdout.text()).toContain('View cache cleared.')
+    expect(env.stdout.text()).toContain('View cache cleared')
   })
 })
 

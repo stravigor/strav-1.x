@@ -47,7 +47,7 @@ export const brainSuspendedRunSchema = defineSchema(
   Archetype.Entity,
   (t) => {
     t.id()
-    t.reference('thread_id').to(brainThreadSchema).onDelete('set null').nullable()
+    t.foreign('thread_id').to(brainThreadSchema).onDelete('set null').nullable()
     t.string('user_id').max(64).nullable()
     t.json('pending_tool_calls').notNull()
     t.json('state').notNull()

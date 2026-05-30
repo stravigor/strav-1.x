@@ -14,7 +14,7 @@ import { providers } from '../bootstrap/providers.ts'
 
 const exitCode = await runCli({
   argv: process.argv.slice(2),
-  defaultProviders: providers(),
+  defaultProviders: await providers(),
   app: createApp(),
 })
 

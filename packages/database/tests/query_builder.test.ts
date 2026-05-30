@@ -711,3 +711,112 @@ describe('QueryBuilder — .chunk', () => {
     ).rejects.toThrow(/boom/)
   })
 })
+
+// ─── Joins ──────────────────────────────────────────────────────────────────
+
+describe('QueryBuilder — joins', () => {
+  test('.join emits `JOIN <table> ON <left> = <right>` between FROM and WHERE', () => {
+    const { sql } = builder().join('users', 'users.id', 'lead.user_id').toSql()
+    expect(sql).toBe(
+      'SELECT "id", "email", "status", "score", "created_at", "updated_at" FROM "lead" JOIN "users" ON "users"."id" = "lead"."user_id"',
+    )
+  })
+
+  test('.leftJoin emits LEFT JOIN', () => {
+    const { sql } = builder().leftJoin('users', 'users.id', 'lead.user_id').toSql()
+    expect(sql).toContain(' LEFT JOIN "users" ON "users"."id" = "lead"."user_id"')
+  })
+
+  test('.crossJoin emits CROSS JOIN without ON', () => {
+    const { sql } = builder().crossJoin('tally').toSql()
+    expect(sql).toContain(' CROSS JOIN "tally"')
+    expect(sql).not.toContain(' ON ')
+  })
+
+  test('multiple joins preserve registration order', () => {
+    const { sql } = builder()
+      .join('users', 'users.id', 'lead.user_id')
+      .leftJoin('tenants', 'tenants.id', 'users.tenant_id')
+      .toSql()
+    expect(sql).toContain(' JOIN "users" ON "users"."id" = "lead"."user_id" LEFT JOIN "tenants"')
+  })
+
+  test('qualified column refs in WHERE split on `.` and quote each segment', () => {
+    const { sql, params } = builder()
+      .join('users', 'users.id', 'lead.user_id')
+      .where('users.role', 'admin')
+      .toSql()
+    expect(sql).toContain('WHERE "users"."role" = $1')
+    expect(params).toEqual(['admin'])
+  })
+
+  test('qualified column refs in ORDER BY are split + quoted', () => {
+    const { sql } = builder()
+      .join('users', 'users.id', 'lead.user_id')
+      .orderBy('users.created_at', 'desc')
+      .toSql()
+    expect(sql).toContain('ORDER BY "users"."created_at" DESC')
+  })
+
+  test('select supports `table.*` and qualified columns', () => {
+    const { sql } = builder()
+      .join('users', 'users.id', 'lead.user_id')
+      .select('lead.*', 'users.name')
+      .toSql()
+    expect(sql).toBe(
+      'SELECT "lead".*, "users"."name" FROM "lead" JOIN "users" ON "users"."id" = "lead"."user_id"',
+    )
+  })
+
+  test('soft-delete predicate is qualified with the main table when joins are present', () => {
+    const softSchema = defineSchema('post', Archetype.Entity, (t) => {
+      t.id()
+      t.string('title')
+      t.timestamps()
+      t.softDeletes()
+    })
+    const qb = new QueryBuilder(softSchema, new InMemoryDatabase(), undefined)
+    const { sql } = qb.join('users', 'users.id', 'post.user_id').toSql()
+    expect(sql).toContain('WHERE "post"."deleted_at" IS NULL')
+  })
+
+  test('soft-delete predicate stays bare when no joins are present', () => {
+    const softSchema = defineSchema('post', Archetype.Entity, (t) => {
+      t.id()
+      t.string('title')
+      t.timestamps()
+      t.softDeletes()
+    })
+    const { sql } = new QueryBuilder(softSchema, new InMemoryDatabase(), undefined).toSql()
+    expect(sql).toContain('WHERE "deleted_at" IS NULL')
+    expect(sql).not.toContain('"post"."deleted_at"')
+  })
+
+  test('joins are included in count / exists / pluck terminals', async () => {
+    const db = new FakeRowDb()
+    db.scriptedRows = [[{ count: 7 }]]
+    await new QueryBuilder(schema, db, undefined)
+      .join('users', 'users.id', 'lead.user_id')
+      .where('users.role', 'admin')
+      .count()
+    expect(db.executedSql[0]?.sql).toBe(
+      'SELECT COUNT(*) AS count FROM "lead" JOIN "users" ON "users"."id" = "lead"."user_id" WHERE "users"."role" = $1',
+    )
+  })
+
+  test('cursorPaginate refuses to compose with .join()', async () => {
+    await expect(
+      builder()
+        .join('users', 'users.id', 'lead.user_id')
+        .orderBy('id', 'asc')
+        .cursorPaginate({ perPage: 10 }),
+    ).rejects.toThrow(/does not compose with .* `\.join\(\)`/)
+  })
+
+  test('immutable chain — each join returns a fresh builder', () => {
+    const base = builder()
+    const joined = base.join('users', 'users.id', 'lead.user_id')
+    expect(base.toSql().sql).not.toContain('JOIN')
+    expect(joined.toSql().sql).toContain('JOIN')
+  })
+})

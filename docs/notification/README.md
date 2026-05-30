@@ -2,7 +2,7 @@
 
 Multi-channel notifications for Strav 1.0. One fluent surface — `notifications.send(notifiable, notification)` — that fan-outs to every channel a notification declares. Channel drivers ship under subpaths; new ones register via `manager.extend(name, factory)` from their service provider.
 
-> **Status: 1.0.0-alpha.** `NotificationManager` + `BaseNotification` + four channels shipped: mail (wraps `@strav/mail`), database (`notification` ledger with `unread()` / `markAsRead()`, tenanted variant under `./tenanted`), log (kernel `Logger`), webhook (HMAC-signed JSON POST). Broadcast / Discord / SMS channels ship in follow-up slices.
+> **Status: 1.0.0-alpha.** `NotificationManager` + `BaseNotification` + seven channels shipped: mail (wraps `@strav/mail`), database (`notification` ledger with `unread()` / `markAsRead()`, tenanted variant under `./tenanted`), log (kernel `Logger`), webhook (HMAC-signed JSON POST), broadcast (wraps `@strav/broadcast`), discord (webhook-driven), sse (in-process pub/sub for live browser delivery). SMS channel follows.
 
 ## Install
 
@@ -33,8 +33,10 @@ Channel drivers under subpaths:
 | Database — tenanted | `@strav/notification/tenanted` | Tenanted variant of the database channel — `tenantedNotificationSchema` + `applyTenantedNotificationMigration` + `TenantedNotificationRepository`. RLS-scoped under `TenantManager.withTenant(...)` |
 | Log | `@strav/notification/log` | Routes through the kernel `Logger`. Useful for dev + tests where standing up mail/database is overkill |
 | Webhook | `@strav/notification/webhook` | POSTs a signed JSON envelope (`x-strav-signature: sha256=…` over `${timestamp}.${body}`) to a configured endpoint. Exports `verifyWebhookSignature` for receiver-side validation |
+| Discord | `@strav/notification/discord` | POSTs to a Discord webhook URL. Reads `notification.toDiscord(notifiable)` (returns a string or a `DiscordMessage` envelope). Per-recipient URLs via `notifiable.discordWebhookUrl`; per-message via the envelope's `webhookUrl` |
+| SSE | `@strav/notification/sse` | In-process pub/sub. Reads `notification.toSSE(notifiable)` and pushes to every active subscriber for that notifiable. HTTP handlers consume subscriptions via `driver.subscribe(id, { notifiableType? })` + `sseResponse()` from `@strav/http`. No peer infrastructure |
 
-Deferred: broadcast, Discord, SMS. Apps register custom channels via `manager.extend(name, factory)` and a `dependencies: ['notification']` provider.
+Deferred: SMS. Apps register custom channels via `manager.extend(name, factory)` and a `dependencies: ['notification']` provider.
 
 ## Minimal example
 

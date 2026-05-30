@@ -32,11 +32,11 @@ export {
 } from './query_builder.ts'
 export {
   Repository,
-  type RepositoryOptions,
   type RepositoryCreatedEvent,
   type RepositoryCreatingEvent,
   type RepositoryDeletedEvent,
   type RepositoryDeletingEvent,
+  type RepositoryOptions,
   type RepositoryRestoredEvent,
   type RepositoryRestoringEvent,
   type RepositoryScope,

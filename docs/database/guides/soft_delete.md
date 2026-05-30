@@ -97,7 +97,7 @@ A `findWithTrashed(id)` shortcut on Repository is a possible follow-up but not p
 
 Each is its own follow-up slice:
 
-- **Automatic cascading soft-delete** across `t.reference(...)` edges.
+- **Automatic cascading soft-delete** across `t.foreign(...)` edges.
 - **`findWithTrashed(id)` / `findOnlyTrashed(id)` shortcuts** on Repository — apps go through `query().withTrashed().where('id', id).first()` today.
 - **Partial unique-index emission** — when a schema has both `t.softDeletes()` and a `.unique()` field, the migration generator could emit `UNIQUE (email) WHERE deleted_at IS NULL` instead of plain `UNIQUE`. Lands with the migration builder DSL.
 - **`Repository.pruneTrashed(olderThan)`** for bulk cleanup of old soft-deleted rows — trivial to layer on top, lands when the use case shows up.

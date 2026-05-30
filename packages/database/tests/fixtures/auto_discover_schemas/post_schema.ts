@@ -8,6 +8,6 @@ import { userSchema } from './user_schema.ts'
 export const postSchema = defineSchema('post_fixture', Archetype.Entity, (t) => {
   t.id()
   t.string('title').max(255)
-  t.reference('author_id').to(userSchema)
+  t.foreign('author_id').to(userSchema)
   t.timestamps()
 })

@@ -29,13 +29,14 @@
  */
 
 // biome-ignore lint/style/useImportType: PostgresDatabase value import for @inject() metadata.
-import {
-  PostgresDatabase,
-  quoteIdent,
-  type DatabaseExecutor,
-} from '@strav/database'
+import { type DatabaseExecutor, PostgresDatabase, quoteIdent } from '@strav/database'
 import { inject, ulid } from '@strav/kernel'
 import type { NormalizedWebhookEvent } from '../dto/payment_event.ts'
+import {
+  PaymentCustomerRow,
+  PaymentInvoiceRow,
+  PaymentSubscriptionRow,
+} from './payment_ledger_models.ts'
 import { paymentCustomerSchema } from './schemas/payment_customer_schema.ts'
 import { paymentInvoiceSchema } from './schemas/payment_invoice_schema.ts'
 import { paymentSubscriptionSchema } from './schemas/payment_subscription_schema.ts'
@@ -65,10 +66,7 @@ export class PaymentLedger {
    * during `normalize`). When `_fields` is absent the upsert
    * no-ops (apps still get the event, just no local mirror).
    */
-  async applyEvent(
-    event: NormalizedWebhookEvent,
-    executor?: DatabaseExecutor,
-  ): Promise<void> {
+  async applyEvent(event: NormalizedWebhookEvent, executor?: DatabaseExecutor): Promise<void> {
     const fields = (event as { _fields?: Record<string, unknown> })._fields
     if (!fields) return
     const exec = executor ?? this.db
@@ -98,6 +96,67 @@ export class PaymentLedger {
       default:
         return
     }
+  }
+
+  // ─── Reads ────────────────────────────────────────────────────────────
+  //
+  // Lightweight query helpers for the `billable()` mixin and for app
+  // code that wants to render "this user's billing history" without
+  // pulling in a Repository. All reads honour the same `app.tenant_id`
+  // session setting the upserts do, so tenancy is implicit.
+
+  /**
+   * Find a customer row by (`provider`, `provider_id`). Returns
+   * `null` when no row exists — typical for billables that haven't
+   * been charged through this provider yet.
+   */
+  async customerByProviderId(
+    provider: string,
+    providerId: string,
+  ): Promise<PaymentCustomerRow | null> {
+    const table = quoteIdent(paymentCustomerSchema.name)
+    const row = await this.db.queryOne<Record<string, unknown>>(
+      `SELECT * FROM ${table} WHERE "provider" = $1 AND "provider_id" = $2`,
+      [provider, providerId],
+    )
+    return row === null ? null : hydrate(PaymentCustomerRow, row)
+  }
+
+  /** Subscriptions for `(provider, customer_provider_id)`, newest first. */
+  async subscriptionsForCustomer(
+    provider: string,
+    customerProviderId: string,
+  ): Promise<PaymentSubscriptionRow[]> {
+    const table = quoteIdent(paymentSubscriptionSchema.name)
+    const rows = await this.db.query<Record<string, unknown>>(
+      `SELECT * FROM ${table}
+       WHERE "provider" = $1 AND "customer_provider_id" = $2
+       ORDER BY "created_at" DESC`,
+      [provider, customerProviderId],
+    )
+    return rows.map((r) => hydrate(PaymentSubscriptionRow, r))
+  }
+
+  /**
+   * Invoices for `(provider, customer_provider_id)`. Returned newest
+   * first. `limit` defaults to 50 — apps rendering long lists pass a
+   * higher number or paginate at the app layer.
+   */
+  async invoicesForCustomer(
+    provider: string,
+    customerProviderId: string,
+    options: { limit?: number } = {},
+  ): Promise<PaymentInvoiceRow[]> {
+    const limit = options.limit ?? 50
+    const table = quoteIdent(paymentInvoiceSchema.name)
+    const rows = await this.db.query<Record<string, unknown>>(
+      `SELECT * FROM ${table}
+       WHERE "provider" = $1 AND "customer_provider_id" = $2
+       ORDER BY "created_at" DESC
+       LIMIT $3`,
+      [provider, customerProviderId, limit],
+    )
+    return rows.map((r) => hydrate(PaymentInvoiceRow, r))
   }
 
   private async upsertCustomer(
@@ -138,10 +197,10 @@ export class PaymentLedger {
     providerId: string,
   ): Promise<void> {
     const table = quoteIdent(paymentCustomerSchema.name)
-    await exec.execute(
-      `DELETE FROM ${table} WHERE "provider" = $1 AND "provider_id" = $2`,
-      [provider, providerId],
-    )
+    await exec.execute(`DELETE FROM ${table} WHERE "provider" = $1 AND "provider_id" = $2`, [
+      provider,
+      providerId,
+    ])
   }
 
   private async upsertSubscription(
@@ -250,6 +309,13 @@ function nullable(v: unknown): string | null {
     throw new TypeError(`PaymentLedger: expected string or null, got ${typeof v}`)
   }
   return v
+}
+
+/** Materialise a SELECT row into the matching Model subclass. */
+function hydrate<T extends object>(Ctor: new () => T, row: Record<string, unknown>): T {
+  const instance = new Ctor()
+  Object.assign(instance, row)
+  return instance
 }
 
 function toDate(v: unknown): Date | null {

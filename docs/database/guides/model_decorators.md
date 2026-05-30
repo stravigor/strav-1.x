@@ -236,10 +236,30 @@ const user = await userRepo.find('u-1')
 
 `AesGcm256Cipher` writes ciphertext as `iv (12 bytes) || tag (16 bytes) || ciphertext (N bytes)` — total overhead 28 bytes per encrypted field. The IV is freshly random per encrypt call (AES-GCM security requirement), so encrypting the same plaintext twice produces different ciphertexts. The 128-bit auth tag is checked on decrypt — any tampering throws.
 
+### Key rotation
+
+Add the old key to `config.encryption.previousKeys` and swap `key` to the new value. Encryption always uses the current key; decryption falls through `key` → `previousKeys[]` until one verifies. Old `@encrypt` columns keep decrypting after a rotation without re-writing every row. See [kernel encryption guide](../../kernel/guides/encryption.md#key-rotation).
+
+### Searching encrypted columns — blind index
+
+`cipher.blindIndex(plaintext)` returns a deterministic HMAC-SHA256 of the plaintext under the current key. Store it in a sidecar column (e.g. `email_index`) and query equality there:
+
+```ts
+defineSchema('user', Archetype.Entity, (t) => {
+  t.id()
+  t.encrypted('email')
+  t.string('email_index').max(64).unique()
+  t.timestamps()
+})
+
+await users.create({ email, email_index: cipher.blindIndex(email) })
+await users.query().where('email_index', cipher.blindIndex(searchTerm)).first()
+```
+
+Rotation invalidates blind-index values (the HMAC always uses the *current* key). After a key swap, either rehash + update the sidecar in your re-encrypt migration, or compute lookups under both current + previous keys until the migration completes.
+
 ### What's deferred
 
-- **Key rotation.** V1 supports one key. Multi-key rings with a key-id header in the ciphertext envelope land later.
-- **Searching encrypted columns.** Use a blind-index (HMAC-SHA-256 of the canonicalized plaintext) in a separate column if you need exact-match lookup. The framework doesn't ship one yet.
 - **Per-tenant keys.** Same key for the whole app today.
 
 ### Inheritance + helpers

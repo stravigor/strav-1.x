@@ -96,7 +96,7 @@ describe('sqlTypeFor', () => {
     const user = defineSchema('user', Archetype.Entity, (t) => t.id())
     const post = defineSchema('post', Archetype.Entity, (t) => {
       t.id()
-      t.reference('user_id').to(user)
+      t.foreign('user_id').to(user)
     })
     const registry = new SchemaRegistry().registerAll([user, post])
     const userIdField = post.fields[1] as SchemaField
@@ -107,7 +107,7 @@ describe('sqlTypeFor', () => {
     const tenant = defineSchema('tenant', Archetype.Entity, (t) => t.uuid())
     const member = defineSchema('member', Archetype.Entity, (t) => {
       t.id()
-      t.reference('tenant_id').to(tenant)
+      t.foreign('tenant_id').to(tenant)
     })
     const registry = new SchemaRegistry().registerAll([tenant, member])
     expect(sqlTypeFor(member.fields[1] as SchemaField, registry)).toBe('uuid')
@@ -116,7 +116,7 @@ describe('sqlTypeFor', () => {
   test('reference throws when target schema is missing from registry', () => {
     const post = defineSchema('post', Archetype.Entity, (t) => {
       t.id()
-      t.reference('user_id').to('user')
+      t.foreign('user_id').to('user')
     })
     const empty = new SchemaRegistry()
     expect(() => sqlTypeFor(post.fields[1] as SchemaField, empty)).toThrow(/not registered/)
@@ -125,7 +125,7 @@ describe('sqlTypeFor', () => {
   test('reference throws when no registry is passed', () => {
     const post = defineSchema('post', Archetype.Entity, (t) => {
       t.id()
-      t.reference('user_id').to('user')
+      t.foreign('user_id').to('user')
     })
     expect(() => sqlTypeFor(post.fields[1] as SchemaField)).toThrow(/not registered/)
   })
@@ -187,7 +187,7 @@ describe('isPrimaryKeyKind', () => {
       t.timestamp('f')
       t.enum('g', ['x'])
       t.encrypted('h')
-      t.reference('i').to('other')
+      t.foreign('i').to('other')
     })
     expect(s.fields.some(isPrimaryKeyKind)).toBe(false)
   })
@@ -255,7 +255,7 @@ describe('columnDefinition', () => {
     const user = defineSchema('user', Archetype.Entity, (t) => t.id())
     const post = defineSchema('post', Archetype.Entity, (t) => {
       t.id()
-      t.reference('user_id').to(user).onDelete('cascade')
+      t.foreign('user_id').to(user).onDelete('cascade')
     })
     const registry = new SchemaRegistry().registerAll([user, post])
     expect(columnDefinition(post.fields[1] as SchemaField, registry)).toBe(
@@ -269,7 +269,7 @@ describe('columnDefinition', () => {
     })
     const user = defineSchema('user', Archetype.Entity, (t) => {
       t.id()
-      t.reference('country_code').to(country)
+      t.foreign('country_code').to(country)
     })
     const registry = new SchemaRegistry().registerAll([country, user])
     expect(columnDefinition(user.fields[1] as SchemaField, registry)).toBe(
@@ -281,7 +281,7 @@ describe('columnDefinition', () => {
     const user = defineSchema('user', Archetype.Entity, (t) => t.id())
     const post = defineSchema('post', Archetype.Entity, (t) => {
       t.id()
-      t.reference('editor_id').to(user).nullable().onDelete('set null')
+      t.foreign('editor_id').to(user).nullable().onDelete('set null')
     })
     const registry = new SchemaRegistry().registerAll([user, post])
     expect(columnDefinition(post.fields[1] as SchemaField, registry)).toBe(
@@ -370,7 +370,7 @@ describe('emitCreateTable', () => {
     const user = defineSchema('user', Archetype.Entity, (t) => t.id())
     const post = defineSchema('post', Archetype.Entity, (t) => {
       t.id()
-      t.reference('author_id').to(user)
+      t.foreign('author_id').to(user)
       t.timestamps()
     })
     const registry = new SchemaRegistry().registerAll([user, post])
@@ -412,7 +412,7 @@ describe('emitAddColumn', () => {
     const user = defineSchema('user', Archetype.Entity, (t) => t.id())
     const post = defineSchema('post', Archetype.Entity, (t) => {
       t.id()
-      t.reference('author_id').to(user)
+      t.foreign('author_id').to(user)
     })
     const registry = new SchemaRegistry().registerAll([user, post])
     expect(emitAddColumn(post, 'author_id', { registry }).sql).toBe(

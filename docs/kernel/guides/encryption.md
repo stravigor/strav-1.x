@@ -84,12 +84,59 @@ class TokenService {
 
 For the common case — encrypting database columns — use `@encrypt` from `@strav/database`. See [docs/database/guides/model_decorators.md](../../database/guides/model_decorators.md).
 
+## Key rotation
+
+Add the old key to `config.encryption.previousKeys` and swap `key` to the new value. Encryption always uses the current `key`; decryption tries `key` first, then each `previousKeys[]` in order, returning the first success. The ciphertext envelope didn't change — old data keeps decrypting without re-writing every row.
+
+```ts
+// config/encryption.ts
+export default {
+  key:           env.required('APP_KEY'),         // current
+  previousKeys: [env('APP_KEY_PREVIOUS')].filter(Boolean), // rotate-out
+}
+```
+
+Cycle:
+
+1. Generate a new key. Set `APP_KEY_PREVIOUS=<old>`, `APP_KEY=<new>`. Deploy.
+2. New writes encrypt under the new key. Reads of old rows succeed via `previousKeys` fallback.
+3. (Optional) Run a re-encrypt-on-read migration: `SELECT … UPDATE` cycle that round-trips encrypted columns. Once every row is under the new key, drop `APP_KEY_PREVIOUS`.
+
+There's no "key id" header in the envelope. Decryption is `O(keyRing.length)` per ciphertext when the current key fails — typically a single retry after a rotation, until the migration completes.
+
+## Blind index — searching encrypted columns
+
+`cipher.blindIndex(plaintext)` returns a deterministic HMAC-SHA256 of the plaintext under the current key, as a 64-char hex string. Pair it with an `_index` sidecar column to query encrypted fields by equality:
+
+```ts
+// schema
+defineSchema('user', Archetype.Entity, (t) => {
+  t.id()
+  t.encrypted('email')                       // ciphertext column
+  t.string('email_index').max(64).unique()  // sidecar — the HMAC hex
+  t.timestamps()
+})
+
+// write
+const email = 'alice@example.com'
+await users.create({ email, email_index: cipher.blindIndex(email) })
+
+// look up
+const user = await users.query()
+  .where('email_index', cipher.blindIndex(searchTerm))
+  .first()
+```
+
+Properties:
+
+- **Deterministic** — same plaintext under the same key always hashes to the same index, so an equality query on the sidecar matches.
+- **Keyed** — observers without the key can't pre-compute a hash table to reverse the index. (Plain SHA-256 would let them.)
+- **Always uses the current key** — rotation invalidates the index. After rotation, the old index column won't match a `blindIndex(plaintext)` computed under the new key. Either: (a) rehash + update the sidecar in your re-encrypt-on-read migration, or (b) leave `previousKeys` populated and compute index lookups under both keys until the migration finishes.
+
 ## What's deferred
 
-- **Key rotation.** V1 is single-key. Multi-key rings with a key-id byte in the ciphertext envelope land in a follow-up — the storage format will have to grow a version prefix at that point.
 - **Per-tenant keys.** Same key for the whole app today.
 - **Async / HSM-backed ciphers.** The `Cipher` interface is synchronous, which keeps the Repository hot path tight. Async-capable ciphers (KMS, HSM) would need a parallel `AsyncCipher` interface; not part of V1.
-- **`@strav/kernel`-owned blind-index helper.** Apps that need searchable encrypted columns currently build their own HMAC-of-canonicalized-plaintext column. A shared helper may land later.
 
 ## Edge cases
 

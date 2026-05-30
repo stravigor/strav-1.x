@@ -236,7 +236,7 @@ describe('diffSchemas — topological ordering', () => {
     const user = defineSchema('user', Archetype.Entity, (t) => t.id())
     const post = defineSchema('post', Archetype.Entity, (t) => {
       t.id()
-      t.reference('author_id').to(user)
+      t.foreign('author_id').to(user)
     })
     // Register in the WRONG order on purpose — diff should sort it out.
     const registry = new SchemaRegistry().registerAll([post, user])
@@ -251,11 +251,11 @@ describe('diffSchemas — topological ordering', () => {
     const a = defineSchema('a', Archetype.Entity, (t) => t.id())
     const b = defineSchema('b', Archetype.Entity, (t) => {
       t.id()
-      t.reference('a_id').to(a)
+      t.foreign('a_id').to(a)
     })
     const c = defineSchema('c', Archetype.Entity, (t) => {
       t.id()
-      t.reference('b_id').to(b)
+      t.foreign('b_id').to(b)
     })
     const registry = new SchemaRegistry().registerAll([c, b, a])
     const result = diffSchemas(registry, snapshot())
@@ -267,11 +267,11 @@ describe('diffSchemas — topological ordering', () => {
   test('throws on a circular FK between two missing tables', () => {
     const a = defineSchema('a_table', Archetype.Entity, (t) => {
       t.id()
-      t.reference('b_id').to('b_table')
+      t.foreign('b_id').to('b_table')
     })
     const b = defineSchema('b_table', Archetype.Entity, (t) => {
       t.id()
-      t.reference('a_id').to('a_table')
+      t.foreign('a_id').to('a_table')
     })
     const registry = new SchemaRegistry().registerAll([a, b])
     expect(() => diffSchemas(registry, snapshot())).toThrow(/circular FK/)
@@ -282,7 +282,7 @@ describe('diffSchemas — topological ordering', () => {
     const user = defineSchema('user', Archetype.Entity, (t) => t.id())
     const post = defineSchema('post', Archetype.Entity, (t) => {
       t.id()
-      t.reference('author_id').to(user)
+      t.foreign('author_id').to(user)
     })
     const registry = new SchemaRegistry().registerAll([user, post])
     const result = diffSchemas(
@@ -304,7 +304,7 @@ describe('diffSchemas — topological ordering', () => {
     })
     const post = defineSchema('post', Archetype.Entity, (t) => {
       t.id()
-      t.reference('author_id').to(user)
+      t.foreign('author_id').to(user)
     })
     const registry = new SchemaRegistry().registerAll([user, post])
     const result = diffSchemas(
@@ -344,7 +344,7 @@ describe('generateMigration', () => {
     const user = defineSchema('user', Archetype.Entity, (t) => t.id())
     const post = defineSchema('post', Archetype.Entity, (t) => {
       t.id()
-      t.reference('author_id').to(user)
+      t.foreign('author_id').to(user)
     })
     const registry = new SchemaRegistry().registerAll([post, user])
     const db = new FakeExecutor()
@@ -884,5 +884,210 @@ describe('generateMigration — allowAlter', () => {
       'ALTER TABLE "user" ALTER COLUMN "email" TYPE varchar(255) USING "email"::varchar(255);\n' +
         'ALTER TABLE "user" ALTER COLUMN "email" SET NOT NULL',
     )
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Relations through the migration pipeline
+//
+// Sanity-check that the new relation-builder forms produce the same DDL the
+// long-hand `t.foreign(...)` form does, and that the diff generator wires
+// belongsTo's auto-FK + belongsToMany's pivot table the way an integration
+// test would expect.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('Migration generation — t.belongsTo', () => {
+  test('one-call form emits an FK column identical to the explicit t.foreign(...) form', async () => {
+    // Long-hand: explicit FK + manual relation.
+    const explicitPost = defineSchema('post', Archetype.Entity, (t) => {
+      t.id()
+      t.string('title')
+      t.foreign('user_id').to('user')
+      t.belongsTo('user', { foreignKey: 'user_id', as: 'author' })
+    })
+    // Short-hand: belongsTo creates both.
+    const combinedPost = defineSchema('post', Archetype.Entity, (t) => {
+      t.id()
+      t.string('title')
+      t.belongsTo('user', { as: 'author' })
+    })
+
+    const userSchema = defineSchema('user', Archetype.Entity, (t) => t.id())
+    const explicitReg = new SchemaRegistry().registerAll([userSchema, explicitPost])
+    const combinedReg = new SchemaRegistry().registerAll([userSchema, combinedPost])
+
+    const explicitDb = new FakeExecutor()
+    const combinedDb = new FakeExecutor()
+    const explicitMig = nonNull(await generateMigration({ registry: explicitReg, db: explicitDb }))
+    const combinedMig = nonNull(await generateMigration({ registry: combinedReg, db: combinedDb }))
+
+    const explicitRun = new FakeExecutor()
+    const combinedRun = new FakeExecutor()
+    await explicitMig.migration.up(explicitRun)
+    await combinedMig.migration.up(combinedRun)
+
+    // Same SQL → same DDL — the two forms are interchangeable from the
+    // migration generator's point of view.
+    expect(combinedRun.executed.map((e) => e.sql)).toEqual(
+      explicitRun.executed.map((e) => e.sql),
+    )
+  })
+
+  test('add-column op fires when belongsTo is added to an existing table', () => {
+    const user = defineSchema('user', Archetype.Entity, (t) => t.id())
+    const post = defineSchema('post', Archetype.Entity, (t) => {
+      t.id()
+      t.string('title')
+      t.belongsTo(user, { as: 'author' }) // adds user_id + relation
+    })
+    const registry = new SchemaRegistry().registerAll([user, post])
+
+    // DB has an older shape of `post` — no user_id yet. user table already exists.
+    const result = diffSchemas(
+      registry,
+      snapshot(
+        { name: 'user', columns: [col('id', 'character', false, 26)] },
+        {
+          name: 'post',
+          columns: [
+            col('id', 'character', false, 26),
+            col('title', 'character varying', false, 255),
+          ],
+        },
+      ),
+    )
+    expect(result.operations).toHaveLength(1)
+    const op = nonNull(result.operations[0])
+    expect(op.kind).toBe('add-column')
+    if (op.kind === 'add-column') {
+      expect(op.schemaName).toBe('post')
+      expect(op.columnName).toBe('user_id')
+      // SQL emits the FK column as `reference` — char(26) for ULID PK + FK constraint.
+      expect(op.sql).toContain('"user_id"')
+      expect(op.sql).toContain('REFERENCES "user"')
+    }
+  })
+
+  test('string target → topological order still puts the parent before the child', () => {
+    // userSchema declared FIRST without knowing about postSchema yet.
+    const user = defineSchema('user', Archetype.Entity, (t) => {
+      t.id()
+      t.hasMany('post', { foreignKey: 'user_id', as: 'posts' }) // string target
+    })
+    const post = defineSchema('post', Archetype.Entity, (t) => {
+      t.id()
+      t.belongsTo('user', { as: 'author' }) // string target → user_id FK
+    })
+    // Register in the WRONG order to make the topological sort earn its keep.
+    const registry = new SchemaRegistry().registerAll([post, user])
+    const result = diffSchemas(registry, snapshot())
+    const creates = result.operations
+      .filter((op) => op.kind === 'create-table')
+      .map((op) => op.schemaName)
+    expect(creates).toEqual(['user', 'post'])
+  })
+})
+
+describe('Migration generation — t.belongsToMany', () => {
+  test('relation declaration alone adds no columns to the owning schema', async () => {
+    const user = defineSchema('user', Archetype.Entity, (t) => {
+      t.id()
+      t.string('email').unique()
+      t.belongsToMany('role', {
+        pivot: 'user_role',
+        parentKey: 'user_id',
+        targetKey: 'role_id',
+        as: 'roles',
+      })
+    })
+
+    // No `role`, no `user_role` in the registry on purpose — we're only
+    // checking the OWNING schema's column set is unchanged by the relation
+    // declaration (the pivot lives in its own defineSchema).
+    expect(user.fields.map((f) => f.name)).toEqual(['id', 'email'])
+  })
+
+  test('the pivot schema generates a join table with two FK columns', async () => {
+    const user = defineSchema('user', Archetype.Entity, (t) => {
+      t.id()
+      t.string('email').unique()
+      t.belongsToMany('role', {
+        pivot: 'user_role',
+        parentKey: 'user_id',
+        targetKey: 'role_id',
+        as: 'roles',
+      })
+    })
+    const role = defineSchema('role', Archetype.Entity, (t) => {
+      t.id()
+      t.string('name').unique()
+    })
+    // Pivot is a normal schema; both FK columns belong to the pivot.
+    const userRole = defineSchema('user_role', Archetype.Entity, (t) => {
+      t.id()
+      t.belongsTo(user, { foreignKey: 'user_id', as: 'user' })
+      t.belongsTo(role, { foreignKey: 'role_id', as: 'role' })
+    })
+
+    const registry = new SchemaRegistry().registerAll([user, role, userRole])
+    const db = new FakeExecutor()
+    const result = nonNull(await generateMigration({ registry, db }))
+    const run = new FakeExecutor()
+    await result.migration.up(run)
+
+    const pivotCreate = run.executed.find((e) => /CREATE TABLE "user_role"/.test(e.sql))
+    expect(pivotCreate).toBeDefined()
+    expect(pivotCreate?.sql).toContain('"user_id"')
+    expect(pivotCreate?.sql).toContain('"role_id"')
+    expect(pivotCreate?.sql).toContain('REFERENCES "user"')
+    expect(pivotCreate?.sql).toContain('REFERENCES "role"')
+
+    // Topological order: pivot must come AFTER both endpoints.
+    const creates = run.executed
+      .map((e) => e.sql)
+      .filter((s) => s.startsWith('CREATE TABLE'))
+      .map((s) => /CREATE TABLE "([^"]+)"/.exec(s)?.[1])
+    const userIdx = creates.indexOf('user')
+    const roleIdx = creates.indexOf('role')
+    const pivotIdx = creates.indexOf('user_role')
+    expect(pivotIdx).toBeGreaterThan(userIdx)
+    expect(pivotIdx).toBeGreaterThan(roleIdx)
+  })
+})
+
+describe('Migration generation — t.hasOne / t.hasMany', () => {
+  test('hasOne / hasMany add NO columns to the parent (FK lives on the child)', () => {
+    const user = defineSchema('user', Archetype.Entity, (t) => {
+      t.id()
+      t.string('email')
+      t.hasOne('profile', { foreignKey: 'user_id' })
+      t.hasMany('post', { foreignKey: 'user_id', as: 'posts' })
+    })
+    expect(user.fields.map((f) => f.name)).toEqual(['id', 'email'])
+    // Relations are recorded; columns are not.
+    expect(user.relations.map((r) => r.kind).sort()).toEqual(['hasMany', 'hasOne'])
+  })
+
+  test('the child schema carries the FK column via belongsTo — generated DDL is symmetric', async () => {
+    const user = defineSchema('user', Archetype.Entity, (t) => {
+      t.id()
+      t.hasOne('profile', { foreignKey: 'user_id' })
+    })
+    const profile = defineSchema('profile', Archetype.Entity, (t) => {
+      t.id()
+      t.string('bio')
+      t.belongsTo('user', { foreignKey: 'user_id', as: 'user', onDelete: 'cascade' })
+    })
+
+    const registry = new SchemaRegistry().registerAll([user, profile])
+    const db = new FakeExecutor()
+    const result = nonNull(await generateMigration({ registry, db }))
+    const run = new FakeExecutor()
+    await result.migration.up(run)
+
+    const profileCreate = run.executed.find((e) => /CREATE TABLE "profile"/.test(e.sql))
+    expect(profileCreate?.sql).toContain('"user_id"')
+    expect(profileCreate?.sql).toContain('REFERENCES "user"')
+    expect(profileCreate?.sql).toContain('ON DELETE CASCADE')
   })
 })

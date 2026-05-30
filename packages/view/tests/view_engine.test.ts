@@ -93,6 +93,23 @@ describe('ViewEngine — @extends + @section + @yield', () => {
     expect(html).toBe('<title>Dashboard</title><main><h1>Hi</h1></main>')
   })
 
+  test("@yield('name', 'default') uses the literal default when the child didn't set the section", async () => {
+    const engine = makeEngine({
+      '/views/layouts/app.strav': "<title>@yield('title', 'albastr')</title>",
+      '/views/pages/p.strav': "@extends('layouts.app')",
+    })
+    expect(await engine.render('pages.p')).toBe('<title>albastr</title>')
+  })
+
+  test("@yield('name', 'default') — child @section overrides the default", async () => {
+    const engine = makeEngine({
+      '/views/layouts/app.strav': "<title>@yield('title', 'albastr')</title>",
+      '/views/pages/p.strav':
+        "@extends('layouts.app')\n@section('title')Dashboard@endsection",
+    })
+    expect(await engine.render('pages.p')).toBe('<title>Dashboard</title>')
+  })
+
   test('nested layout chain (child → parent → grandparent)', async () => {
     const engine = makeEngine({
       '/views/layouts/base.strav': "<base>@yield('body')</base>",
@@ -189,8 +206,112 @@ describe('ViewEngine — standard helpers', () => {
     expect(await engine.render('route')).toContain('users.show')
   })
 
-  test('@asset passes through (asset versioning lands with the bundler slice)', async () => {
-    expect(await engine.render('asset')).toBe('css/app.css')
+  test('@asset is prefixed by the AssetManifest (no manifest, no public file → bare prefix)', async () => {
+    // Default `AssetManifest` resolves `css/app.css` → `/css/app.css`
+    // when no manifest exists and the file isn't on disk.
+    expect(await engine.render('asset')).toBe('/css/app.css')
+  })
+
+  test('@islands emits a script tag pointing at islands/islands.js by default', async () => {
+    const e = new ViewEngine({
+      config: { directory: '/views', assets: false },
+      read: async () => '@islands',
+    })
+    expect(await e.render('any')).toBe(
+      '<script type="module" src="islands/islands.js" defer></script>',
+    )
+  })
+
+  test('@islands() honors config.view.islands.scriptPath', async () => {
+    const e = new ViewEngine({
+      config: {
+        directory: '/views',
+        assets: false,
+        islands: { scriptPath: 'bundles/main.js' },
+      },
+      read: async () => '@islands()',
+    })
+    expect(await e.render('any')).toBe(
+      '<script type="module" src="bundles/main.js" defer></script>',
+    )
+  })
+
+  test('@islands routes through the AssetManifest (versioned)', async () => {
+    const e = new ViewEngine({
+      config: { directory: '/views' },
+      read: async () => '@islands',
+    })
+    // No manifest, no on-disk file → default `/islands/islands.js` prefix.
+    const html = await e.render('any')
+    expect(html).toBe('<script type="module" src="/islands/islands.js" defer></script>')
+  })
+
+  test('@css emits a stylesheet link pointing at app.css by default', async () => {
+    const e = new ViewEngine({
+      config: { directory: '/views', assets: false },
+      read: async () => '@css',
+    })
+    expect(await e.render('any')).toBe('<link rel="stylesheet" href="app.css">')
+  })
+
+  test("@css emits all entries when css.inputs is a string array (order preserved)", async () => {
+    const e = new ViewEngine({
+      config: {
+        directory: '/views',
+        assets: false,
+        css: { inputs: ['resources/css/app.css', 'resources/css/admin.css'] },
+      },
+      read: async () => '@css',
+    })
+    expect(await e.render('any')).toBe(
+      '<link rel="stylesheet" href="app.css"><link rel="stylesheet" href="admin.css">',
+    )
+  })
+
+  test("@css('name') emits only the named entry (record-shape inputs)", async () => {
+    const e = new ViewEngine({
+      config: {
+        directory: '/views',
+        assets: false,
+        css: {
+          inputs: {
+            main: 'resources/css/app.css',
+            admin: 'resources/css/admin.css',
+            critical: 'resources/css/critical.css',
+          },
+        },
+      },
+      read: async () => "@css('admin')",
+    })
+    expect(await e.render('any')).toBe('<link rel="stylesheet" href="admin.css">')
+  })
+
+  test("@css('unknown-name') emits nothing (silent miss)", async () => {
+    const e = new ViewEngine({
+      config: {
+        directory: '/views',
+        assets: false,
+        css: { inputs: { main: 'resources/css/app.css' } },
+      },
+      read: async () => "A@css('nope')B",
+    })
+    expect(await e.render('any')).toBe('AB')
+  })
+
+  test('@css() returns empty when css.linkPath is null', async () => {
+    const e = new ViewEngine({
+      config: { directory: '/views', assets: false, css: { linkPath: null } },
+      read: async () => 'A@css()B',
+    })
+    expect(await e.render('any')).toBe('AB')
+  })
+
+  test('@asset is a pass-through when assets: false', async () => {
+    const e2 = new ViewEngine({
+      config: { directory: '/views', assets: false },
+      read: async () => "@asset('css/app.css')",
+    })
+    expect(await e2.render('asset')).toBe('css/app.css')
   })
 })
 
