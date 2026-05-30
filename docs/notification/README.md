@@ -171,6 +171,10 @@ Channel-level throws are captured into `error` — the manager never rethrows. A
 ## Documentation
 
 - [`api.md`](./api.md) — every public export with signatures + semantics.
+- [`guides/channels.md`](./guides/channels.md) — picking + configuring channels, per-notifiable preferences, the hook surface per channel, dispatch-result patterns.
+- [`guides/persistence.md`](./guides/persistence.md) — database channel deep dive: schema + migration, `unread` / `markAsRead`, the tenanted variant, dual-channel (broadcast + database) for live + persistent.
+- [`guides/custom_channels.md`](./guides/custom_channels.md) — building a custom driver + provider end-to-end against a Slack-webhook example.
+- [`guides/testing.md`](./guides/testing.md) — `MockNotificationDriver` patterns, asserting fan-out + partial failure, integration tests with real channels.
 
 ## Custom channels
 
