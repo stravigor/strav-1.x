@@ -48,6 +48,10 @@ cd "$WORKSPACE_ROOT"
 #
 # Deferred to post-1.0: audit, transit (not in this list).
 # Dropped: oauth2, pdf, publish, mcp (folded into brain).
+#
+# Vendor adapters (stripe, omise, line, google, facebook) live as subpath
+# exports under @strav/payment and @strav/social — they are NOT standalone
+# npm packages and must NOT be listed here.
 ALL_PACKAGES=(
   # Tier 1 — kernel only
   kernel
@@ -56,7 +60,7 @@ ALL_PACKAGES=(
   http database workflow auth
 
   # Tier 3 — depend on tier 2
-  view queue social machine
+  view queue social payment machine
 
   # Tier 4 — depend on tier 3
   signal durable brain
@@ -64,8 +68,8 @@ ALL_PACKAGES=(
   # Tier 5 — depend on tier 4
   cli rag
 
-  # Consumer packages (any tier)
-  stripe omise line flag search captcha devtools testing faker
+  # Test-only (devDependency in consumers)
+  testing
 )
 
 if [[ -n "$SPECIFIC_PACKAGES" ]]; then
