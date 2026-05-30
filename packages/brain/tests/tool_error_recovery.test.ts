@@ -19,9 +19,9 @@ import type { GenerateContentResponse } from '@google/genai'
 import type OpenAI from 'openai'
 import type { AgentStreamEvent } from '../src/agent_stream_event.ts'
 import { defineTool } from '../src/define_tool.ts'
-import { AnthropicProvider } from '../src/providers/anthropic_provider.ts'
-import { GeminiProvider } from '../src/providers/gemini_provider.ts'
-import { OpenAIProvider } from '../src/providers/openai_provider.ts'
+import { AnthropicBrainDriver } from '../src/drivers/anthropic/anthropic_brain_driver.ts'
+import { GeminiBrainDriver } from '../src/drivers/gemini/gemini_brain_driver.ts'
+import { OpenAIBrainDriver } from '../src/drivers/openai/openai_brain_driver.ts'
 import { ToolExecutionError } from '../src/tool_execution_error.ts'
 
 async function collect<T>(it: AsyncIterable<AgentStreamEvent<T>>): Promise<AgentStreamEvent<T>[]> {
@@ -69,7 +69,7 @@ describe('Anthropic — onToolError', () => {
       inputSchema: { type: 'object' },
       execute: async () => { throw new Error('boom') },
     })
-    const provider = new AnthropicProvider(
+    const provider = new AnthropicBrainDriver(
       'anthropic', { driver: 'anthropic', apiKey: 'sk-test' }, { client },
     )
     await expect(
@@ -101,7 +101,7 @@ describe('Anthropic — onToolError', () => {
       execute: async () => { throw new Error('boom') },
     })
     const captured: ToolExecutionError[] = []
-    const provider = new AnthropicProvider(
+    const provider = new AnthropicBrainDriver(
       'anthropic', { driver: 'anthropic', apiKey: 'sk-test' }, { client },
     )
     const result = await provider.runWithTools(
@@ -136,7 +136,7 @@ describe('Anthropic — onToolError', () => {
       inputSchema: { type: 'object' },
       execute: async () => { throw new Error('boom') },
     })
-    const provider = new AnthropicProvider(
+    const provider = new AnthropicBrainDriver(
       'anthropic', { driver: 'anthropic', apiKey: 'sk-test' }, { client },
     )
     await expect(
@@ -160,7 +160,7 @@ describe('Anthropic — onToolError', () => {
       messages: { create: async () => queue.shift() as Anthropic.Message },
     } as unknown as Anthropic
     const captured: ToolExecutionError[] = []
-    const provider = new AnthropicProvider(
+    const provider = new AnthropicBrainDriver(
       'anthropic', { driver: 'anthropic', apiKey: 'sk-test' }, { client },
     )
     const result = await provider.runWithTools(
@@ -216,7 +216,7 @@ describe('OpenAI — onToolError handles JSON-parse-args failures', () => {
       execute: async () => 'ok',
     })
     const captured: ToolExecutionError[] = []
-    const provider = new OpenAIProvider(
+    const provider = new OpenAIBrainDriver(
       'openai', { driver: 'openai', apiKey: 'sk-test' }, { client },
     )
     const result = await provider.runWithTools(
@@ -272,7 +272,7 @@ describe('Gemini — onToolError', () => {
       inputSchema: { type: 'object' },
       execute: async () => { throw new Error('boom') },
     })
-    const provider = new GeminiProvider(
+    const provider = new GeminiBrainDriver(
       'google', { driver: 'google', apiKey: 'sk-test' }, { client },
     )
     const result = await provider.runWithTools(
@@ -321,7 +321,7 @@ describe('streamWithTools — tool_result event has isError, loop continues', ()
       inputSchema: { type: 'object' },
       execute: async () => { throw new Error('boom') },
     })
-    const provider = new AnthropicProvider(
+    const provider = new AnthropicBrainDriver(
       'anthropic', { driver: 'anthropic', apiKey: 'sk-test' }, { client },
     )
     const events = await collect(

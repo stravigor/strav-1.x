@@ -16,7 +16,7 @@ As of 2026-05-28, the workspace ships eight packages. The remaining 1.0 packages
 | `@strav/signal` | M3 mail layer shipped; **notifications + broadcast + SSE + inbound parsers** deferred | Medium |
 | `@strav/view` | M3 engine + islands shipped; **pages auto-router** still missing | Small |
 | `@strav/cli` | M4 slices 1-6 shipped; **plugin / cache / config / tenant commands** deferred (slice 7 partial) | Small |
-| `@strav/testing` | Not started — needed to exercise an app + DB-rollback wrap pattern | Medium |
+| `@strav/testing` | v1 shipped (2026-05-30) — `MemStream`, `stubFetch`, Postgres helpers. `bootTestApp` + stub-driver factories deferred to a follow-up slice. | Small remainder |
 
 ### M5 — entire AI + specialty + spring
 
@@ -50,7 +50,18 @@ Don't ship these in 1.0.
 
 ## Anatomy of a package
 
-Every `@strav/*` package looks like this — match it exactly:
+Every `@strav/*` package belongs to one of two shapes. Pick the right one before writing the first file — switching later is invasive.
+
+### Subsystem vs manager + drivers
+
+| Shape | Criterion | Examples |
+|---|---|---|
+| **Subsystem** | Single coherent service. No swappable backend. The whole package is the implementation. | `kernel`, `http`, `auth`, `database`, `signal`, `view`, `cli`, `queue`, `workflow`, `machine`, `durable` |
+| **Manager + drivers** | A `XxxManager` facade with a public driver interface and ≥1 vendor backends behind it. Apps pick a backend via config; the manager dispatches. | `brain`, `payment`, `social`, `rag` |
+
+If your package has a `<name>_manager.ts` + a `<name>_driver.ts` interface + vendor-specific config keys, it's manager+drivers. Otherwise it's a subsystem.
+
+### Subsystem layout
 
 ```
 packages/<name>/
@@ -73,6 +84,52 @@ packages/<name>/
 ├── tsconfig.json                    # extends ../../tsconfig.base.json
 └── README.md                        # short — the canonical docs live in docs/<name>/
 ```
+
+When in doubt, copy `@strav/auth` (smallest clean subsystem) or `@strav/database` (most complex shipped).
+
+### Manager + drivers layout
+
+```
+packages/<name>/src/
+├── index.ts                         # public barrel
+├── <name>_provider.ts               # ServiceProvider
+├── <name>_manager.ts                # the facade apps inject
+├── <name>_driver.ts                 # driver interface — what every backend implements
+├── <name>_config.ts                 # ProviderConfig shape + default exports
+├── <name>_error.ts                  # typed error hierarchy
+├── types.ts  |  dto/                # shared shapes (use `dto/` directory when >3 DTOs)
+├── drivers/                         # ALL driver implementations live here
+│   ├── unsupported.ts               # shared "throw unsupported" helper (when applicable)
+│   ├── mock_<name>_driver.ts        # in-process test double (when shipped)
+│   └── <vendor>/                    # one subdirectory per vendor backend
+│       ├── index.ts                 # barrel — what `./<vendor>` subpath export points at
+│       ├── <vendor>_<name>_driver.ts
+│       ├── <vendor>_config.ts       # vendor-specific config shape
+│       ├── <vendor>_provider.ts     # vendor ServiceProvider (when needed)
+│       ├── <vendor>_helpers.ts      # vendor-internal utilities
+│       ├── <vendor>_message_builder.ts   # request builders, when applicable
+│       ├── <vendor>_response_mapper.ts   # response mappers, when applicable
+│       ├── <vendor>_webhook.ts      # webhook normalization (when vendor has webhooks)
+│       └── ...
+├── <feature>/                       # persistence / webhook / mcp / ... — name carries the domain
+│   ├── <entity>_schema.ts           # single-table feature: file at root of the feature folder
+│   ├── schemas/                     # OR a multi-table directory:
+│   │   └── <entity>_schema.ts       #   one file per entity (file-name = symbol convention preserved)
+│   └── <entity>_repository.ts
+└── console/                         # if commands shipped
+```
+
+Rules:
+
+- **Always-subdir for vendor drivers.** Even a one-file driver (rag's `memory`) lives at `drivers/memory/memory_driver.ts`. The rule is dead simple: every backend is a directory. No mixing flat vendor files with subdir vendors in the same package.
+- **`drivers/` is the driver shelf.** Vendor subdirs + shared driver utilities (mock, unsupported helper) sit here. Nothing else does. If a file isn't a driver or a driver utility, it doesn't belong under `drivers/`.
+- **Each vendor subdir is self-contained.** Driver class + config + helpers + builders + mappers + webhooks for that vendor live together. No vendor-specific code outside its subdir.
+- **One barrel per vendor subdir.** `drivers/<vendor>/index.ts` re-exports the vendor's public symbols. When the package's `package.json` exports field surfaces `./<vendor>` as a subpath, it points at this barrel.
+- **Persistence folders keep their domain name.** `payment/ledger/`, `social/ledger/`, `social/tenanted/`, `brain/persistence/` — the name carries meaning. The rule is "one folder per persistence concern," not a forced rename to `persistence/`.
+- **Schemas live under a feature folder, never at `src/` root.** Single-table feature: `<feature>/<entity>_schema.ts` at the folder root. Multi-table feature: `<feature>/schemas/<entity>_schema.ts`. File name always carries the entity (`payment_invoice_schema.ts`, not `schema.ts`) — the "one public symbol per file, file name = primary export" rule still applies. See `docs/code-quality.md` §2.3.
+- **`<name>_provider.ts` (the ServiceProvider) stays at `src/` root.** It's the package's entry-point wiring, not a driver.
+
+Canonical example: copy `@strav/payment` — vendor subdirs (`drivers/stripe/`, `drivers/omise/`), shared helpers at `drivers/` root, schemas under `ledger/schemas/`, subpath exports for tree-shaking. `@strav/brain` is the largest specimen (7 vendor subdirs); `@strav/rag` is the smallest (2 vendors, no subpath exports).
 
 Workspace `packages/*` glob auto-discovers the new directory. Just `bun install` after creating the `package.json`.
 
@@ -460,7 +517,8 @@ Spring **doesn't import the framework at runtime** — it only writes files. Its
 
 ## When in doubt
 
-1. **Read the matching shipped package.** `auth` is the cleanest small package; `database` is the most complex. Whatever pattern you need, one of them probably has it.
+1. **Read the matching shipped package.** `auth` is the cleanest small subsystem; `database` is the most complex. For a manager + drivers package, copy `@strav/payment` (the canonical example). Whatever pattern you need, one of them probably has it.
+2. **Writing a custom driver?** Read [building-an-adapter.md](./building-an-adapter.md) — registration patterns, the SDK-in-config gotcha, webhook contracts, the test ladder.
 2. **Read the spec.** `spec/<topic>.md` (where it exists) captures the design intent. It's NOT authoritative for current API — `docs/` is — but it's load-bearing for the *why*.
 3. **Read the project memory** — Claude Code stores per-project notes under `~/.claude/projects/<encoded-project-path>/memory/`. The `project_m*_progress.md` / `project_*_shipped.md` files there carry decision notes that didn't make it into spec or docs — the live "we tried this and it didn't work, so we did that" trail.
 4. **Match the existing tests' style.** Bun's `describe / test / expect` shape with one-line test names, MemStream for output assertions, InMemoryDatabase / FakeQueue / etc. for test doubles.

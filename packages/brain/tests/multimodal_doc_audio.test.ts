@@ -19,9 +19,9 @@ import type {
 } from '@google/genai'
 import type OpenAI from 'openai'
 import { BrainError } from '../src/brain_error.ts'
-import { AnthropicProvider } from '../src/providers/anthropic_provider.ts'
-import { GeminiProvider } from '../src/providers/gemini_provider.ts'
-import { OpenAIProvider } from '../src/providers/openai_provider.ts'
+import { AnthropicBrainDriver } from '../src/drivers/anthropic/anthropic_brain_driver.ts'
+import { GeminiBrainDriver } from '../src/drivers/gemini/gemini_brain_driver.ts'
+import { OpenAIBrainDriver } from '../src/drivers/openai/openai_brain_driver.ts'
 import type { Message } from '../src/types.ts'
 
 const FAKE_PDF = 'JVBERi0xLjQKJfbk/N8K'   // truncated; bytes don't matter for translation tests
@@ -47,10 +47,10 @@ function makeAnthropicClient() {
   return { client, calls }
 }
 
-describe('AnthropicProvider — DocumentBlock', () => {
+describe('AnthropicBrainDriver — DocumentBlock', () => {
   test('base64 PDF translates to native document block with title', async () => {
     const { client, calls } = makeAnthropicClient()
-    const provider = new AnthropicProvider(
+    const provider = new AnthropicBrainDriver(
       'anthropic',
       { driver: 'anthropic', apiKey: 'sk-test' },
       { client },
@@ -78,7 +78,7 @@ describe('AnthropicProvider — DocumentBlock', () => {
 
   test('url PDF translates to native document block', async () => {
     const { client, calls } = makeAnthropicClient()
-    const provider = new AnthropicProvider(
+    const provider = new AnthropicBrainDriver(
       'anthropic',
       { driver: 'anthropic', apiKey: 'sk-test' },
       { client },
@@ -103,10 +103,10 @@ describe('AnthropicProvider — DocumentBlock', () => {
   })
 })
 
-describe('AnthropicProvider — AudioBlock throws', () => {
+describe('AnthropicBrainDriver — AudioBlock throws', () => {
   test('audio block in a user message throws BrainError with guidance', async () => {
     const { client } = makeAnthropicClient()
-    const provider = new AnthropicProvider(
+    const provider = new AnthropicBrainDriver(
       'anthropic',
       { driver: 'anthropic', apiKey: 'sk-test' },
       { client },
@@ -132,7 +132,7 @@ describe('AnthropicProvider — AudioBlock throws', () => {
 
 // ─── OpenAI throws on both ───────────────────────────────────────────────
 
-describe('OpenAIProvider — DocumentBlock + AudioBlock throw', () => {
+describe('OpenAIBrainDriver — DocumentBlock + AudioBlock throw', () => {
   function makeClient() {
     const client = {
       chat: {
@@ -145,7 +145,7 @@ describe('OpenAIProvider — DocumentBlock + AudioBlock throw', () => {
   }
 
   test('document block throws with split-to-images guidance', async () => {
-    const provider = new OpenAIProvider(
+    const provider = new OpenAIBrainDriver(
       'openai',
       { driver: 'openai', apiKey: 'sk-test' },
       { client: makeClient() },
@@ -172,7 +172,7 @@ describe('OpenAIProvider — DocumentBlock + AudioBlock throw', () => {
   })
 
   test('audio block throws with Whisper guidance', async () => {
-    const provider = new OpenAIProvider(
+    const provider = new OpenAIBrainDriver(
       'openai',
       { driver: 'openai', apiKey: 'sk-test' },
       { client: makeClient() },
@@ -198,7 +198,7 @@ describe('OpenAIProvider — DocumentBlock + AudioBlock throw', () => {
 
 // ─── Gemini handles both via inlineData / fileData ──────────────────────
 
-describe('GeminiProvider — DocumentBlock + AudioBlock', () => {
+describe('GeminiBrainDriver — DocumentBlock + AudioBlock', () => {
   function makeFakeClient() {
     const calls: Array<{ params: GenerateContentParameters }> = []
     const client = {
@@ -219,7 +219,7 @@ describe('GeminiProvider — DocumentBlock + AudioBlock', () => {
 
   test('base64 PDF → inlineData with application/pdf MIME', async () => {
     const { client, calls } = makeFakeClient()
-    const provider = new GeminiProvider(
+    const provider = new GeminiBrainDriver(
       'google',
       { driver: 'google', apiKey: 'sk-test' },
       { client },
@@ -244,7 +244,7 @@ describe('GeminiProvider — DocumentBlock + AudioBlock', () => {
 
   test('url PDF → fileData with application/pdf MIME (from default)', async () => {
     const { client, calls } = makeFakeClient()
-    const provider = new GeminiProvider(
+    const provider = new GeminiBrainDriver(
       'google',
       { driver: 'google', apiKey: 'sk-test' },
       { client },
@@ -270,7 +270,7 @@ describe('GeminiProvider — DocumentBlock + AudioBlock', () => {
 
   test('base64 audio → inlineData with audio MIME', async () => {
     const { client, calls } = makeFakeClient()
-    const provider = new GeminiProvider(
+    const provider = new GeminiBrainDriver(
       'google',
       { driver: 'google', apiKey: 'sk-test' },
       { client },
@@ -293,7 +293,7 @@ describe('GeminiProvider — DocumentBlock + AudioBlock', () => {
 
   test('url audio → fileData with MIME guessed from extension', async () => {
     const { client, calls } = makeFakeClient()
-    const provider = new GeminiProvider(
+    const provider = new GeminiBrainDriver(
       'google',
       { driver: 'google', apiKey: 'sk-test' },
       { client },

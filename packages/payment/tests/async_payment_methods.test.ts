@@ -18,8 +18,8 @@ import {
   extractCardToken,
   paymentMethodKind,
 } from '../src/index.ts'
-import { StripePaymentDriver } from '../src/stripe/index.ts'
-import { OmisePaymentDriver } from '../src/omise/index.ts'
+import { StripePaymentDriver } from '../src/drivers/stripe/index.ts'
+import { OmisePaymentDriver } from '../src/drivers/omise/index.ts'
 
 describe('payment_method_helpers', () => {
   test('extractCardToken collapses both back-compat shapes', () => {

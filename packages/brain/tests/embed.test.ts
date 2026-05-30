@@ -16,13 +16,13 @@
 import { describe, expect, test } from 'bun:test'
 import type Anthropic from '@anthropic-ai/sdk'
 import type OpenAI from 'openai'
-import { AnthropicProvider } from '../src/providers/anthropic_provider.ts'
+import { AnthropicBrainDriver } from '../src/drivers/anthropic/anthropic_brain_driver.ts'
 import { BrainError } from '../src/brain_error.ts'
 import { BrainManager } from '../src/brain_manager.ts'
-import { DeepSeekProvider } from '../src/providers/deepseek_provider.ts'
-import { GeminiProvider } from '../src/providers/gemini_provider.ts'
-import { OllamaProvider } from '../src/providers/ollama_provider.ts'
-import { OpenAIProvider } from '../src/providers/openai_provider.ts'
+import { DeepSeekBrainDriver } from '../src/drivers/deepseek/deepseek_brain_driver.ts'
+import { GeminiBrainDriver } from '../src/drivers/gemini/gemini_brain_driver.ts'
+import { OllamaBrainDriver } from '../src/drivers/ollama/ollama_brain_driver.ts'
+import { OpenAIBrainDriver } from '../src/drivers/openai/openai_brain_driver.ts'
 
 // ─── OpenAI ──────────────────────────────────────────────────────────────
 
@@ -46,7 +46,7 @@ function makeOpenAIEmbedResponse(opts: {
   } as unknown as OpenAI.CreateEmbeddingResponse
 }
 
-describe('OpenAIProvider.embed', () => {
+describe('OpenAIBrainDriver.embed', () => {
   test('forwards model + input + signal to client.embeddings.create', async () => {
     const calls: Array<{ params: OpenAI.EmbeddingCreateParams; opts: unknown }> = []
     const client = {
@@ -57,7 +57,7 @@ describe('OpenAIProvider.embed', () => {
         },
       },
     } as unknown as OpenAI
-    const provider = new OpenAIProvider(
+    const provider = new OpenAIBrainDriver(
       'openai',
       { driver: 'openai', apiKey: 'sk-test' },
       { client },
@@ -79,7 +79,7 @@ describe('OpenAIProvider.embed', () => {
         create: async () => makeOpenAIEmbedResponse({ embeddings: [[1], [2], [3]] }),
       },
     } as unknown as OpenAI
-    const provider = new OpenAIProvider(
+    const provider = new OpenAIBrainDriver(
       'openai',
       { driver: 'openai', apiKey: 'sk-test' },
       { client },
@@ -98,7 +98,7 @@ describe('OpenAIProvider.embed', () => {
         },
       },
     } as unknown as OpenAI
-    const provider = new OpenAIProvider(
+    const provider = new OpenAIBrainDriver(
       'openai',
       { driver: 'openai', apiKey: 'sk-test' },
       { client },
@@ -117,7 +117,7 @@ describe('OpenAIProvider.embed', () => {
         },
       },
     } as unknown as OpenAI
-    const provider = new OpenAIProvider(
+    const provider = new OpenAIBrainDriver(
       'openai',
       { driver: 'openai', apiKey: 'sk-test', defaultEmbedModel: 'text-embedding-3-small' },
       { client },
@@ -129,7 +129,7 @@ describe('OpenAIProvider.embed', () => {
 
 // ─── Gemini ──────────────────────────────────────────────────────────────
 
-describe('GeminiProvider.embed', () => {
+describe('GeminiBrainDriver.embed', () => {
   test('forwards contents + signal via embedContent; usage = 0', async () => {
     const calls: Array<{ params: unknown }> = []
     const client = {
@@ -143,7 +143,7 @@ describe('GeminiProvider.embed', () => {
         },
       },
     }
-    const provider = new GeminiProvider(
+    const provider = new GeminiBrainDriver(
       'google',
       { driver: 'google', apiKey: 'sk-test' },
       { client },
@@ -169,7 +169,7 @@ describe('GeminiProvider.embed', () => {
 
 // ─── Ollama (inherits OpenAI's impl) ─────────────────────────────────────
 
-describe('OllamaProvider.embed', () => {
+describe('OllamaBrainDriver.embed', () => {
   test('inherits OpenAI embed via the compat layer', async () => {
     const calls: Array<{ params: OpenAI.EmbeddingCreateParams }> = []
     const client = {
@@ -183,7 +183,7 @@ describe('OllamaProvider.embed', () => {
         },
       },
     } as unknown as OpenAI
-    const provider = new OllamaProvider(
+    const provider = new OllamaBrainDriver(
       'ollama',
       {
         driver: 'ollama',
@@ -200,12 +200,12 @@ describe('OllamaProvider.embed', () => {
 
 // ─── DeepSeek (throws) ───────────────────────────────────────────────────
 
-describe('DeepSeekProvider.embed', () => {
+describe('DeepSeekBrainDriver.embed', () => {
   test('throws BrainError — DeepSeek has no embeddings API', async () => {
     const client = {
       embeddings: { create: async () => { throw new Error('should not be called') } },
     } as unknown as OpenAI
-    const provider = new DeepSeekProvider(
+    const provider = new DeepSeekBrainDriver(
       'deepseek',
       { driver: 'deepseek', apiKey: 'sk-test' },
       { client },
@@ -227,7 +227,7 @@ describe('BrainManager.embed', () => {
         },
       },
     } as unknown as OpenAI
-    const provider = new OpenAIProvider(
+    const provider = new OpenAIBrainDriver(
       'openai',
       { driver: 'openai', apiKey: 'sk-test' },
       { client },
@@ -243,7 +243,7 @@ describe('BrainManager.embed', () => {
     const client = {
       messages: { create: async () => { throw new Error('unused') } },
     } as unknown as Anthropic
-    const provider = new AnthropicProvider(
+    const provider = new AnthropicBrainDriver(
       'anthropic',
       { driver: 'anthropic', apiKey: 'sk-test' },
       { client },
@@ -264,7 +264,7 @@ describe('BrainManager.embed', () => {
           },
         },
       } as unknown as OpenAI
-      return new OpenAIProvider(name, { driver: 'openai', apiKey: 'sk-test' }, { client })
+      return new OpenAIBrainDriver(name, { driver: 'openai', apiKey: 'sk-test' }, { client })
     }
     const brain = new BrainManager({
       default: 'a',

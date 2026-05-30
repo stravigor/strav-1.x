@@ -9,7 +9,7 @@ import { BrainManager } from '@strav/brain'
 import { Application, type CommandContext, ConsoleOutput } from '@strav/kernel'
 import { RagFlush } from '../src/console/rag_flush.ts'
 import { RagList } from '../src/console/rag_list.ts'
-import { MemoryDriver } from '../src/drivers/memory_driver.ts'
+import { MemoryDriver } from '../src/drivers/memory/memory_driver.ts'
 import { RagManager } from '../src/rag_manager.ts'
 import type { RagConfig } from '../src/types.ts'
 

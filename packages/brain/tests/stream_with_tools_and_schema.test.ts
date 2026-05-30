@@ -21,10 +21,10 @@ import { BrainError } from '../src/brain_error.ts'
 import { BrainManager } from '../src/brain_manager.ts'
 import { defineTool } from '../src/define_tool.ts'
 import type { OutputSchema } from '../src/output_schema.ts'
-import { AnthropicProvider } from '../src/providers/anthropic_provider.ts'
-import { GeminiProvider } from '../src/providers/gemini_provider.ts'
-import { OpenAIProvider } from '../src/providers/openai_provider.ts'
-import type { Provider, RunWithToolsOptions } from '../src/provider.ts'
+import { AnthropicBrainDriver } from '../src/drivers/anthropic/anthropic_brain_driver.ts'
+import { GeminiBrainDriver } from '../src/drivers/gemini/gemini_brain_driver.ts'
+import { OpenAIBrainDriver } from '../src/drivers/openai/openai_brain_driver.ts'
+import type { BrainDriver, RunWithToolsOptions } from '../src/brain_driver.ts'
 import type { Tool } from '../src/tool.ts'
 import type { ChatResult, Message, StreamEvent } from '../src/types.ts'
 
@@ -50,7 +50,7 @@ async function collect<T>(it: AsyncIterable<AgentStreamEvent<T>>): Promise<Agent
   return out
 }
 
-// ─── AnthropicProvider.streamWithToolsAndSchema ──────────────────────────
+// ─── AnthropicBrainDriver.streamWithToolsAndSchema ──────────────────────────
 
 function makeAnthropicMessage(opts: {
   text?: string
@@ -98,7 +98,7 @@ function makeAnthropicStream(deltas: string[], final: Anthropic.Message) {
   }
 }
 
-describe('AnthropicProvider.streamWithToolsAndSchema', () => {
+describe('AnthropicBrainDriver.streamWithToolsAndSchema', () => {
   test('injects output_config every turn + terminal stop carries value + text', async () => {
     const final1 = makeAnthropicMessage({
       toolUses: [{ id: 't1', name: 'lookup', input: { name: 'Paris' } }],
@@ -128,7 +128,7 @@ describe('AnthropicProvider.streamWithToolsAndSchema', () => {
       inputSchema: { type: 'object' },
       execute: async () => 'data',
     })
-    const provider = new AnthropicProvider(
+    const provider = new AnthropicBrainDriver(
       'anthropic',
       { driver: 'anthropic', apiKey: 'sk-test' },
       { client },
@@ -165,7 +165,7 @@ describe('AnthropicProvider.streamWithToolsAndSchema', () => {
   })
 })
 
-// ─── OpenAIProvider.streamWithToolsAndSchema ─────────────────────────────
+// ─── OpenAIBrainDriver.streamWithToolsAndSchema ─────────────────────────────
 
 interface FakeOpenAIChunk {
   choices?: Array<{
@@ -190,7 +190,7 @@ function makeOpenAIStream(chunks: FakeOpenAIChunk[]) {
   }
 }
 
-describe('OpenAIProvider.streamWithToolsAndSchema', () => {
+describe('OpenAIBrainDriver.streamWithToolsAndSchema', () => {
   test('injects response_format every turn + terminal stop carries value + text', async () => {
     const turn1: FakeOpenAIChunk[] = [
       {
@@ -236,7 +236,7 @@ describe('OpenAIProvider.streamWithToolsAndSchema', () => {
       inputSchema: { type: 'object' },
       execute: async () => 'data',
     })
-    const provider = new OpenAIProvider(
+    const provider = new OpenAIBrainDriver(
       'openai',
       { driver: 'openai', apiKey: 'sk-test' },
       { client },
@@ -269,7 +269,7 @@ describe('OpenAIProvider.streamWithToolsAndSchema', () => {
   })
 })
 
-// ─── GeminiProvider.streamWithToolsAndSchema ─────────────────────────────
+// ─── GeminiBrainDriver.streamWithToolsAndSchema ─────────────────────────────
 
 function makeGeminiChunk(opts: {
   text?: string
@@ -285,7 +285,7 @@ function makeGeminiChunk(opts: {
   } as unknown as GenerateContentResponse
 }
 
-describe('GeminiProvider.streamWithToolsAndSchema', () => {
+describe('GeminiBrainDriver.streamWithToolsAndSchema', () => {
   test('injects responseJsonSchema every turn + terminal stop carries value + text', async () => {
     const turn1 = [
       makeGeminiChunk({
@@ -316,7 +316,7 @@ describe('GeminiProvider.streamWithToolsAndSchema', () => {
       inputSchema: { type: 'object' },
       execute: async () => 'data',
     })
-    const provider = new GeminiProvider(
+    const provider = new GeminiBrainDriver(
       'google',
       { driver: 'google', apiKey: 'sk-test' },
       { client },
@@ -351,7 +351,7 @@ interface StreamComboCall {
   options?: RunWithToolsOptions
 }
 
-class StubProvider implements Provider {
+class StubProvider implements BrainDriver {
   readonly name: string
   readonly calls: StreamComboCall[] = []
   private readonly events: AgentStreamEvent<unknown>[]
@@ -373,7 +373,7 @@ class StubProvider implements Provider {
   }
 }
 
-class StubProviderNoCombo implements Provider {
+class StubProviderNoCombo implements BrainDriver {
   readonly name = 'no-combo'
   async chat(): Promise<ChatResult> { throw new Error('chat unused') }
   async *stream(): AsyncIterable<StreamEvent> {}

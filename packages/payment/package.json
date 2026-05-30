@@ -7,8 +7,8 @@
   "types": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts",
-    "./stripe": "./src/stripe/index.ts",
-    "./omise": "./src/omise/index.ts"
+    "./stripe": "./src/drivers/stripe/index.ts",
+    "./omise": "./src/drivers/omise/index.ts"
   },
   "files": [
     "src",

@@ -20,9 +20,9 @@ No framework tool execution, no agentic loop, no `runWithTools` required — `se
 | `web_fetch` | yes (`web_fetch_20260309`) | throws (Anthropic-only) | throws | throws (Anthropic-only) | throws | throws |
 | `url_context` | throws (Gemini-only) | yes | throws | throws (Gemini-only) | throws | throws |
 
-OpenAI's server tools are split across two endpoints. The chat completions API (`OpenAIProvider`, driver `'openai'`) doesn't expose them; the Responses API (`OpenAIResponsesProvider`, driver `'openai-responses'`) does. See [`guides/openai-responses.md`](./openai-responses.md) for the OpenAI-side setup.
+OpenAI's server tools are split across two endpoints. The chat completions API (`OpenAIBrainDriver`, driver `'openai'`) doesn't expose them; the Responses API (`OpenAIResponsesBrainDriver`, driver `'openai-responses'`) does. See [`guides/openai-responses.md`](./openai-responses.md) for the OpenAI-side setup.
 
-DeepSeek + Ollama inherit `OpenAIProvider`'s `buildParams` and throw the same way.
+DeepSeek + Ollama inherit `OpenAIBrainDriver`'s `buildParams` and throw the same way.
 
 ## `ServerTool`
 
@@ -153,7 +153,7 @@ A typed cross-provider observability surface (`AgentStreamEvent.server_tool_use`
 
 ## What's NOT in this slice
 
-- **OpenAI's `file_search` / `computer_use` / `image_generation`** — V1 of `OpenAIResponsesProvider` ships `web_search` + `code_execution` only. The other server tools each need their own configuration (vector store IDs, VM state, response_format tweaks) and each is its own slice.
+- **OpenAI's `file_search` / `computer_use` / `image_generation`** — V1 of `OpenAIResponsesBrainDriver` ships `web_search` + `code_execution` only. The other server tools each need their own configuration (vector store IDs, VM state, response_format tweaks) and each is its own slice.
 - **Anthropic computer use, bash, text editor** — each has its own state management (browser session, shell session, file paths) and auth shape. Each is its own slice.
 - **Streaming events for server-tool execution** — the model emits server-tool calls inline as content_block_start events on Anthropic / part events on Gemini. A cross-provider streaming surface (`AgentStreamEvent.server_tool_use_start`?) deserves its own design pass; for now apps consume `tool_use` post-execution (for local tools) or read `result.messages` / `raw` (for server tools).
 

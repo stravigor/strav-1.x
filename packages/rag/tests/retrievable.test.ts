@@ -8,7 +8,7 @@
 import { describe, expect, test } from 'bun:test'
 import { BrainManager } from '@strav/brain'
 import type { Repository } from '@strav/database'
-import { MemoryDriver } from '../src/drivers/memory_driver.ts'
+import { MemoryDriver } from '../src/drivers/memory/memory_driver.ts'
 import { RagManager } from '../src/rag_manager.ts'
 import { retrievable } from '../src/retrievable.ts'
 import type { RagConfig } from '../src/types.ts'

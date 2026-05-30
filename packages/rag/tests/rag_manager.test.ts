@@ -7,7 +7,7 @@
 
 import { describe, expect, test } from 'bun:test'
 import { BrainManager } from '@strav/brain'
-import { MemoryDriver } from '../src/drivers/memory_driver.ts'
+import { MemoryDriver } from '../src/drivers/memory/memory_driver.ts'
 import { EmbeddingError, RagError } from '../src/rag_error.ts'
 import { RagManager } from '../src/rag_manager.ts'
 import type { RagConfig } from '../src/types.ts'

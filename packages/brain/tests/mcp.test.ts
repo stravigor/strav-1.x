@@ -1,6 +1,6 @@
 /**
  * MCP tests — config plumbing through BrainManager and translation
- * on the AnthropicProvider.
+ * on the AnthropicBrainDriver.
  *
  * Provider behavior — the SDK request shape Anthropic actually sees,
  * MCP block translation — uses a stub `Anthropic` client. The
@@ -12,15 +12,15 @@ import { describe, expect, test } from 'bun:test'
 import type Anthropic from '@anthropic-ai/sdk'
 import { BrainManager } from '../src/brain_manager.ts'
 import type { MCPServer } from '../src/mcp_server.ts'
-import { AnthropicProvider } from '../src/providers/anthropic_provider.ts'
-import type { Provider, RunWithToolsOptions } from '../src/provider.ts'
+import { AnthropicBrainDriver } from '../src/drivers/anthropic/anthropic_brain_driver.ts'
+import type { BrainDriver, RunWithToolsOptions } from '../src/brain_driver.ts'
 import type { AgentResult } from '../src/agent_result.ts'
 import type { Tool } from '../src/tool.ts'
 import type { ChatResult, Message, StreamEvent } from '../src/types.ts'
 
 // ─── BrainManager defaults + per-call routing ────────────────────────────
 
-class StubProvider implements Provider {
+class StubProvider implements BrainDriver {
   readonly name = 'stub'
   readonly calls: Array<{
     messages: readonly Message[]
@@ -91,7 +91,7 @@ describe('BrainManager — MCP server defaults', () => {
   })
 })
 
-// ─── AnthropicProvider — request translation ─────────────────────────────
+// ─── AnthropicBrainDriver — request translation ─────────────────────────────
 
 interface ChatCall {
   params: Anthropic.MessageCreateParams & {
@@ -151,14 +151,14 @@ function makeClient(responses: Anthropic.Message[]) {
 }
 
 function makeProvider(client: Anthropic) {
-  return new AnthropicProvider(
+  return new AnthropicBrainDriver(
     'anthropic',
     { driver: 'anthropic', apiKey: 'sk-test', defaultModel: 'claude-opus-4-7' },
     { client },
   )
 }
 
-describe('AnthropicProvider.runWithTools — MCP request shape', () => {
+describe('AnthropicBrainDriver.runWithTools — MCP request shape', () => {
   test('no MCP servers → uses the plain (non-beta) messages.create surface', async () => {
     const { client, chatCalls } = makeClient([makeMessage('hi')])
     const provider = makeProvider(client)
@@ -239,9 +239,9 @@ describe('AnthropicProvider.runWithTools — MCP request shape', () => {
   })
 })
 
-// ─── AnthropicProvider — response surface ────────────────────────────────
+// ─── AnthropicBrainDriver — response surface ────────────────────────────────
 
-describe('AnthropicProvider.runWithTools — MCP response blocks', () => {
+describe('AnthropicBrainDriver.runWithTools — MCP response blocks', () => {
   test('mcp_tool_use and mcp_tool_result blocks surface on result.messages', async () => {
     const { client } = makeClient([
       makeMessage('done', {

@@ -22,7 +22,7 @@
  * message content; Gemini `functionResponse` with `{ error }`).
  */
 
-import type { RunWithToolsOptions } from './provider.ts'
+import type { RunWithToolsOptions } from './brain_driver.ts'
 import type { Tool, ToolContext } from './tool.ts'
 import { ToolExecutionError } from './tool_execution_error.ts'
 

@@ -1,7 +1,7 @@
 /**
  * `BrainManager` — the per-app facade apps inject and call.
  *
- * Holds the configured `Provider` registry + the default-provider key
+ * Holds the configured `BrainDriver` registry + the default-provider key
  * + the tier-to-model map. Apps call `chat / stream / countTokens`
  * with framework-native types; the manager resolves which provider
  * runs the call (default unless `options.provider` overrides),
@@ -41,10 +41,10 @@ import type {
   TranscribeResult,
 } from './types.ts'
 import type {
-  Provider,
+  BrainDriver,
   RunWithToolsOptions,
   RunWithToolsOptionsWithSuspend,
-} from './provider.ts'
+} from './brain_driver.ts'
 import { appendResumeResults, type SuspendedRun, type SuspendedState, type ToolResultInput } from './suspended_run.ts'
 import type { Tool } from './tool.ts'
 import { DEFAULT_TIERS } from './brain_config.ts'
@@ -56,7 +56,7 @@ export interface BrainManagerOptions {
   /** Name of the default provider — must exist in `providers`. */
   default: string
   /** Provider registry keyed by name. */
-  providers: Record<string, Provider>
+  providers: Record<string, BrainDriver>
   /** Tier-to-model overrides; merged on top of the framework defaults. */
   tiers?: Partial<Record<ModelTier, string>>
   /** Default for `ChatOptions.cache` when the call site doesn't pass one. */
@@ -72,7 +72,7 @@ export interface BrainManagerOptions {
 
 export class BrainManager {
   readonly defaultProvider: string
-  private readonly providers: Map<string, Provider>
+  private readonly providers: Map<string, BrainDriver>
   private readonly tiers: Record<ModelTier, string>
   private readonly defaultCache: boolean
   private readonly defaultMcpServers: readonly MCPServer[]
@@ -92,7 +92,7 @@ export class BrainManager {
   }
 
   /** Resolve a provider by name. Default when no name passed. Throws when unknown. */
-  provider(name?: string): Provider {
+  provider(name?: string): BrainDriver {
     const key = name ?? this.defaultProvider
     const provider = this.providers.get(key)
     if (!provider) {
@@ -119,7 +119,7 @@ export class BrainManager {
    * Mirrors `RagManager.extend(name, factory)` / `PaymentManager.extend(name, factory)`
    * — the OCP escape hatch every multi-driver Strav manager exposes.
    */
-  extend(name: string, provider: Provider): void {
+  extend(name: string, provider: BrainDriver): void {
     if (!name) {
       throw new BrainError('BrainManager.extend: provider name must be a non-empty string.')
     }
@@ -178,7 +178,7 @@ export class BrainManager {
    *
    * Throws `BrainError` when the configured provider doesn't
    * implement `runWithTools` (V1: OpenAI / Gemini / DeepSeek providers
-   * don't yet — only `AnthropicProvider`).
+   * don't yet — only `AnthropicBrainDriver`).
    */
   runTools(
     input: string | readonly Message[],

@@ -12,7 +12,7 @@ import {
   ConfigRepository,
   ServiceProvider,
 } from '@strav/kernel'
-import { MemoryDriver } from '../src/drivers/memory_driver.ts'
+import { MemoryDriver } from '../src/drivers/memory/memory_driver.ts'
 import { RagManager } from '../src/rag_manager.ts'
 import { RagProvider } from '../src/rag_provider.ts'
 

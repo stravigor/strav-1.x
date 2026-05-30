@@ -19,9 +19,9 @@ import type OpenAI from 'openai'
 import { BrainError } from '../src/brain_error.ts'
 import { BrainManager } from '../src/brain_manager.ts'
 import type { OutputSchema } from '../src/output_schema.ts'
-import { AnthropicProvider } from '../src/providers/anthropic_provider.ts'
-import { GeminiProvider } from '../src/providers/gemini_provider.ts'
-import { OpenAIProvider } from '../src/providers/openai_provider.ts'
+import { AnthropicBrainDriver } from '../src/drivers/anthropic/anthropic_brain_driver.ts'
+import { GeminiBrainDriver } from '../src/drivers/gemini/gemini_brain_driver.ts'
+import { OpenAIBrainDriver } from '../src/drivers/openai/openai_brain_driver.ts'
 
 // ─── A tiny shared schema reused across providers ────────────────────────
 
@@ -46,9 +46,9 @@ const answerSchema: OutputSchema<Answer> = {
   jsonSchema: cityJsonSchema,
 }
 
-// ─── AnthropicProvider.generate ──────────────────────────────────────────
+// ─── AnthropicBrainDriver.generate ──────────────────────────────────────────
 
-describe('AnthropicProvider — generate()', () => {
+describe('AnthropicBrainDriver — generate()', () => {
   test('emits output_config.format and parses the JSON response', async () => {
     const captured: { params?: Anthropic.MessageCreateParams } = {}
     const message: Anthropic.Message = {
@@ -76,7 +76,7 @@ describe('AnthropicProvider — generate()', () => {
         },
       },
     } as unknown as Anthropic
-    const provider = new AnthropicProvider(
+    const provider = new AnthropicBrainDriver(
       'anthropic',
       { driver: 'anthropic', apiKey: 'sk-test' },
       { client },
@@ -126,7 +126,7 @@ describe('AnthropicProvider — generate()', () => {
     const client = {
       messages: { create: async () => message },
     } as unknown as Anthropic
-    const provider = new AnthropicProvider(
+    const provider = new AnthropicBrainDriver(
       'anthropic',
       { driver: 'anthropic', apiKey: 'sk-test' },
       { client },
@@ -157,7 +157,7 @@ describe('AnthropicProvider — generate()', () => {
     const client = {
       messages: { create: async () => message },
     } as unknown as Anthropic
-    const provider = new AnthropicProvider(
+    const provider = new AnthropicBrainDriver(
       'anthropic',
       { driver: 'anthropic', apiKey: 'sk-test' },
       { client },
@@ -176,9 +176,9 @@ describe('AnthropicProvider — generate()', () => {
   })
 })
 
-// ─── OpenAIProvider.generate ─────────────────────────────────────────────
+// ─── OpenAIBrainDriver.generate ─────────────────────────────────────────────
 
-describe('OpenAIProvider — generate()', () => {
+describe('OpenAIBrainDriver — generate()', () => {
   function makeOpenAICompletion(text: string): OpenAI.Chat.ChatCompletion {
     return {
       id: 'c_1',
@@ -214,7 +214,7 @@ describe('OpenAIProvider — generate()', () => {
         },
       },
     } as unknown as OpenAI
-    const provider = new OpenAIProvider(
+    const provider = new OpenAIBrainDriver(
       'openai',
       { driver: 'openai', apiKey: 'sk-test' },
       { client },
@@ -236,9 +236,9 @@ describe('OpenAIProvider — generate()', () => {
   })
 })
 
-// ─── GeminiProvider.generate ─────────────────────────────────────────────
+// ─── GeminiBrainDriver.generate ─────────────────────────────────────────────
 
-describe('GeminiProvider — generate()', () => {
+describe('GeminiBrainDriver — generate()', () => {
   function makeGeminiResponse(text: string): GenerateContentResponse {
     return {
       candidates: [
@@ -266,7 +266,7 @@ describe('GeminiProvider — generate()', () => {
         countTokens: async () => ({ totalTokens: 0 }),
       },
     }
-    const provider = new GeminiProvider(
+    const provider = new GeminiBrainDriver(
       'google',
       { driver: 'google', apiKey: 'sk-test' },
       { client },

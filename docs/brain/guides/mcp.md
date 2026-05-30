@@ -227,16 +227,16 @@ Default `MCPClient` lifecycle is connect-per-call: every `runTools` invocation h
 The fix is **`MCPClientPool`** — a long-lived, per-(server name, URL) cache of connected clients. Hand the pool to your providers at construction; the framework borrows from it on every call instead of constructing fresh.
 
 ```ts
-import { MCPClientPool, OpenAIProvider, GeminiProvider } from '@strav/brain'
+import { MCPClientPool, OpenAIBrainDriver, GeminiBrainDriver } from '@strav/brain'
 
 const pool = new MCPClientPool()
 
-const openai = new OpenAIProvider(
+const openai = new OpenAIBrainDriver(
   'openai',
   { driver: 'openai', apiKey: env('OPENAI_API_KEY') },
   { mcpPool: pool },
 )
-const gemini = new GeminiProvider(
+const gemini = new GeminiBrainDriver(
   'gemini',
   { driver: 'google', apiKey: env('GEMINI_API_KEY') },
   { mcpPool: pool },

@@ -21,11 +21,11 @@ import type {
 } from '@google/genai'
 import type OpenAI from 'openai'
 import { BrainError } from '../src/brain_error.ts'
-import { AnthropicProvider } from '../src/providers/anthropic_provider.ts'
-import { DeepSeekProvider } from '../src/providers/deepseek_provider.ts'
-import { GeminiProvider } from '../src/providers/gemini_provider.ts'
-import { OllamaProvider } from '../src/providers/ollama_provider.ts'
-import { OpenAIProvider } from '../src/providers/openai_provider.ts'
+import { AnthropicBrainDriver } from '../src/drivers/anthropic/anthropic_brain_driver.ts'
+import { DeepSeekBrainDriver } from '../src/drivers/deepseek/deepseek_brain_driver.ts'
+import { GeminiBrainDriver } from '../src/drivers/gemini/gemini_brain_driver.ts'
+import { OllamaBrainDriver } from '../src/drivers/ollama/ollama_brain_driver.ts'
+import { OpenAIBrainDriver } from '../src/drivers/openai/openai_brain_driver.ts'
 
 // ─── Anthropic ───────────────────────────────────────────────────────────
 
@@ -47,10 +47,10 @@ function makeAnthropicClient() {
   return { client, calls }
 }
 
-describe('AnthropicProvider — serverTools translation', () => {
+describe('AnthropicBrainDriver — serverTools translation', () => {
   test('web_search becomes web_search_20260209 with domain caps + max_uses', async () => {
     const { client, calls } = makeAnthropicClient()
-    const provider = new AnthropicProvider(
+    const provider = new AnthropicBrainDriver(
       'anthropic',
       { driver: 'anthropic', apiKey: 'sk-test' },
       { client },
@@ -75,7 +75,7 @@ describe('AnthropicProvider — serverTools translation', () => {
 
   test('code_execution becomes code_execution_20260120', async () => {
     const { client, calls } = makeAnthropicClient()
-    const provider = new AnthropicProvider(
+    const provider = new AnthropicBrainDriver(
       'anthropic',
       { driver: 'anthropic', apiKey: 'sk-test' },
       { client },
@@ -90,7 +90,7 @@ describe('AnthropicProvider — serverTools translation', () => {
 
   test('web_fetch becomes web_fetch_20260309', async () => {
     const { client, calls } = makeAnthropicClient()
-    const provider = new AnthropicProvider(
+    const provider = new AnthropicBrainDriver(
       'anthropic',
       { driver: 'anthropic', apiKey: 'sk-test' },
       { client },
@@ -105,7 +105,7 @@ describe('AnthropicProvider — serverTools translation', () => {
 
   test('url_context throws BrainError (Gemini-only)', async () => {
     const { client } = makeAnthropicClient()
-    const provider = new AnthropicProvider(
+    const provider = new AnthropicBrainDriver(
       'anthropic',
       { driver: 'anthropic', apiKey: 'sk-test' },
       { client },
@@ -138,10 +138,10 @@ function makeGeminiClient() {
   return { client, calls }
 }
 
-describe('GeminiProvider — serverTools translation', () => {
+describe('GeminiBrainDriver — serverTools translation', () => {
   test('web_search → googleSearch (config knobs silently dropped)', async () => {
     const { client, calls } = makeGeminiClient()
-    const provider = new GeminiProvider(
+    const provider = new GeminiBrainDriver(
       'google',
       { driver: 'google', apiKey: 'sk-test' },
       { client },
@@ -156,7 +156,7 @@ describe('GeminiProvider — serverTools translation', () => {
 
   test('code_execution → codeExecution', async () => {
     const { client, calls } = makeGeminiClient()
-    const provider = new GeminiProvider(
+    const provider = new GeminiBrainDriver(
       'google',
       { driver: 'google', apiKey: 'sk-test' },
       { client },
@@ -171,7 +171,7 @@ describe('GeminiProvider — serverTools translation', () => {
 
   test('url_context → urlContext', async () => {
     const { client, calls } = makeGeminiClient()
-    const provider = new GeminiProvider(
+    const provider = new GeminiBrainDriver(
       'google',
       { driver: 'google', apiKey: 'sk-test' },
       { client },
@@ -186,7 +186,7 @@ describe('GeminiProvider — serverTools translation', () => {
 
   test('web_fetch throws BrainError (Anthropic-only)', async () => {
     const { client } = makeGeminiClient()
-    const provider = new GeminiProvider(
+    const provider = new GeminiBrainDriver(
       'google',
       { driver: 'google', apiKey: 'sk-test' },
       { client },
@@ -200,7 +200,7 @@ describe('GeminiProvider — serverTools translation', () => {
 
   test('combines with framework-local tools — both arrive in config.tools', async () => {
     const { client, calls } = makeGeminiClient()
-    const provider = new GeminiProvider(
+    const provider = new GeminiBrainDriver(
       'google',
       { driver: 'google', apiKey: 'sk-test' },
       { client },
@@ -235,9 +235,9 @@ function makeOpenAIClient() {
   } as unknown as OpenAI
 }
 
-describe('OpenAIProvider — serverTools throw', () => {
+describe('OpenAIBrainDriver — serverTools throw', () => {
   test('throws with Responses API guidance', async () => {
-    const provider = new OpenAIProvider(
+    const provider = new OpenAIBrainDriver(
       'openai',
       { driver: 'openai', apiKey: 'sk-test' },
       { client: makeOpenAIClient() },
@@ -255,9 +255,9 @@ describe('OpenAIProvider — serverTools throw', () => {
   })
 })
 
-describe('DeepSeekProvider — serverTools throw (inherited)', () => {
+describe('DeepSeekBrainDriver — serverTools throw (inherited)', () => {
   test('throws via the inherited OpenAI buildParams', async () => {
-    const provider = new DeepSeekProvider(
+    const provider = new DeepSeekBrainDriver(
       'deepseek',
       { driver: 'deepseek', apiKey: 'sk-test' },
       { client: makeOpenAIClient() },
@@ -270,9 +270,9 @@ describe('DeepSeekProvider — serverTools throw (inherited)', () => {
   })
 })
 
-describe('OllamaProvider — serverTools throw (inherited)', () => {
+describe('OllamaBrainDriver — serverTools throw (inherited)', () => {
   test('throws via the inherited OpenAI buildParams', async () => {
-    const provider = new OllamaProvider(
+    const provider = new OllamaBrainDriver(
       'ollama',
       { driver: 'ollama', defaultModel: 'llama3.2' },
       { client: makeOpenAIClient() },

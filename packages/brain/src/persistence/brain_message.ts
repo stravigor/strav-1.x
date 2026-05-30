@@ -13,7 +13,7 @@
 
 import { Model } from '@strav/database'
 import type { ChatUsage, ContentBlock } from '../types.ts'
-import { brainMessageSchema } from './schema/brain_message_schema.ts'
+import { brainMessageSchema } from './schemas/brain_message_schema.ts'
 
 export type BrainMessageRole = 'user' | 'assistant'
 

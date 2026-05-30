@@ -14,8 +14,8 @@ import {
   PaymentManager,
   ProviderUnsupportedError,
 } from '../src/index.ts'
-import { StripePaymentDriver } from '../src/stripe/index.ts'
-import { OmisePaymentDriver } from '../src/omise/index.ts'
+import { StripePaymentDriver } from '../src/drivers/stripe/index.ts'
+import { OmisePaymentDriver } from '../src/drivers/omise/index.ts'
 
 describe('PaymentManager — payment.links accessor', () => {
   test('routes to the default driver', async () => {

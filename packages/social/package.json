@@ -7,9 +7,9 @@
   "types": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts",
-    "./line": "./src/line/index.ts",
-    "./google": "./src/google/index.ts",
-    "./facebook": "./src/facebook/index.ts",
+    "./line": "./src/drivers/line/index.ts",
+    "./google": "./src/drivers/google/index.ts",
+    "./facebook": "./src/drivers/facebook/index.ts",
     "./tenanted": "./src/tenanted/index.ts"
   },
   "files": [

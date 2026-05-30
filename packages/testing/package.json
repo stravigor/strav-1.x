@@ -1,0 +1,36 @@
+{
+  "name": "@strav/testing",
+  "version": "1.0.0-alpha.23",
+  "description": "Strav testing utilities — in-memory stream, typed fetch stub, Postgres availability probe + schema reset, bootTestApp orchestrator, stub providers.",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./brain": "./src/brain/index.ts",
+    "./postgres": "./src/postgres/index.ts"
+  },
+  "files": [
+    "src",
+    "README.md"
+  ],
+  "engines": {
+    "bun": ">=1.3.14"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "@strav/database": "workspace:*",
+    "@strav/kernel": "workspace:*"
+  },
+  "peerDependencies": {
+    "@strav/brain": "workspace:*",
+    "@types/bun": ">=1.3.14"
+  },
+  "peerDependenciesMeta": {
+    "@strav/brain": {
+      "optional": true
+    }
+  }
+}

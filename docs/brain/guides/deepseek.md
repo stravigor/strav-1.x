@@ -1,6 +1,6 @@
 # DeepSeek provider
 
-`@strav/brain` ships a `DeepSeekProvider` backed by the `openai` SDK pointed at DeepSeek's OpenAI-compatible chat completions endpoint. It extends `OpenAICompatProvider` (the shared base for all OpenAI-compat vendors) and only adds DeepSeek-specific defaults + a custom cache-token mapping.
+`@strav/brain` ships a `DeepSeekBrainDriver` backed by the `openai` SDK pointed at DeepSeek's OpenAI-compatible chat completions endpoint. It extends `OpenAICompatBrainDriver` (the shared base for all OpenAI-compat vendors) and only adds DeepSeek-specific defaults + a custom cache-token mapping.
 
 ```ts
 // config/brain.ts
@@ -38,7 +38,7 @@ Then inject `BrainManager` the same way you would for any other provider — `br
 
 ## What's mapped
 
-DeepSeek's API is 1:1 with OpenAI's `/chat/completions` for the bulk of the surface — system prompts, tool definitions, streaming chunk format, `tool_calls` fan-out, `response_format: json_object`. The inherited `OpenAICompatProvider` handles the standard divergences from `OpenAIProvider`:
+DeepSeek's API is 1:1 with OpenAI's `/chat/completions` for the bulk of the surface — system prompts, tool definitions, streaming chunk format, `tool_calls` fan-out, `response_format: json_object`. The inherited `OpenAICompatBrainDriver` handles the standard divergences from `OpenAIBrainDriver`:
 
 - **No `reasoning_effort`** (base class strips it — DeepSeek's API rejects unknown fields). `deepseek-reasoner` emits its own thinking tokens regardless of the absent control field.
 - **No `response_format.json_schema`** (base class falls back to `json_object` + schema-in-system-prompt + client-side `parseGenerated`). Validates via `schema.parse` when set.
@@ -50,7 +50,7 @@ DeepSeek's own addition on top of the base:
 
 ## MCP
 
-DeepSeek has no first-party server-side MCP equivalent to Anthropic's connector. Same pattern as `OpenAIProvider` / `GeminiProvider`: `mcpServers` are resolved through the local MCP client at `@strav/brain/mcp`, discovered tools become namespaced `<server>__<tool>` entries in the agentic loop, transports close in a `finally` once the run exits.
+DeepSeek has no first-party server-side MCP equivalent to Anthropic's connector. Same pattern as `OpenAIBrainDriver` / `GeminiBrainDriver`: `mcpServers` are resolved through the local MCP client at `@strav/brain/mcp`, discovered tools become namespaced `<server>__<tool>` entries in the agentic loop, transports close in a `finally` once the run exits.
 
 ## Combined tools + schema — tool-forcing
 
@@ -94,12 +94,12 @@ The manager routes per-call: `brain.chat(text, { provider: 'deepseek' })` runs a
 
 ## Extending the pattern
 
-`DeepSeekProvider` extends `OpenAICompatProvider` — the abstract base that captures the standard OpenAI-compat override set (strip `reasoning_effort`, `json_object`-mode `generate` with schema-in-system-prompt, **tool-forcing for combined tools + schema**, `mapUsage` hook for vendor cache fields). Same base for any OpenAI-compatible vendor (Groq, Together, Fireworks, vLLM, llama.cpp's OpenAI-compat mode):
+`DeepSeekBrainDriver` extends `OpenAICompatBrainDriver` — the abstract base that captures the standard OpenAI-compat override set (strip `reasoning_effort`, `json_object`-mode `generate` with schema-in-system-prompt, **tool-forcing for combined tools + schema**, `mapUsage` hook for vendor cache fields). Same base for any OpenAI-compatible vendor (Groq, Together, Fireworks, vLLM, llama.cpp's OpenAI-compat mode):
 
 ```ts
-import { OpenAICompatProvider } from '@strav/brain'
+import { OpenAICompatBrainDriver } from '@strav/brain'
 
-export class GroqProvider extends OpenAICompatProvider {
+export class GroqProvider extends OpenAICompatBrainDriver {
   constructor(name: string, config: GroqConfig) {
     super(name, {
       driver: 'openai',

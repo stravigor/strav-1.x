@@ -159,10 +159,10 @@ exactly where it paused. Apps don't need to manage it.
 
 V1 honors `shouldSuspend` on all four `runWithTools` loops:
 
-- `AnthropicProvider`
-- `OpenAIProvider` (chat completions)
-- `OpenAIResponsesProvider`
-- `GeminiProvider`
+- `AnthropicBrainDriver`
+- `OpenAIBrainDriver` (chat completions)
+- `OpenAIResponsesBrainDriver`
+- `GeminiBrainDriver`
 
-The OpenAI-compat subclasses (`DeepSeekProvider`, `OllamaProvider`)
+The OpenAI-compat subclasses (`DeepSeekBrainDriver`, `OllamaBrainDriver`)
 inherit the chat-completions loop and therefore also support it.

@@ -8,7 +8,7 @@
 
 import { describe, expect, test } from 'bun:test'
 import { BrainManager } from '../src/brain_manager.ts'
-import type { Provider } from '../src/provider.ts'
+import type { BrainDriver } from '../src/brain_driver.ts'
 import type { ChatOptions, ChatResult, Message, StreamEvent } from '../src/types.ts'
 
 // ─── Stub provider ───────────────────────────────────────────────────────
@@ -18,7 +18,7 @@ interface ChatCall {
   options: ChatOptions | undefined
 }
 
-class StubProvider implements Provider {
+class StubProvider implements BrainDriver {
   readonly name: string
   readonly chatCalls: ChatCall[] = []
   readonly streamCalls: ChatCall[] = []
@@ -57,7 +57,7 @@ class StubProvider implements Provider {
   }
 }
 
-class StubWithoutCount implements Provider {
+class StubWithoutCount implements BrainDriver {
   readonly name = 'no-count'
   async chat(): Promise<ChatResult> {
     return {

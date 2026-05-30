@@ -36,9 +36,9 @@ import {
 } from '@strav/database'
 import { inject, ulid } from '@strav/kernel'
 import type { NormalizedWebhookEvent } from '../dto/payment_event.ts'
-import { paymentCustomerSchema } from './payment_customer_schema.ts'
-import { paymentInvoiceSchema } from './payment_invoice_schema.ts'
-import { paymentSubscriptionSchema } from './payment_subscription_schema.ts'
+import { paymentCustomerSchema } from './schemas/payment_customer_schema.ts'
+import { paymentInvoiceSchema } from './schemas/payment_invoice_schema.ts'
+import { paymentSubscriptionSchema } from './schemas/payment_subscription_schema.ts'
 
 @inject()
 export class PaymentLedger {

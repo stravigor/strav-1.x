@@ -16,7 +16,7 @@ import type { AgentResult } from '../src/agent_result.ts'
 import { BrainError } from '../src/brain_error.ts'
 import { BrainManager } from '../src/brain_manager.ts'
 import { defineTool } from '../src/define_tool.ts'
-import type { Provider, RunWithToolsOptions } from '../src/provider.ts'
+import type { BrainDriver, RunWithToolsOptions } from '../src/brain_driver.ts'
 import type { Tool } from '../src/tool.ts'
 import { ToolExecutionError } from '../src/tool_execution_error.ts'
 import type {
@@ -64,7 +64,7 @@ describe('defineTool', () => {
 
 // ─── BrainManager.runTools — provider routing + error path ───────────────
 
-class StubProvider implements Provider {
+class StubProvider implements BrainDriver {
   readonly name = 'stub'
   readonly runWithToolsCalls: Array<{
     messages: readonly Message[]
@@ -87,7 +87,7 @@ class StubProvider implements Provider {
   }
 }
 
-class StubProviderWithoutTools implements Provider {
+class StubProviderWithoutTools implements BrainDriver {
   readonly name = 'no-tools'
   async chat(): Promise<ChatResult> {
     throw new Error('chat not used')

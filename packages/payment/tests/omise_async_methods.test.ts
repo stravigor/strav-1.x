@@ -19,7 +19,7 @@ import {
   OMISE_SUPPORTED_METHOD_KINDS,
   omiseNextAction,
   omiseSourceFlowFor,
-} from '../src/omise/index.ts'
+} from '../src/drivers/omise/index.ts'
 
 describe('buildOmiseMethodSpec', () => {
   test('card spec → card_token', () => {

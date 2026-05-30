@@ -12,7 +12,7 @@ import {
   parseOmisePriceSpec,
   toPaymentSubscriptionFromSchedule,
   type OmiseSchedule,
-} from '../src/omise/index.ts'
+} from '../src/drivers/omise/index.ts'
 
 describe('omisePriceSpec', () => {
   test('round-trips a full spec', () => {

@@ -13,7 +13,7 @@
 
 import { Model } from '@strav/database'
 import type { ChatOptions, SystemPrompt } from '../types.ts'
-import { brainThreadSchema } from './schema/brain_thread_schema.ts'
+import { brainThreadSchema } from './schemas/brain_thread_schema.ts'
 
 export class BrainThread extends Model {
   static override readonly schema = brainThreadSchema

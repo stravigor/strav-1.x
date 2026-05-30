@@ -22,7 +22,7 @@ import {
   SocialProviderError,
   StateMismatchError,
 } from '../src/index.ts'
-import { FacebookSocialDriver } from '../src/facebook/index.ts'
+import { FacebookSocialDriver } from '../src/drivers/facebook/index.ts'
 
 interface StubCall {
   url: string

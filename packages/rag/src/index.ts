@@ -11,15 +11,15 @@
 export { createChunker } from './chunking/chunker.ts'
 export { FixedSizeChunker } from './chunking/fixed_size_chunker.ts'
 export { RecursiveChunker } from './chunking/recursive_chunker.ts'
-export { MemoryDriver } from './drivers/memory_driver.ts'
+export { MemoryDriver } from './drivers/memory/memory_driver.ts'
 export {
   PgvectorDriver,
   type PgvectorDriverOptions,
-} from './drivers/pgvector_driver.ts'
+} from './drivers/pgvector/pgvector_driver.ts'
 export {
   applyRagVectorMigration,
   type ApplyRagVectorMigrationOptions,
-} from './apply_rag_vector_migration.ts'
+} from './vectors/apply_rag_vector_migration.ts'
 export {
   CollectionNotFoundError,
   EmbeddingError,
@@ -38,7 +38,7 @@ export {
   RagList,
 } from './console/index.ts'
 export { RagProvider } from './rag_provider.ts'
-export { ragVectorSchema } from './rag_vector_schema.ts'
+export { ragVectorSchema } from './vectors/rag_vector_schema.ts'
 export { retrievable } from './retrievable.ts'
 export type {
   Chunk,

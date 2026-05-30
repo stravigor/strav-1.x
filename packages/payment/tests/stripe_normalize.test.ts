@@ -7,7 +7,7 @@
 
 import { describe, expect, test } from 'bun:test'
 import type Stripe from 'stripe'
-import { stripeNormalize } from '../src/stripe/index.ts'
+import { stripeNormalize } from '../src/drivers/stripe/index.ts'
 
 function buildEvent<T>(type: string, object: T, id = 'evt_test_1'): Stripe.Event {
   return {

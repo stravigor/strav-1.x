@@ -8,6 +8,6 @@ export {
   PaymentInvoiceRow,
   PaymentSubscriptionRow,
 } from './payment_ledger_models.ts'
-export { paymentCustomerSchema } from './payment_customer_schema.ts'
-export { paymentInvoiceSchema } from './payment_invoice_schema.ts'
-export { paymentSubscriptionSchema } from './payment_subscription_schema.ts'
+export { paymentCustomerSchema } from './schemas/payment_customer_schema.ts'
+export { paymentInvoiceSchema } from './schemas/payment_invoice_schema.ts'
+export { paymentSubscriptionSchema } from './schemas/payment_subscription_schema.ts'

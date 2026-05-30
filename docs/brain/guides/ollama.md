@@ -1,6 +1,6 @@
 # Ollama provider — local + open-weights models
 
-`@strav/brain` ships an `OllamaProvider` for running inference against a local [Ollama](https://ollama.com) server (or any OpenAI-compatible local-LLM server: LM Studio, llama.cpp's server, vLLM, TGI). Two real use cases this unlocks:
+`@strav/brain` ships an `OllamaBrainDriver` for running inference against a local [Ollama](https://ollama.com) server (or any OpenAI-compatible local-LLM server: LM Studio, llama.cpp's server, vLLM, TGI). Two real use cases this unlocks:
 
 - **Privacy.** Data never leaves the machine / the customer's network — table stakes for regulated workloads (healthcare, finance, on-prem enterprise deployments).
 - **Dev / test.** Build agents without burning API credits or needing a cloud key at all. Run the test suite against a local `llama3.2:1b` for free; ship to a hosted provider in prod by switching `config.brain.providers.default`.
@@ -51,7 +51,7 @@ That's it — no API key, no env var. Inject `BrainManager` the same way you wou
 
 ## What's mapped
 
-Ollama's OpenAI-compat layer is request/response-shape-identical for the surface the framework uses. `OllamaProvider` extends `OpenAICompatProvider` and inherits the standard OpenAI-compat overrides without adding any of its own:
+Ollama's OpenAI-compat layer is request/response-shape-identical for the surface the framework uses. `OllamaBrainDriver` extends `OpenAICompatBrainDriver` and inherits the standard OpenAI-compat overrides without adding any of its own:
 
 - **No `reasoning_effort`.** Base class strips the field. Ollama rejects unknown fields; models with built-in thinking (`qwen3-thinking`, `deepseek-r1` distills) emit thinking tokens regardless.
 - **No `response_format.json_schema`.** Recent Ollama supports `json_schema` for some models but behavior varies. Base class uses `json_object` + schema-in-system-prompt + client-side `parseGenerated` — works on every tool-capable model.

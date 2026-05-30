@@ -39,7 +39,7 @@ Cross-package symbol matrix. Apps assembling Strav often need to remember which 
 | `View`, `template`, `render` | `@strav/view` | Template rendering. |
 | **Brain (LLM)** | | |
 | `BrainManager`, `BrainProvider`, `Agent`, `BrainError` | `@strav/brain` | LLM abstraction. |
-| `AnthropicProvider`, `OpenAIProvider`, `OpenAIResponsesProvider`, `GeminiProvider` | `@strav/brain` | Driver implementations (note: `Provider` suffix is historical — these are drivers, not ServiceProviders; rename pending). |
+| `AnthropicBrainDriver`, `OpenAIBrainDriver`, `OpenAIResponsesBrainDriver`, `GeminiBrainDriver` | `@strav/brain` | Driver implementations (note: `Provider` suffix is historical — these are drivers, not ServiceProviders; rename pending). |
 | Persistence (threads / messages / runs) | `@strav/brain/persistence` | Subpath. |
 | MCP client | `@strav/brain/mcp` | Subpath. |
 | Zod schema helpers for structured output | `@strav/brain/zod` | Subpath. |

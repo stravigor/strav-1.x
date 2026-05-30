@@ -27,13 +27,13 @@
 import { type Application, ConfigError, ConfigRepository, ServiceProvider } from '@strav/kernel'
 import { BrainManager } from './brain_manager.ts'
 import type { BrainConfigShape, ProviderConfig } from './brain_config.ts'
-import { AnthropicProvider } from './providers/anthropic_provider.ts'
-import { DeepSeekProvider } from './providers/deepseek_provider.ts'
-import { GeminiProvider } from './providers/gemini_provider.ts'
-import { OllamaProvider } from './providers/ollama_provider.ts'
-import { OpenAIProvider } from './providers/openai_provider.ts'
-import { OpenAIResponsesProvider } from './providers/openai_responses_provider.ts'
-import type { Provider } from './provider.ts'
+import { AnthropicBrainDriver } from './drivers/anthropic/anthropic_brain_driver.ts'
+import { DeepSeekBrainDriver } from './drivers/deepseek/deepseek_brain_driver.ts'
+import { GeminiBrainDriver } from './drivers/gemini/gemini_brain_driver.ts'
+import { OllamaBrainDriver } from './drivers/ollama/ollama_brain_driver.ts'
+import { OpenAIBrainDriver } from './drivers/openai/openai_brain_driver.ts'
+import { OpenAIResponsesBrainDriver } from './drivers/openai_responses/openai_responses_brain_driver.ts'
+import type { BrainDriver } from './brain_driver.ts'
 
 export class BrainProvider extends ServiceProvider {
   override readonly name = 'brain'
@@ -58,9 +58,9 @@ export class BrainProvider extends ServiceProvider {
         )
       }
 
-      const providers: Record<string, Provider> = {}
+      const providers: Record<string, BrainDriver> = {}
       for (const [name, entry] of Object.entries(config.providers)) {
-        providers[name] = buildProvider(name, entry)
+        providers[name] = buildBrainDriver(name, entry)
       }
 
       const options: ConstructorParameters<typeof BrainManager>[0] = {
@@ -89,7 +89,7 @@ export class BrainProvider extends ServiceProvider {
   }
 }
 
-function buildProvider(name: string, config: ProviderConfig): Provider {
+function buildBrainDriver(name: string, config: ProviderConfig): BrainDriver {
   switch (config.driver) {
     case 'anthropic':
       if (!config.apiKey) {
@@ -97,42 +97,42 @@ function buildProvider(name: string, config: ProviderConfig): Provider {
           `BrainProvider: anthropic provider "${name}" is missing apiKey. Source from env('ANTHROPIC_API_KEY').`,
         )
       }
-      return new AnthropicProvider(name, config)
+      return new AnthropicBrainDriver(name, config)
     case 'openai':
       if (!config.apiKey) {
         throw new ConfigError(
           `BrainProvider: openai provider "${name}" is missing apiKey. Source from env('OPENAI_API_KEY').`,
         )
       }
-      return new OpenAIProvider(name, config)
+      return new OpenAIBrainDriver(name, config)
     case 'openai-responses':
       if (!config.apiKey) {
         throw new ConfigError(
           `BrainProvider: openai-responses provider "${name}" is missing apiKey. Source from env('OPENAI_API_KEY').`,
         )
       }
-      return new OpenAIResponsesProvider(name, config)
+      return new OpenAIResponsesBrainDriver(name, config)
     case 'google':
       if (!config.apiKey) {
         throw new ConfigError(
           `BrainProvider: google provider "${name}" is missing apiKey. Source from env('GOOGLE_API_KEY').`,
         )
       }
-      return new GeminiProvider(name, config)
+      return new GeminiBrainDriver(name, config)
     case 'deepseek':
       if (!config.apiKey) {
         throw new ConfigError(
           `BrainProvider: deepseek provider "${name}" is missing apiKey. Source from env('DEEPSEEK_API_KEY').`,
         )
       }
-      return new DeepSeekProvider(name, config)
+      return new DeepSeekBrainDriver(name, config)
     case 'ollama':
       if (!config.defaultModel) {
         throw new ConfigError(
           `BrainProvider: ollama provider "${name}" is missing defaultModel. Ollama models are user-installed — pick one you've pulled (e.g. 'llama3.2').`,
         )
       }
-      return new OllamaProvider(name, config)
+      return new OllamaBrainDriver(name, config)
     default: {
       const exhaustiveCheck: never = config
       throw new ConfigError(

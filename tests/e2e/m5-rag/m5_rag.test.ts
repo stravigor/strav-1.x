@@ -32,24 +32,11 @@
  */
 
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
-import type { BrainManager } from '@strav/brain'
-// biome-ignore lint/style/useImportType: BrainManager is a value import — we register a stub instance under its class key.
-import { BrainManager as BrainManagerClass } from '@strav/brain'
 import {
-  DatabaseProvider,
-  emitCreateTable,
   PostgresDatabase,
-  SchemaRegistry,
   TenantManager,
 } from '@strav/database'
-import {
-  Application,
-  ConfigProvider,
-  EventBus,
-  LoggerProvider,
-  ServiceProvider,
-  ulid,
-} from '@strav/kernel'
+import { EventBus, ulid } from '@strav/kernel'
 import {
   applyRagVectorMigration,
   RagManager,
@@ -57,10 +44,11 @@ import {
   ragVectorSchema,
 } from '@strav/rag'
 import {
-  createTestDatabase,
+  bootTestApp,
+  type BootTestAppResult,
   isPostgresAvailable,
-  resetSchema,
-} from '../../support/postgres_test_db.ts'
+} from '@strav/testing'
+import { stubBrainProvider } from '@strav/testing/brain'
 import { Article } from './app/article.ts'
 import { ArticleRepository } from './app/article_repository.ts'
 import { articleSchema } from './database/schemas/article_schema.ts'
@@ -68,83 +56,27 @@ import { tenantSchema } from './database/schemas/tenant_schema.ts'
 
 const PG_AVAILABLE = await isPostgresAvailable()
 
-// ─── Stub brain provider ─────────────────────────────────────────────────
+// ─── Deterministic embedder ─────────────────────────────────────────────
 
 /**
- * Deterministic embedder. Maps text → a 4-dim unit vector seeded
- * by a tiny hash so similar text gets similar vectors. Real
- * enough for retrieval order assertions; cheap enough that the
- * test suite doesn't dial any network.
+ * Bag-of-words style 4-dim unit vector. Similar text → similar vector,
+ * so retrieval-order assertions hold. Tokens are word characters
+ * lowercased; the helper hashes each token into one of 4 bins, then
+ * normalizes. Cheap enough to inline; deterministic enough to assert.
  */
-function stubEmbedder(): BrainManager {
-  const hash = (s: string): number => {
+function bagOfWordsEmbedding(text: string): number[] {
+  const tokens = text.toLowerCase().match(/\w+/g) ?? []
+  const v = [0, 0, 0, 0]
+  for (const tok of tokens) {
     let h = 0
-    for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0
-    return h
+    for (let i = 0; i < tok.length; i++) h = (h * 31 + tok.charCodeAt(i)) | 0
+    v[((h >>> 0) & 3)]! += 1
   }
-  const embed = (s: string): number[] => {
-    // Tokens: word characters lowercased. Bag-of-words style.
-    const tokens = s.toLowerCase().match(/\w+/g) ?? []
-    const v = [0, 0, 0, 0]
-    for (const tok of tokens) {
-      const h = hash(tok)
-      v[((h >>> 0) & 3)]! += 1
-    }
-    const norm = Math.hypot(...v) || 1
-    return v.map((x) => x / norm)
-  }
-  const stub = {
-    embed: async (texts: readonly string[]) => ({
-      embeddings: texts.map(embed),
-      model: 'stub-embedder',
-      usage: { inputTokens: 0 },
-      raw: null,
-    }),
-  }
-  return stub as unknown as BrainManager
+  const norm = Math.hypot(...v) || 1
+  return v.map((x) => x / norm)
 }
 
-/**
- * Minimal `ServiceProvider` that registers the stub BrainManager
- * under `BrainManager`'s class key. RagProvider declares a
- * dependency on `'brain'`, so this provider's name matches and
- * boot order resolves correctly.
- */
-class StubBrainProvider extends ServiceProvider {
-  override readonly name = 'brain'
-  override readonly dependencies = ['config']
-  override register(app: Application): void {
-    app.singleton(BrainManagerClass, () => stubEmbedder())
-  }
-}
-
-/**
- * `DatabaseProvider` doesn't auto-register `TenantManager` — apps
- * wire it themselves (m2-http-db's bootstrap does the same).
- */
-class TenantManagerProvider extends ServiceProvider {
-  override readonly name = 'tenant'
-  override readonly dependencies = ['database']
-  override register(app: Application): void {
-    app.singleton(
-      TenantManager,
-      (c) => new TenantManager(c.resolve(PostgresDatabase), c.resolve(EventBus)),
-    )
-  }
-}
-
-// ─── DDL helpers ────────────────────────────────────────────────────────
-
-async function applyTestSchemas(db: PostgresDatabase): Promise<void> {
-  const registry = new SchemaRegistry().registerAll([
-    tenantSchema,
-    articleSchema,
-    ragVectorSchema,
-  ])
-  await db.execute(emitCreateTable(tenantSchema, { registry }).sql)
-  await db.execute(emitCreateTable(articleSchema, { registry }).sql)
-  await applyRagVectorMigration(db, { dimension: 4, registry })
-}
+// ─── DDL + seed helpers ─────────────────────────────────────────────────
 
 async function seedTenant(db: PostgresDatabase, name: string): Promise<string> {
   const id = ulid()
@@ -158,7 +90,7 @@ async function seedTenant(db: PostgresDatabase, name: string): Promise<string> {
 // ─── Suite ───────────────────────────────────────────────────────────────
 
 describe.skipIf(!PG_AVAILABLE)('M5 e2e: rag end-to-end against Postgres + pgvector', () => {
-  let app: Application
+  let booted: BootTestAppResult
   let db: PostgresDatabase
   let tenants: TenantManager
   let articles: ArticleRepository
@@ -166,25 +98,8 @@ describe.skipIf(!PG_AVAILABLE)('M5 e2e: rag end-to-end against Postgres + pgvect
   let tenantB: string
 
   beforeAll(async () => {
-    // Provision the schema OUTSIDE the app so RLS + the
-    // `vector` extension are in place before the providers boot.
-    db = createTestDatabase()
-    await resetSchema(db)
-    await applyTestSchemas(db)
-
-    app = new Application()
-    app.useProviders([
-      new ConfigProvider({
-        logger: {
-          default: 'main',
-          level: 'silent',
-          channels: { main: { driver: 'stderr' } },
-        },
-        database: {
-          url: `postgres://${process.env.DB_USER}:${encodeURIComponent(
-            process.env.DB_PASSWORD as string,
-          )}@${process.env.DB_HOST}:${process.env.DB_PORT}/${process.env.DB_DATABASE}`,
-        },
+    booted = await bootTestApp({
+      config: {
         rag: {
           default: 'pg',
           embedding: {
@@ -201,34 +116,34 @@ describe.skipIf(!PG_AVAILABLE)('M5 e2e: rag end-to-end against Postgres + pgvect
           },
           stores: { pg: { driver: 'pgvector' } },
         },
-      }),
-      new LoggerProvider(),
-      new DatabaseProvider(),
-      new TenantManagerProvider(),
-      // Stub BrainManager BEFORE RagProvider boots so RagProvider's
-      // resolution picks up the stub.
-      new StubBrainProvider(),
-      new RagProvider(),
-    ])
-    await app.start({ signalHandlers: false })
+      },
+      schemas: [tenantSchema, articleSchema, ragVectorSchema],
+      migrations: [
+        (db, registry) => applyRagVectorMigration(db, { dimension: 4, registry }),
+      ],
+      providers: [
+        // Stub BrainManager BEFORE RagProvider boots so RagProvider's
+        // resolution picks up the stub (declares name: 'brain').
+        stubBrainProvider({ embed: bagOfWordsEmbedding, model: 'stub-embedder' }),
+        new RagProvider(),
+      ],
+    })
 
-    tenants = app.resolve(TenantManager)
+    db = booted.setupDb
+    tenants = booted.app.resolve(TenantManager)
     articles = new ArticleRepository(
       {
-        db: app.resolve(PostgresDatabase),
-        events: app.resolve(EventBus),
+        db: booted.app.resolve(PostgresDatabase),
+        events: booted.app.resolve(EventBus),
       },
-      app.resolve(RagManager),
+      booted.app.resolve(RagManager),
     )
 
     tenantA = await seedTenant(db, 'Acme')
     tenantB = await seedTenant(db, 'Globex')
   })
 
-  afterAll(async () => {
-    await app?.shutdown()
-    await db?.close({ timeout: 2 })
-  })
+  afterAll(() => booted.dispose())
 
   // ─── End-to-end ingest + retrieve ───────────────────────────────────
 

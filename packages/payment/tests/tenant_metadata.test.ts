@@ -17,8 +17,8 @@ import {
   TENANT_METADATA_KEY,
   tenantedMetadata,
 } from '../src/index.ts'
-import { stripeNormalize } from '../src/stripe/index.ts'
-import { omiseNormalize } from '../src/omise/index.ts'
+import { stripeNormalize } from '../src/drivers/stripe/index.ts'
+import { omiseNormalize } from '../src/drivers/omise/index.ts'
 
 describe('tenantedMetadata + readTenantId helpers', () => {
   test('builds + reads back the conventional key', () => {

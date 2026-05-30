@@ -31,7 +31,7 @@ import type {
   Message,
   ToolUseBlock,
 } from './types.ts'
-import type { RunWithToolsOptions } from './provider.ts'
+import type { RunWithToolsOptions } from './brain_driver.ts'
 import type {
   SuspendedRun,
   SuspendedState,

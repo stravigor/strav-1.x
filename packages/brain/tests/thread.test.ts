@@ -5,11 +5,11 @@
 
 import { describe, expect, test } from 'bun:test'
 import { BrainManager } from '../src/brain_manager.ts'
-import type { Provider } from '../src/provider.ts'
+import type { BrainDriver } from '../src/brain_driver.ts'
 import { Thread } from '../src/thread.ts'
 import type { ChatOptions, ChatResult, Message, StreamEvent } from '../src/types.ts'
 
-class CannedProvider implements Provider {
+class CannedProvider implements BrainDriver {
   readonly name = 'canned'
   readonly chatCalls: Array<{ messages: readonly Message[]; options: ChatOptions | undefined }> = []
   constructor(private readonly replies: readonly string[]) {}

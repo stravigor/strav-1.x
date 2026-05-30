@@ -22,13 +22,13 @@ import type {
   GenerateContentResponse,
 } from '@google/genai'
 import type OpenAI from 'openai'
-import { AnthropicProvider } from '../src/providers/anthropic_provider.ts'
+import { AnthropicBrainDriver } from '../src/drivers/anthropic/anthropic_brain_driver.ts'
 import { BrainError } from '../src/brain_error.ts'
 import { BrainManager } from '../src/brain_manager.ts'
-import { DeepSeekProvider } from '../src/providers/deepseek_provider.ts'
-import { GeminiProvider } from '../src/providers/gemini_provider.ts'
-import { OllamaProvider } from '../src/providers/ollama_provider.ts'
-import { OpenAIProvider } from '../src/providers/openai_provider.ts'
+import { DeepSeekBrainDriver } from '../src/drivers/deepseek/deepseek_brain_driver.ts'
+import { GeminiBrainDriver } from '../src/drivers/gemini/gemini_brain_driver.ts'
+import { OllamaBrainDriver } from '../src/drivers/ollama/ollama_brain_driver.ts'
+import { OpenAIBrainDriver } from '../src/drivers/openai/openai_brain_driver.ts'
 
 // A minimal valid base64 audio payload (ID3 header). The bytes
 // don't matter — none of the tests dial a real API.
@@ -36,7 +36,7 @@ const FAKE_AUDIO = 'SUQzBAAAAAA='
 
 // ─── OpenAI ──────────────────────────────────────────────────────────────
 
-describe('OpenAIProvider.transcribe', () => {
+describe('OpenAIBrainDriver.transcribe', () => {
   test('forwards file (with right extension), model, language, prompt, signal', async () => {
     const calls: Array<{
       params: OpenAI.Audio.TranscriptionCreateParams
@@ -52,7 +52,7 @@ describe('OpenAIProvider.transcribe', () => {
         },
       },
     } as unknown as OpenAI
-    const provider = new OpenAIProvider(
+    const provider = new OpenAIBrainDriver(
       'openai',
       { driver: 'openai', apiKey: 'sk-test' },
       { client },
@@ -87,7 +87,7 @@ describe('OpenAIProvider.transcribe', () => {
         },
       },
     } as unknown as OpenAI
-    const provider = new OpenAIProvider(
+    const provider = new OpenAIBrainDriver(
       'openai',
       { driver: 'openai', apiKey: 'sk-test', defaultTranscribeModel: 'gpt-4o-transcribe' },
       { client },
@@ -115,7 +115,7 @@ describe('OpenAIProvider.transcribe', () => {
         },
       },
     } as unknown as OpenAI
-    const provider = new OpenAIProvider(
+    const provider = new OpenAIBrainDriver(
       'openai',
       { driver: 'openai', apiKey: 'sk-test' },
       { client },
@@ -130,7 +130,7 @@ describe('OpenAIProvider.transcribe', () => {
 
 // ─── Gemini (chat-wrap) ─────────────────────────────────────────────────
 
-describe('GeminiProvider.transcribe', () => {
+describe('GeminiBrainDriver.transcribe', () => {
   test('wraps chat() with AudioBlock + "transcribe verbatim" system prompt', async () => {
     const calls: Array<{ params: GenerateContentParameters }> = []
     const client = {
@@ -146,7 +146,7 @@ describe('GeminiProvider.transcribe', () => {
         countTokens: async () => ({ totalTokens: 0 }),
       },
     }
-    const provider = new GeminiProvider(
+    const provider = new GeminiBrainDriver(
       'google',
       { driver: 'google', apiKey: 'sk-test' },
       { client },
@@ -175,7 +175,7 @@ describe('GeminiProvider.transcribe', () => {
 
 // ─── Ollama (inherits OpenAI) ───────────────────────────────────────────
 
-describe('OllamaProvider.transcribe', () => {
+describe('OllamaBrainDriver.transcribe', () => {
   test('inherits OpenAI transcribe via the compat layer', async () => {
     const calls: Array<{ params: OpenAI.Audio.TranscriptionCreateParams }> = []
     const client = {
@@ -188,7 +188,7 @@ describe('OllamaProvider.transcribe', () => {
         },
       },
     } as unknown as OpenAI
-    const provider = new OllamaProvider(
+    const provider = new OllamaBrainDriver(
       'ollama',
       {
         driver: 'ollama',
@@ -209,10 +209,10 @@ describe('OllamaProvider.transcribe', () => {
 
 // ─── DeepSeek (throws) ───────────────────────────────────────────────────
 
-describe('DeepSeekProvider.transcribe', () => {
+describe('DeepSeekBrainDriver.transcribe', () => {
   test('throws BrainError — DeepSeek has no audio API', async () => {
     const client = {} as unknown as OpenAI
-    const provider = new DeepSeekProvider(
+    const provider = new DeepSeekBrainDriver(
       'deepseek',
       { driver: 'deepseek', apiKey: 'sk-test' },
       { client },
@@ -234,7 +234,7 @@ describe('BrainManager.transcribe', () => {
         },
       },
     } as unknown as OpenAI
-    const provider = new OpenAIProvider(
+    const provider = new OpenAIBrainDriver(
       'openai',
       { driver: 'openai', apiKey: 'sk-test' },
       { client },
@@ -252,7 +252,7 @@ describe('BrainManager.transcribe', () => {
     const client = {
       messages: { create: async () => ({}) as never },
     } as unknown as Anthropic
-    const provider = new AnthropicProvider(
+    const provider = new AnthropicBrainDriver(
       'anthropic',
       { driver: 'anthropic', apiKey: 'sk-test' },
       { client },
@@ -277,7 +277,7 @@ describe('BrainManager.transcribe', () => {
           },
         },
       } as unknown as OpenAI
-      return new OpenAIProvider(name, { driver: 'openai', apiKey: 'sk-test' }, { client })
+      return new OpenAIBrainDriver(name, { driver: 'openai', apiKey: 'sk-test' }, { client })
     }
     const brain = new BrainManager({
       default: 'a',

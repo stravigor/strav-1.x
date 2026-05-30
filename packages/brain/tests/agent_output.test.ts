@@ -12,7 +12,7 @@ import { describe, expect, test } from 'bun:test'
 import { Agent } from '../src/agent.ts'
 import { BrainManager } from '../src/brain_manager.ts'
 import type { OutputSchema } from '../src/output_schema.ts'
-import type { Provider } from '../src/provider.ts'
+import type { BrainDriver } from '../src/brain_driver.ts'
 import type {
   ChatOptions,
   ChatResult,
@@ -30,7 +30,7 @@ interface GenerateCall {
   options?: ChatOptions
 }
 
-class StubProvider implements Provider {
+class StubProvider implements BrainDriver {
   readonly name: string
   readonly generateCalls: GenerateCall[] = []
   private readonly result: GenerateResult<unknown>

@@ -17,7 +17,7 @@ import { quoteIdent, Repository, type RepositoryScope } from '@strav/database'
 import { ulid } from '@strav/kernel'
 import type { ChatUsage, ContentBlock } from '../types.ts'
 import { BrainMessage, type BrainMessageRole } from './brain_message.ts'
-import { brainMessageSchema } from './schema/brain_message_schema.ts'
+import { brainMessageSchema } from './schemas/brain_message_schema.ts'
 
 export interface AppendTurnInput {
   threadId: string

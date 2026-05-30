@@ -30,8 +30,8 @@ import { BrainManager } from '@strav/brain'
 // biome-ignore lint/style/useImportType: Application value import for the container handle.
 import { Application, inject, ulid } from '@strav/kernel'
 import { createChunker } from './chunking/chunker.ts'
-import { MemoryDriver } from './drivers/memory_driver.ts'
-import { PgvectorDriver } from './drivers/pgvector_driver.ts'
+import { MemoryDriver } from './drivers/memory/memory_driver.ts'
+import { PgvectorDriver } from './drivers/pgvector/pgvector_driver.ts'
 import { EmbeddingError, RagError } from './rag_error.ts'
 import type {
   ChunkingConfig,

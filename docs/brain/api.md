@@ -12,12 +12,12 @@ import {
   type BrainManagerOptions,
   // Provider interface + impl
   type Provider,
-  AnthropicProvider,
-  OpenAIProvider,
-  OpenAICompatProvider,
-  GeminiProvider,
-  DeepSeekProvider,
-  OllamaProvider,
+  AnthropicBrainDriver,
+  OpenAIBrainDriver,
+  OpenAICompatBrainDriver,
+  GeminiBrainDriver,
+  DeepSeekBrainDriver,
+  OllamaBrainDriver,
   // Config
   type BrainConfigShape,
   type AnthropicProviderConfig,
@@ -208,12 +208,12 @@ interface Provider {
 
 The contract every backend implements. Apps don't usually call this directly — they go through `BrainManager`. The interface is exported so apps that need a custom provider (e.g. local Ollama) can implement it without subclassing.
 
-## `AnthropicProvider`
+## `AnthropicBrainDriver`
 
 Concrete `Provider` backed by `@anthropic-ai/sdk`.
 
 ```ts
-class AnthropicProvider implements Provider {
+class AnthropicBrainDriver implements Provider {
   readonly name: string
 
   constructor(
@@ -256,12 +256,12 @@ The SDK's `Anthropic.Message` is collapsed into `ChatResult`:
 - `usage` carries the SDK's `input_tokens` / `output_tokens` + `cache_creation_input_tokens` / `cache_read_input_tokens` (`0` when absent).
 - `raw` is the unmodified SDK `Message` for apps that need anything else (citations, server-tool results, etc.).
 
-## `OpenAIProvider`
+## `OpenAIBrainDriver`
 
 Concrete `Provider` backed by `openai` (chat-completions API).
 
 ```ts
-class OpenAIProvider implements Provider {
+class OpenAIBrainDriver implements Provider {
   readonly name: string
 
   constructor(
@@ -293,12 +293,12 @@ Maps framework shapes to OpenAI's wire format:
 
 Streaming adds `stream_options: { include_usage: true }` so the terminal `stop` event carries final usage including `cacheReadTokens` (from `prompt_tokens_details.cached_tokens`). `countTokens` is not implemented — `BrainManager.countTokens` returns `null` when routed to OpenAI.
 
-## `GeminiProvider`
+## `GeminiBrainDriver`
 
 Concrete `Provider` backed by `@google/genai` (Gemini Developer API; Vertex via SDK config).
 
 ```ts
-class GeminiProvider implements Provider {
+class GeminiBrainDriver implements Provider {
   readonly name: string
 
   constructor(
@@ -331,12 +331,12 @@ Maps framework shapes to Gemini's wire format:
 
 `stream()` iterates `generateContentStream` yielding text deltas; the terminal `stop` event carries the last `usageMetadata` translated to `ChatUsage` (including `cachedContentTokenCount` → `cacheReadTokens`). `countTokens` calls `ai.models.countTokens` and returns `totalTokens`. MCP servers are not supported by Gemini server-side — the local client path is the only option.
 
-## `OpenAICompatProvider`
+## `OpenAICompatBrainDriver`
 
-Abstract intermediate that captures the standard "OpenAI-compatible local / third-party endpoint" pattern. Extended by `DeepSeekProvider` + `OllamaProvider` in the framework, and the recommended base for any other OpenAI-compatible vendor (Groq, Together, Fireworks, vLLM, llama.cpp's OpenAI-compat mode).
+Abstract intermediate that captures the standard "OpenAI-compatible local / third-party endpoint" pattern. Extended by `DeepSeekBrainDriver` + `OllamaBrainDriver` in the framework, and the recommended base for any other OpenAI-compatible vendor (Groq, Together, Fireworks, vLLM, llama.cpp's OpenAI-compat mode).
 
 ```ts
-abstract class OpenAICompatProvider extends OpenAIProvider {
+abstract class OpenAICompatBrainDriver extends OpenAIBrainDriver {
   // buildParams strips `reasoning_effort` (most compat endpoints reject unknown fields).
   // generate uses `response_format.json_object` + schema-in-system-prompt + parseGenerated.
   // runWithToolsAndSchema / streamWithToolsAndSchema throw BrainError.
@@ -347,9 +347,9 @@ abstract class OpenAICompatProvider extends OpenAIProvider {
 To wire a new compat vendor:
 
 ```ts
-import { OpenAICompatProvider } from '@strav/brain'
+import { OpenAICompatBrainDriver } from '@strav/brain'
 
-export class GroqProvider extends OpenAICompatProvider {
+export class GroqProvider extends OpenAICompatBrainDriver {
   constructor(name: string, config: GroqConfig) {
     super(name, {
       driver: 'openai',
@@ -365,12 +365,12 @@ export class GroqProvider extends OpenAICompatProvider {
 
 Then register it in `config.brain.providers` (apps that want this wire `BrainProvider` with their own `buildProvider` routine).
 
-## `DeepSeekProvider`
+## `DeepSeekBrainDriver`
 
-`OpenAICompatProvider` pointed at DeepSeek's `/v1/chat/completions` endpoint.
+`OpenAICompatBrainDriver` pointed at DeepSeek's `/v1/chat/completions` endpoint.
 
 ```ts
-class DeepSeekProvider extends OpenAICompatProvider {
+class DeepSeekBrainDriver extends OpenAICompatBrainDriver {
   constructor(
     name: string,
     config: DeepSeekProviderConfig,
@@ -389,16 +389,16 @@ Inherits the standard OpenAI-compat overrides. Adds:
 | `response_format.json_schema` | Falls back to `json_object` + schema-in-prompt (base class). |
 | `runWithToolsAndSchema` / `streamWithToolsAndSchema` | Throw `BrainError` — combined tools + schema deferred. Apps run `runTools` + `generate` separately, or switch to Anthropic / OpenAI / Gemini for this combination. |
 
-The subclassing pattern is the recommended template for any OpenAI-compatible vendor (Groq, Together, Fireworks, vLLM) — extend `OpenAIProvider`, override the base URL + default model, optionally override `buildParams` to suppress fields the upstream rejects. See [`guides/deepseek.md`](./guides/deepseek.md#extending-the-pattern).
+The subclassing pattern is the recommended template for any OpenAI-compatible vendor (Groq, Together, Fireworks, vLLM) — extend `OpenAIBrainDriver`, override the base URL + default model, optionally override `buildParams` to suppress fields the upstream rejects. See [`guides/deepseek.md`](./guides/deepseek.md#extending-the-pattern).
 
 `countTokens` is not implemented (DeepSeek has no count endpoint). `BrainManager.countTokens` returns `null` when routed to DeepSeek.
 
-## `OllamaProvider`
+## `OllamaBrainDriver`
 
-`OpenAICompatProvider` pointed at a local [Ollama](https://ollama.com) server (or any OpenAI-compatible local-LLM server: LM Studio, llama.cpp's server, vLLM, TGI). Unlocks privacy-preserving + free dev workflows for open-weights models (Llama 3.2 / Qwen 2.5 / Mistral / …).
+`OpenAICompatBrainDriver` pointed at a local [Ollama](https://ollama.com) server (or any OpenAI-compatible local-LLM server: LM Studio, llama.cpp's server, vLLM, TGI). Unlocks privacy-preserving + free dev workflows for open-weights models (Llama 3.2 / Qwen 2.5 / Mistral / …).
 
 ```ts
-class OllamaProvider extends OpenAICompatProvider {
+class OllamaBrainDriver extends OpenAICompatBrainDriver {
   constructor(
     name: string,
     config: OllamaProviderConfig,
@@ -754,7 +754,7 @@ brain.runTools(
 
 The agentic loop. Send → detect `tool_use` → execute → append `tool_result` → re-send, until the model returns `end_turn` or `maxIterations` is hit.
 
-Throws `BrainError` when the configured provider doesn't implement `runWithTools` (V1: `AnthropicProvider`, `OpenAIProvider`, `GeminiProvider`; DeepSeek follows). Throws `ToolExecutionError` when a tool's `execute` throws — the loop aborts on the first failure in V1. `OpenAIProvider` and `GeminiProvider` resolve `mcpServers` through the local MCP client at `@strav/brain/mcp` and surface discovered tools to the loop.
+Throws `BrainError` when the configured provider doesn't implement `runWithTools` (V1: `AnthropicBrainDriver`, `OpenAIBrainDriver`, `GeminiBrainDriver`; DeepSeek follows). Throws `ToolExecutionError` when a tool's `execute` throws — the loop aborts on the first failure in V1. `OpenAIBrainDriver` and `GeminiBrainDriver` resolve `mcpServers` through the local MCP client at `@strav/brain/mcp` and surface discovered tools to the loop.
 
 ### `BrainManager.streamTools(input, tools, options?)`
 

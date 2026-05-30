@@ -376,7 +376,7 @@ export interface ChatOptions {
    * subsequent requests (Thread does this automatically). Saves
    * tokens on long threads without lossy client-side pruning.
    *
-   * Only honored by `AnthropicProvider` (driver `'anthropic'`),
+   * Only honored by `AnthropicBrainDriver` (driver `'anthropic'`),
    * via the `compact-2026-01-12` beta. Silently ignored by every
    * other provider so apps targeting multiple providers with the
    * same options object don't have to special-case.
@@ -388,7 +388,7 @@ export interface ChatOptions {
    * from the prior `Response` identified by this id and replays
    * the conversation server-side. Saves tokens on long threads.
    *
-   * Only honored by `OpenAIResponsesProvider` (driver
+   * Only honored by `OpenAIResponsesBrainDriver` (driver
    * `'openai-responses'`); silently ignored by every other provider
    * — apps that target multiple providers with the same options
    * object don't have to special-case.

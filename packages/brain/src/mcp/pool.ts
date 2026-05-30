@@ -23,7 +23,7 @@
  * ```ts
  * const pool = new MCPClientPool()
  *
- * const openai = new OpenAIProvider(
+ * const openai = new OpenAIBrainDriver(
  *   'openai',
  *   { driver: 'openai', apiKey: ... },
  *   { mcpPool: pool },

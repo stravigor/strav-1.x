@@ -14,7 +14,7 @@
 
 import { Repository } from '@strav/database'
 import { BrainSuspendedRun, type BrainSuspendedRunStatus } from './brain_suspended_run.ts'
-import { brainSuspendedRunSchema } from './schema/brain_suspended_run_schema.ts'
+import { brainSuspendedRunSchema } from './schemas/brain_suspended_run_schema.ts'
 
 export interface ListPendingOptions {
   /** Filter by app-defined user — useful when an app has per-user approval queues. */

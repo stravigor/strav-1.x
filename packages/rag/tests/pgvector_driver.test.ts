@@ -5,7 +5,7 @@
 
 import { describe, expect, test } from 'bun:test'
 import type { DatabaseExecutor, PostgresDatabase } from '@strav/database'
-import { PgvectorDriver } from '../src/drivers/pgvector_driver.ts'
+import { PgvectorDriver } from '../src/drivers/pgvector/pgvector_driver.ts'
 import { VectorQueryError } from '../src/rag_error.ts'
 
 class SpyDb {

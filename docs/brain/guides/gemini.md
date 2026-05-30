@@ -1,6 +1,6 @@
 # Gemini provider
 
-`@strav/brain` ships a `GeminiProvider` backed by the official `@google/genai` SDK (Gemini Developer API; Vertex AI also works). Configure it through `config.brain.providers` and call it via the same `BrainManager.chat / stream / runTools / countTokens` surface used by every other driver.
+`@strav/brain` ships a `GeminiBrainDriver` backed by the official `@google/genai` SDK (Gemini Developer API; Vertex AI also works). Configure it through `config.brain.providers` and call it via the same `BrainManager.chat / stream / runTools / countTokens` surface used by every other driver.
 
 ```ts
 // config/brain.ts
@@ -67,7 +67,7 @@ The provider hides Gemini's `Content` / `Part` wire format behind the same frame
 
 ## MCP
 
-Gemini has no first-party server-side MCP equivalent to Anthropic's connector. The `GeminiProvider` handles `mcpServers` exactly the way `OpenAIProvider` does: it resolves them through the local MCP client at `@strav/brain/mcp`, surfaces the discovered tools as namespaced `<server>__<tool>` entries in the agentic loop, and closes the transports in a `finally` once the run exits.
+Gemini has no first-party server-side MCP equivalent to Anthropic's connector. The `GeminiBrainDriver` handles `mcpServers` exactly the way `OpenAIBrainDriver` does: it resolves them through the local MCP client at `@strav/brain/mcp`, surfaces the discovered tools as namespaced `<server>__<tool>` entries in the agentic loop, and closes the transports in a `finally` once the run exits.
 
 ```ts
 const result = await brain.runTools(

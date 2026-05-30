@@ -20,10 +20,10 @@ import { BrainError } from '../src/brain_error.ts'
 import { BrainManager } from '../src/brain_manager.ts'
 import { defineTool } from '../src/define_tool.ts'
 import type { OutputSchema } from '../src/output_schema.ts'
-import { AnthropicProvider } from '../src/providers/anthropic_provider.ts'
-import { GeminiProvider } from '../src/providers/gemini_provider.ts'
-import { OpenAIProvider } from '../src/providers/openai_provider.ts'
-import type { Provider, RunWithToolsOptions } from '../src/provider.ts'
+import { AnthropicBrainDriver } from '../src/drivers/anthropic/anthropic_brain_driver.ts'
+import { GeminiBrainDriver } from '../src/drivers/gemini/gemini_brain_driver.ts'
+import { OpenAIBrainDriver } from '../src/drivers/openai/openai_brain_driver.ts'
+import type { BrainDriver, RunWithToolsOptions } from '../src/brain_driver.ts'
 import type { Tool } from '../src/tool.ts'
 import type { ChatOptions, ChatResult, Message, StreamEvent } from '../src/types.ts'
 
@@ -45,7 +45,7 @@ const citySchema: OutputSchema<Answer> = {
   },
 }
 
-// ─── AnthropicProvider.runWithToolsAndSchema ─────────────────────────────
+// ─── AnthropicBrainDriver.runWithToolsAndSchema ─────────────────────────────
 
 function makeAnthropicMessage(opts: {
   text?: string
@@ -79,7 +79,7 @@ function makeAnthropicMessage(opts: {
   } as unknown as Anthropic.Message
 }
 
-describe('AnthropicProvider.runWithToolsAndSchema', () => {
+describe('AnthropicBrainDriver.runWithToolsAndSchema', () => {
   test('emits output_config.format every turn + parses the final JSON', async () => {
     const queue: Anthropic.Message[] = [
       makeAnthropicMessage({
@@ -106,7 +106,7 @@ describe('AnthropicProvider.runWithToolsAndSchema', () => {
       inputSchema: { type: 'object' },
       execute: async (input: { name: string }) => `data for ${input.name}`,
     })
-    const provider = new AnthropicProvider(
+    const provider = new AnthropicBrainDriver(
       'anthropic',
       { driver: 'anthropic', apiKey: 'sk-test' },
       { client },
@@ -132,7 +132,7 @@ describe('AnthropicProvider.runWithToolsAndSchema', () => {
   })
 })
 
-// ─── OpenAIProvider.runWithToolsAndSchema ────────────────────────────────
+// ─── OpenAIBrainDriver.runWithToolsAndSchema ────────────────────────────────
 
 function makeOpenAICompletion(opts: {
   text?: string | null
@@ -170,7 +170,7 @@ function makeOpenAICompletion(opts: {
   } as unknown as OpenAI.Chat.ChatCompletion
 }
 
-describe('OpenAIProvider.runWithToolsAndSchema', () => {
+describe('OpenAIBrainDriver.runWithToolsAndSchema', () => {
   test('injects response_format.json_schema every turn and parses final JSON', async () => {
     const queue: OpenAI.Chat.ChatCompletion[] = [
       makeOpenAICompletion({
@@ -199,7 +199,7 @@ describe('OpenAIProvider.runWithToolsAndSchema', () => {
       inputSchema: { type: 'object' },
       execute: async () => 'data',
     })
-    const provider = new OpenAIProvider(
+    const provider = new OpenAIBrainDriver(
       'openai',
       { driver: 'openai', apiKey: 'sk-test' },
       { client },
@@ -225,7 +225,7 @@ describe('OpenAIProvider.runWithToolsAndSchema', () => {
   })
 })
 
-// ─── GeminiProvider.runWithToolsAndSchema ────────────────────────────────
+// ─── GeminiBrainDriver.runWithToolsAndSchema ────────────────────────────────
 
 function makeGeminiResponse(opts: {
   text?: string
@@ -242,7 +242,7 @@ function makeGeminiResponse(opts: {
   } as unknown as GenerateContentResponse
 }
 
-describe('GeminiProvider.runWithToolsAndSchema', () => {
+describe('GeminiBrainDriver.runWithToolsAndSchema', () => {
   test('injects responseMimeType + responseJsonSchema every turn and parses final JSON', async () => {
     const queue: GenerateContentResponse[] = [
       makeGeminiResponse({
@@ -271,7 +271,7 @@ describe('GeminiProvider.runWithToolsAndSchema', () => {
       inputSchema: { type: 'object' },
       execute: async () => 'data',
     })
-    const provider = new GeminiProvider(
+    const provider = new GeminiBrainDriver(
       'google',
       { driver: 'google', apiKey: 'sk-test' },
       { client },
@@ -299,7 +299,7 @@ interface ComboCall {
   options?: RunWithToolsOptions
 }
 
-class StubProvider implements Provider {
+class StubProvider implements BrainDriver {
   readonly name: string
   readonly comboCalls: ComboCall[] = []
   private readonly result: AgentGenerateResult<unknown>
@@ -321,7 +321,7 @@ class StubProvider implements Provider {
   }
 }
 
-class StubProviderWithoutCombo implements Provider {
+class StubProviderWithoutCombo implements BrainDriver {
   readonly name = 'no-combo'
   async chat(): Promise<ChatResult> { throw new Error('chat unused') }
   async *stream(): AsyncIterable<StreamEvent> {}

@@ -1,6 +1,6 @@
 # OpenAI provider
 
-`@strav/brain` ships an `OpenAIProvider` alongside the Anthropic provider. Configure it the same way you'd configure any other driver — through `config.brain.providers` — and call it via the same `BrainManager.chat / stream / runTools` surface.
+`@strav/brain` ships an `OpenAIBrainDriver` alongside the Anthropic provider. Configure it the same way you'd configure any other driver — through `config.brain.providers` — and call it via the same `BrainManager.chat / stream / runTools` surface.
 
 ```ts
 // config/brain.ts

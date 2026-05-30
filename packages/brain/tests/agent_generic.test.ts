@@ -17,7 +17,7 @@ import { Agent } from '../src/agent.ts'
 import type { AgentGenerateResult } from '../src/agent_generate_result.ts'
 import { BrainManager } from '../src/brain_manager.ts'
 import type { OutputSchema } from '../src/output_schema.ts'
-import type { Provider } from '../src/provider.ts'
+import type { BrainDriver } from '../src/brain_driver.ts'
 import type {
   ChatOptions,
   ChatResult,
@@ -63,7 +63,7 @@ const emptyUsage: ChatUsage = {
   cacheCreationTokens: 0,
 }
 
-class StubProvider implements Provider {
+class StubProvider implements BrainDriver {
   readonly name = 'stub'
   readonly generateCalls: Array<{ schema: OutputSchema<unknown> }> = []
   private readonly response: GenerateResult<unknown>
@@ -147,7 +147,7 @@ class LegacyAgent extends Agent {
   override readonly tier = 'fast'
 }
 
-class StubToolProvider implements Provider {
+class StubToolProvider implements BrainDriver {
   readonly name = 'stub'
   readonly runWithToolsCalls: Array<{ messages: readonly Message[] }> = []
   async chat(): Promise<ChatResult> { throw new Error('chat unused') }

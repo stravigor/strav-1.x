@@ -27,9 +27,9 @@ import { defineTool } from '../src/define_tool.ts'
 import type { MCPClient as MCPClientType, MCPToolDescriptor } from '../src/mcp/client.ts'
 import { MCPClient } from '../src/mcp/client.ts'
 import { resolveMcpTools } from '../src/mcp/resolve_mcp_tools.ts'
-import { AnthropicProvider } from '../src/providers/anthropic_provider.ts'
-import { GeminiProvider } from '../src/providers/gemini_provider.ts'
-import { OpenAIProvider } from '../src/providers/openai_provider.ts'
+import { AnthropicBrainDriver } from '../src/drivers/anthropic/anthropic_brain_driver.ts'
+import { GeminiBrainDriver } from '../src/drivers/gemini/gemini_brain_driver.ts'
+import { OpenAIBrainDriver } from '../src/drivers/openai/openai_brain_driver.ts'
 
 // ─── Signal forwarding — chat() per provider ─────────────────────────────
 
@@ -53,7 +53,7 @@ describe('chat() — forwards options.signal to the SDK', () => {
         },
       },
     } as unknown as Anthropic
-    const provider = new AnthropicProvider(
+    const provider = new AnthropicBrainDriver(
       'anthropic',
       { driver: 'anthropic', apiKey: 'sk-test' },
       { client },
@@ -82,7 +82,7 @@ describe('chat() — forwards options.signal to the SDK', () => {
         },
       },
     } as unknown as OpenAI
-    const provider = new OpenAIProvider(
+    const provider = new OpenAIBrainDriver(
       'openai',
       { driver: 'openai', apiKey: 'sk-test' },
       { client },
@@ -107,7 +107,7 @@ describe('chat() — forwards options.signal to the SDK', () => {
         countTokens: async () => ({ totalTokens: 0 }),
       },
     }
-    const provider = new GeminiProvider(
+    const provider = new GeminiBrainDriver(
       'google',
       { driver: 'google', apiKey: 'sk-test' },
       { client },
@@ -149,7 +149,7 @@ describe('runWithTools — aborting between iterations throws AbortError', () =>
       inputSchema: { type: 'object' },
       execute: async () => 'ok',
     })
-    const provider = new AnthropicProvider(
+    const provider = new AnthropicBrainDriver(
       'anthropic',
       { driver: 'anthropic', apiKey: 'sk-test' },
       { client },
@@ -206,7 +206,7 @@ describe('streamWithTools — aborting between iterations bails the iterator', (
       inputSchema: { type: 'object' },
       execute: async () => 'ok',
     })
-    const provider = new OpenAIProvider(
+    const provider = new OpenAIBrainDriver(
       'openai',
       { driver: 'openai', apiKey: 'sk-test' },
       { client },
@@ -270,7 +270,7 @@ describe('ToolContext.signal — tool.execute receives the run signal', () => {
         create: async () => queue.shift() as Anthropic.Message,
       },
     } as unknown as Anthropic
-    const provider = new AnthropicProvider(
+    const provider = new AnthropicBrainDriver(
       'anthropic',
       { driver: 'anthropic', apiKey: 'sk-test' },
       { client },
@@ -313,7 +313,7 @@ describe('ToolContext.signal — tool.execute receives the run signal', () => {
     const client = {
       messages: { create: async () => queue.shift() as Anthropic.Message },
     } as unknown as Anthropic
-    const provider = new AnthropicProvider(
+    const provider = new AnthropicBrainDriver(
       'anthropic',
       { driver: 'anthropic', apiKey: 'sk-test' },
       { client },

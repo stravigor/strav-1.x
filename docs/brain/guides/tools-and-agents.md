@@ -261,4 +261,4 @@ A few patterns that work:
 
 ## Provider support
 
-V1 supports tools on `AnthropicProvider` only. The `Provider` interface declares `runWithTools` as optional; OpenAI / Gemini / DeepSeek providers land in later slices and will populate it. `BrainManager.runTools` throws `BrainError` when the configured provider doesn't implement the method.
+V1 supports tools on `AnthropicBrainDriver` only. The `Provider` interface declares `runWithTools` as optional; OpenAI / Gemini / DeepSeek providers land in later slices and will populate it. `BrainManager.runTools` throws `BrainError` when the configured provider doesn't implement the method.

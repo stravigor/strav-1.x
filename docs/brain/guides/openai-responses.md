@@ -1,9 +1,9 @@
-# OpenAI Responses API — `OpenAIResponsesProvider`
+# OpenAI Responses API — `OpenAIResponsesBrainDriver`
 
 `@strav/brain` ships two OpenAI providers:
 
-- **`OpenAIProvider`** (driver `'openai'`) — chat completions. Default for everything except server tools.
-- **`OpenAIResponsesProvider`** (driver `'openai-responses'`) — backed by `client.responses.create`. Pick this when you need OpenAI's server-side tools or the Responses API's reasoning surfaces.
+- **`OpenAIBrainDriver`** (driver `'openai'`) — chat completions. Default for everything except server tools.
+- **`OpenAIResponsesBrainDriver`** (driver `'openai-responses'`) — backed by `client.responses.create`. Pick this when you need OpenAI's server-side tools or the Responses API's reasoning surfaces.
 
 Same SDK, different endpoint. Apps register both and route per-call.
 
@@ -43,7 +43,7 @@ The Responses API adds:
 - **Reasoning surfaces** — `reasoning.effort` maps the same way as chat completions but the response carries reasoning items inline.
 - **Stateful conversations** — `previous_response_id` lets OpenAI manage history server-side. The framework plumbs this through `ChatOptions.previousResponseId` (request) + `ChatResult.responseId` (response), and `Thread` auto-threads it across `send()` calls so apps don't need to manage the pointer manually.
 
-For apps that don't need server tools, **stick with `OpenAIProvider`**. It's simpler, has full schema support, and matches the rest of the framework's patterns.
+For apps that don't need server tools, **stick with `OpenAIBrainDriver`**. It's simpler, has full schema support, and matches the rest of the framework's patterns.
 
 ## Config
 
@@ -60,7 +60,7 @@ interface OpenAIResponsesProviderConfig {
 }
 ```
 
-`embed` + `transcribe` are inherited from `OpenAIProvider` — they hit `client.embeddings.create` and `client.audio.transcriptions.create` which are stable across both API surfaces.
+`embed` + `transcribe` are inherited from `OpenAIBrainDriver` — they hit `client.embeddings.create` and `client.audio.transcriptions.create` which are stable across both API surfaces.
 
 ## What's mapped
 

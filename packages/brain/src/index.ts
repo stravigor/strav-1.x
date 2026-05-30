@@ -1,9 +1,9 @@
 // Public API of @strav/brain.
 //
-// V1: Provider interface + AnthropicProvider, BrainManager, Thread,
+// V1: BrainDriver interface + AnthropicBrainDriver, BrainManager, Thread,
 // BrainProvider service-wiring, prompt caching.
 // V2 (this slice): tools + agents — defineTool, Agent base + AgentRunner,
-// BrainManager.runTools / .agent(Class), Provider.runWithTools.
+// BrainManager.runTools / .agent(Class), BrainDriver.runWithTools.
 // Still deferred: MCP, embeddings, streaming agent loops, server-side
 // tools, structured outputs, other providers.
 
@@ -46,18 +46,18 @@ export { defineTool, type DefineToolSpec } from './define_tool.ts'
 export { MCPClientPool, type MCPClientFactory } from './mcp/pool.ts'
 export type { MCPServer, MCPServerToolConfig } from './mcp_server.ts'
 export type { OutputSchema } from './output_schema.ts'
-export { AnthropicProvider } from './providers/anthropic_provider.ts'
-export { DeepSeekProvider } from './providers/deepseek_provider.ts'
-export { GeminiProvider } from './providers/gemini_provider.ts'
-export { OllamaProvider } from './providers/ollama_provider.ts'
-export { OpenAICompatProvider } from './providers/openai_compat_provider.ts'
-export { OpenAIProvider } from './providers/openai_provider.ts'
-export { OpenAIResponsesProvider } from './providers/openai_responses_provider.ts'
+export { AnthropicBrainDriver } from './drivers/anthropic/anthropic_brain_driver.ts'
+export { DeepSeekBrainDriver } from './drivers/deepseek/deepseek_brain_driver.ts'
+export { GeminiBrainDriver } from './drivers/gemini/gemini_brain_driver.ts'
+export { OllamaBrainDriver } from './drivers/ollama/ollama_brain_driver.ts'
+export { OpenAICompatBrainDriver } from './drivers/openai_compat/openai_compat_brain_driver.ts'
+export { OpenAIBrainDriver } from './drivers/openai/openai_brain_driver.ts'
+export { OpenAIResponsesBrainDriver } from './drivers/openai_responses/openai_responses_brain_driver.ts'
 export type {
-  Provider,
+  BrainDriver,
   RunWithToolsOptions,
   RunWithToolsOptionsWithSuspend,
-} from './provider.ts'
+} from './brain_driver.ts'
 export {
   appendResumeResults,
   isSuspended,

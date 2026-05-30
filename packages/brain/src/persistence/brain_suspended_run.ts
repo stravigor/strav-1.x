@@ -11,7 +11,7 @@
 import { Model } from '@strav/database'
 import type { SuspendedState } from '../suspended_run.ts'
 import type { ToolUseBlock } from '../types.ts'
-import { brainSuspendedRunSchema } from './schema/brain_suspended_run_schema.ts'
+import { brainSuspendedRunSchema } from './schemas/brain_suspended_run_schema.ts'
 
 export type BrainSuspendedRunStatus = 'pending' | 'resumed' | 'cancelled'
 

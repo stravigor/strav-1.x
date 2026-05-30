@@ -1,5 +1,5 @@
 /**
- * Compaction tests — `compact-2026-01-12` beta on `AnthropicProvider`,
+ * Compaction tests — `compact-2026-01-12` beta on `AnthropicBrainDriver`,
  * plus the framework-level surface (`ChatOptions.compact`,
  * `ChatResult.content`, `CompactionBlock` round-trip, Thread
  * preservation).
@@ -11,7 +11,7 @@
 import { describe, expect, test } from 'bun:test'
 import type Anthropic from '@anthropic-ai/sdk'
 import { BrainManager } from '../src/brain_manager.ts'
-import { AnthropicProvider } from '../src/providers/anthropic_provider.ts'
+import { AnthropicBrainDriver } from '../src/drivers/anthropic/anthropic_brain_driver.ts'
 import { Thread } from '../src/thread.ts'
 import type { CompactionBlock, Message } from '../src/types.ts'
 
@@ -61,7 +61,7 @@ function makeClient(responses: Anthropic.Message[]) {
 }
 
 function makeProvider(client: Anthropic) {
-  return new AnthropicProvider(
+  return new AnthropicBrainDriver(
     'anthropic',
     { driver: 'anthropic', apiKey: 'sk-test', defaultModel: 'claude-opus-4-7' },
     { client },
@@ -70,7 +70,7 @@ function makeProvider(client: Anthropic) {
 
 // ─── buildParams emits edits + beta header ──────────────────────────────
 
-describe('AnthropicProvider — outbound compaction request', () => {
+describe('AnthropicBrainDriver — outbound compaction request', () => {
   test('options.compact with all fields emits the right edits entry + flips beta routing', async () => {
     const { client, calls } = makeClient([makeMessage([
       { type: 'text', text: 'ok', citations: null } as unknown as Anthropic.ContentBlock,
@@ -121,7 +121,7 @@ describe('AnthropicProvider — outbound compaction request', () => {
 
 // ─── inbound compaction block surfaces on result.content ────────────────
 
-describe('AnthropicProvider — inbound compaction block', () => {
+describe('AnthropicBrainDriver — inbound compaction block', () => {
   test('compaction block on the assistant turn shows up on result.content', async () => {
     const { client } = makeClient([
       makeMessage([
@@ -173,7 +173,7 @@ describe('AnthropicProvider — inbound compaction block', () => {
 
 // ─── outbound CompactionBlock round-trip ─────────────────────────────────
 
-describe('AnthropicProvider — CompactionBlock round-trip on subsequent send', () => {
+describe('AnthropicBrainDriver — CompactionBlock round-trip on subsequent send', () => {
   test('a Message carrying CompactionBlock translates back to a compaction param', async () => {
     const { client, calls } = makeClient([makeMessage([
       { type: 'text', text: 'thanks', citations: null } as unknown as Anthropic.ContentBlock,

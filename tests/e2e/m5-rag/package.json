@@ -8,6 +8,7 @@
     "@strav/brain": "workspace:*",
     "@strav/database": "workspace:*",
     "@strav/kernel": "workspace:*",
-    "@strav/rag": "workspace:*"
+    "@strav/rag": "workspace:*",
+    "@strav/testing": "workspace:*"
   }
 }

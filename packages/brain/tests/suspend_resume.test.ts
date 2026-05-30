@@ -3,10 +3,10 @@
  * `runWithTools` path. Covers all four providers that own their own
  * tool loop:
  *
- *   - AnthropicProvider
- *   - OpenAIProvider (chat completions)
- *   - OpenAIResponsesProvider
- *   - GeminiProvider
+ *   - AnthropicBrainDriver
+ *   - OpenAIBrainDriver (chat completions)
+ *   - OpenAIResponsesBrainDriver
+ *   - GeminiBrainDriver
  *
  * Also covers the manager-level `resumeTools` helper and the
  * AgentRunner `.suspend(...)` / `.resume(...)` chain. Streaming +
@@ -21,16 +21,16 @@ import { Agent } from '../src/agent.ts'
 import { BrainManager } from '../src/brain_manager.ts'
 import { BrainError } from '../src/brain_error.ts'
 import { defineTool } from '../src/define_tool.ts'
-import { AnthropicProvider } from '../src/providers/anthropic_provider.ts'
-import { GeminiProvider } from '../src/providers/gemini_provider.ts'
-import { OpenAIProvider } from '../src/providers/openai_provider.ts'
-import { OpenAIResponsesProvider } from '../src/providers/openai_responses_provider.ts'
+import { AnthropicBrainDriver } from '../src/drivers/anthropic/anthropic_brain_driver.ts'
+import { GeminiBrainDriver } from '../src/drivers/gemini/gemini_brain_driver.ts'
+import { OpenAIBrainDriver } from '../src/drivers/openai/openai_brain_driver.ts'
+import { OpenAIResponsesBrainDriver } from '../src/drivers/openai_responses/openai_responses_brain_driver.ts'
 import { isSuspended, type SuspendedRun } from '../src/suspended_run.ts'
 import type { Message, ToolUseBlock } from '../src/types.ts'
 
 // ─── Anthropic suspension ────────────────────────────────────────────────
 
-describe('AnthropicProvider — shouldSuspend', () => {
+describe('AnthropicBrainDriver — shouldSuspend', () => {
   function makeFakeClient(responses: Anthropic.Message[]) {
     const calls: Array<{ params: Anthropic.MessageCreateParams }> = []
     const queue = [...responses]
@@ -94,7 +94,7 @@ describe('AnthropicProvider — shouldSuspend', () => {
     const { client } = makeFakeClient([
       toolUseMessage('tu_1', 'drop_db', { name: 'users' }),
     ])
-    const provider = new AnthropicProvider(
+    const provider = new AnthropicBrainDriver(
       'anthropic',
       { driver: 'anthropic', apiKey: 'sk-test' },
       { client },
@@ -131,7 +131,7 @@ describe('AnthropicProvider — shouldSuspend', () => {
       usage: { input_tokens: 1, output_tokens: 1, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, server_tool_use: null, service_tier: null },
     } as unknown as Anthropic.Message
     const { client } = makeFakeClient([message])
-    const provider = new AnthropicProvider(
+    const provider = new AnthropicBrainDriver(
       'anthropic',
       { driver: 'anthropic', apiKey: 'sk-test' },
       { client },
@@ -153,7 +153,7 @@ describe('AnthropicProvider — shouldSuspend', () => {
       toolUseMessage('tu_1', 'drop_db', {}),
       textMessage('done'),
     ])
-    const provider = new AnthropicProvider(
+    const provider = new AnthropicBrainDriver(
       'anthropic',
       { driver: 'anthropic', apiKey: 'sk-test' },
       { client },
@@ -193,7 +193,7 @@ describe('AnthropicProvider — shouldSuspend', () => {
       usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 },
     }
     const { client } = makeFakeClient([])
-    const provider = new AnthropicProvider(
+    const provider = new AnthropicBrainDriver(
       'anthropic',
       { driver: 'anthropic', apiKey: 'sk-test' },
       { client },
@@ -207,7 +207,7 @@ describe('AnthropicProvider — shouldSuspend', () => {
 
 // ─── OpenAI chat-completions suspension ─────────────────────────────────
 
-describe('OpenAIProvider — shouldSuspend', () => {
+describe('OpenAIBrainDriver — shouldSuspend', () => {
   function fakeCompletion(opts: {
     toolCalls?: Array<{ id: string; name: string; args: string }>
     text?: string
@@ -265,7 +265,7 @@ describe('OpenAIProvider — shouldSuspend', () => {
         },
       },
     } as unknown as OpenAI
-    const provider = new OpenAIProvider(
+    const provider = new OpenAIBrainDriver(
       'openai',
       { driver: 'openai', apiKey: 'sk' },
       { client },
@@ -283,7 +283,7 @@ describe('OpenAIProvider — shouldSuspend', () => {
 
 // ─── OpenAIResponses suspension + previousResponseId ────────────────────
 
-describe('OpenAIResponsesProvider — shouldSuspend + previousResponseId', () => {
+describe('OpenAIResponsesBrainDriver — shouldSuspend + previousResponseId', () => {
   function fakeResponse(opts: {
     text?: string
     toolCalls?: Array<{ callId: string; name: string; args: string }>
@@ -338,7 +338,7 @@ describe('OpenAIResponsesProvider — shouldSuspend + previousResponseId', () =>
           fakeResponse({ id: 'resp_abc', toolCalls: [{ callId: 'fc_1', name: 'do_x', args: '{}' }] }),
       },
     } as unknown as OpenAI
-    const provider = new OpenAIResponsesProvider(
+    const provider = new OpenAIResponsesBrainDriver(
       'openai-responses',
       { driver: 'openai-responses', apiKey: 'sk' },
       { client },
@@ -362,7 +362,7 @@ describe('OpenAIResponsesProvider — shouldSuspend + previousResponseId', () =>
         },
       },
     } as unknown as OpenAI
-    const provider = new OpenAIResponsesProvider(
+    const provider = new OpenAIResponsesBrainDriver(
       'openai-responses',
       { driver: 'openai-responses', apiKey: 'sk' },
       { client },
@@ -393,7 +393,7 @@ describe('OpenAIResponsesProvider — shouldSuspend + previousResponseId', () =>
         },
       },
     } as unknown as OpenAI
-    const provider = new OpenAIResponsesProvider(
+    const provider = new OpenAIResponsesBrainDriver(
       'openai-responses',
       { driver: 'openai-responses', apiKey: 'sk' },
       { client },
@@ -423,7 +423,7 @@ describe('OpenAIResponsesProvider — shouldSuspend + previousResponseId', () =>
 
 // ─── Gemini suspension ──────────────────────────────────────────────────
 
-describe('GeminiProvider — shouldSuspend', () => {
+describe('GeminiBrainDriver — shouldSuspend', () => {
   test('suspends before executing the gated tool', async () => {
     const tool = defineTool({
       name: 'gemini_tool',
@@ -450,7 +450,7 @@ describe('GeminiProvider — shouldSuspend', () => {
         totalTokenCount: 2,
       },
     }
-    const provider = new GeminiProvider(
+    const provider = new GeminiBrainDriver(
       'gemini',
       { driver: 'google', apiKey: 'k' },
     )
@@ -478,7 +478,7 @@ describe('BrainManager — shouldSuspend rejected on streaming + schema', () => 
     return new BrainManager({
       default: 'anthropic',
       providers: {
-        anthropic: new AnthropicProvider(
+        anthropic: new AnthropicBrainDriver(
           'anthropic',
           { driver: 'anthropic', apiKey: 'sk' },
         ),
@@ -545,7 +545,7 @@ describe('AgentRunner.suspend / .resume', () => {
   }
 
   test('full suspend → resume round-trip via AgentRunner', async () => {
-    const provider = new AnthropicProvider(
+    const provider = new AnthropicBrainDriver(
       'anthropic',
       { driver: 'anthropic', apiKey: 'sk' },
       {

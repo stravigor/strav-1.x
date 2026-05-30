@@ -10,7 +10,7 @@ import {
   OmisePaymentDriver,
   omiseNormalize,
   omiseVerify,
-} from '../src/omise/index.ts'
+} from '../src/drivers/omise/index.ts'
 import {
   ProviderUnsupportedError,
   WebhookSignatureError,

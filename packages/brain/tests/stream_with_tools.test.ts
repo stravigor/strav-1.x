@@ -20,10 +20,10 @@ import type { AgentStreamEvent } from '../src/agent_stream_event.ts'
 import { BrainError } from '../src/brain_error.ts'
 import { BrainManager } from '../src/brain_manager.ts'
 import { defineTool } from '../src/define_tool.ts'
-import { AnthropicProvider } from '../src/providers/anthropic_provider.ts'
-import { GeminiProvider } from '../src/providers/gemini_provider.ts'
-import { OpenAIProvider } from '../src/providers/openai_provider.ts'
-import type { Provider, RunWithToolsOptions } from '../src/provider.ts'
+import { AnthropicBrainDriver } from '../src/drivers/anthropic/anthropic_brain_driver.ts'
+import { GeminiBrainDriver } from '../src/drivers/gemini/gemini_brain_driver.ts'
+import { OpenAIBrainDriver } from '../src/drivers/openai/openai_brain_driver.ts'
+import type { BrainDriver, RunWithToolsOptions } from '../src/brain_driver.ts'
 import type { Tool } from '../src/tool.ts'
 import type { ChatResult, Message, StreamEvent } from '../src/types.ts'
 
@@ -35,7 +35,7 @@ async function collect(it: AsyncIterable<AgentStreamEvent>): Promise<AgentStream
   return out
 }
 
-// ─── AnthropicProvider.streamWithTools ───────────────────────────────────
+// ─── AnthropicBrainDriver.streamWithTools ───────────────────────────────────
 
 function makeAnthropicMessage(opts: {
   text?: string
@@ -85,7 +85,7 @@ function makeAnthropicStream(deltas: string[], final: Anthropic.Message) {
   }
 }
 
-describe('AnthropicProvider.streamWithTools', () => {
+describe('AnthropicBrainDriver.streamWithTools', () => {
   test('single iteration → text deltas then stop', async () => {
     const final = makeAnthropicMessage({ text: 'hello world', stopReason: 'end_turn' })
     const client = {
@@ -93,7 +93,7 @@ describe('AnthropicProvider.streamWithTools', () => {
         stream: () => makeAnthropicStream(['hello ', 'world'], final),
       },
     } as unknown as Anthropic
-    const provider = new AnthropicProvider(
+    const provider = new AnthropicBrainDriver(
       'anthropic',
       { driver: 'anthropic', apiKey: 'sk-test' },
       { client },
@@ -132,7 +132,7 @@ describe('AnthropicProvider.streamWithTools', () => {
       inputSchema: { type: 'object' },
       execute: async (input: { x: number }) => `got ${input.x}`,
     })
-    const provider = new AnthropicProvider(
+    const provider = new AnthropicBrainDriver(
       'anthropic',
       { driver: 'anthropic', apiKey: 'sk-test' },
       { client },
@@ -162,7 +162,7 @@ describe('AnthropicProvider.streamWithTools', () => {
   })
 })
 
-// ─── OpenAIProvider.streamWithTools ──────────────────────────────────────
+// ─── OpenAIBrainDriver.streamWithTools ──────────────────────────────────────
 
 interface FakeOpenAIChunk {
   choices?: Array<{
@@ -188,7 +188,7 @@ function makeOpenAIStream(chunks: FakeOpenAIChunk[]) {
   }
 }
 
-describe('OpenAIProvider.streamWithTools', () => {
+describe('OpenAIBrainDriver.streamWithTools', () => {
   test('emits text deltas then a terminal stop', async () => {
     const chunks: FakeOpenAIChunk[] = [
       { choices: [{ delta: { content: 'hi ' } }] },
@@ -202,7 +202,7 @@ describe('OpenAIProvider.streamWithTools', () => {
         },
       },
     } as unknown as OpenAI
-    const provider = new OpenAIProvider(
+    const provider = new OpenAIBrainDriver(
       'openai',
       { driver: 'openai', apiKey: 'sk-test' },
       { client },
@@ -266,7 +266,7 @@ describe('OpenAIProvider.streamWithTools', () => {
       inputSchema: { type: 'object' },
       execute: async (input: { a: number; b: number }) => input.a + input.b,
     })
-    const provider = new OpenAIProvider(
+    const provider = new OpenAIBrainDriver(
       'openai',
       { driver: 'openai', apiKey: 'sk-test' },
       { client },
@@ -287,7 +287,7 @@ describe('OpenAIProvider.streamWithTools', () => {
   })
 })
 
-// ─── GeminiProvider.streamWithTools ──────────────────────────────────────
+// ─── GeminiBrainDriver.streamWithTools ──────────────────────────────────────
 
 function makeGeminiChunk(opts: {
   text?: string
@@ -304,7 +304,7 @@ function makeGeminiChunk(opts: {
   } as unknown as GenerateContentResponse
 }
 
-describe('GeminiProvider.streamWithTools', () => {
+describe('GeminiBrainDriver.streamWithTools', () => {
   test('text-only single iteration → stop', async () => {
     const chunks = [
       makeGeminiChunk({ text: 'he' }),
@@ -319,7 +319,7 @@ describe('GeminiProvider.streamWithTools', () => {
         countTokens: async () => ({ totalTokens: 0 }),
       },
     }
-    const provider = new GeminiProvider(
+    const provider = new GeminiBrainDriver(
       'google',
       { driver: 'google', apiKey: 'sk-test' },
       { client },
@@ -363,7 +363,7 @@ describe('GeminiProvider.streamWithTools', () => {
       inputSchema: { type: 'object' },
       execute: async (input: { x: number }) => `got ${input.x}`,
     })
-    const provider = new GeminiProvider(
+    const provider = new GeminiBrainDriver(
       'google',
       { driver: 'google', apiKey: 'sk-test' },
       { client },
@@ -388,7 +388,7 @@ interface StreamCall {
   options?: RunWithToolsOptions
 }
 
-class StubStreamingProvider implements Provider {
+class StubStreamingProvider implements BrainDriver {
   readonly name: string
   readonly calls: StreamCall[] = []
   private readonly events: AgentStreamEvent[]
@@ -409,7 +409,7 @@ class StubStreamingProvider implements Provider {
   }
 }
 
-class StubNoStreamingProvider implements Provider {
+class StubNoStreamingProvider implements BrainDriver {
   readonly name = 'no-stream'
   async chat(): Promise<ChatResult> { throw new Error('chat unused') }
   async *stream(): AsyncIterable<StreamEvent> {}

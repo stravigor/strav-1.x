@@ -16,7 +16,7 @@
 
 import { Repository } from '@strav/database'
 import { BrainThread } from './brain_thread.ts'
-import { brainThreadSchema } from './schema/brain_thread_schema.ts'
+import { brainThreadSchema } from './schemas/brain_thread_schema.ts'
 
 export interface ListThreadsOptions {
   /** Pagination — defaults to 50. */

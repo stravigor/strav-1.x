@@ -16,8 +16,8 @@ import type Anthropic from '@anthropic-ai/sdk'
 import type OpenAI from 'openai'
 import type { AgentStreamEvent } from '../src/agent_stream_event.ts'
 import { defineTool } from '../src/define_tool.ts'
-import { AnthropicProvider } from '../src/providers/anthropic_provider.ts'
-import { OpenAIProvider } from '../src/providers/openai_provider.ts'
+import { AnthropicBrainDriver } from '../src/drivers/anthropic/anthropic_brain_driver.ts'
+import { OpenAIBrainDriver } from '../src/drivers/openai/openai_brain_driver.ts'
 
 async function collect<T>(it: AsyncIterable<AgentStreamEvent<T>>): Promise<AgentStreamEvent<T>[]> {
   const out: AgentStreamEvent<T>[] = []
@@ -122,7 +122,7 @@ describe('Anthropic — tool_use_start + tool_use_delta', () => {
       inputSchema: { type: 'object' },
       execute: async () => 'r',
     })
-    const provider = new AnthropicProvider(
+    const provider = new AnthropicBrainDriver(
       'anthropic',
       { driver: 'anthropic', apiKey: 'sk-test' },
       { client },
@@ -214,7 +214,7 @@ describe('OpenAI — tool_use_start + tool_use_delta', () => {
       inputSchema: { type: 'object' },
       execute: async () => 'r',
     })
-    const provider = new OpenAIProvider(
+    const provider = new OpenAIBrainDriver(
       'openai',
       { driver: 'openai', apiKey: 'sk-test' },
       { client },
@@ -266,7 +266,7 @@ describe('OpenAI — tool_use_start + tool_use_delta', () => {
     const client = {
       chat: { completions: { create: async () => makeOpenAIStream(queued.shift() ?? []) } },
     } as unknown as OpenAI
-    const provider = new OpenAIProvider(
+    const provider = new OpenAIBrainDriver(
       'openai',
       { driver: 'openai', apiKey: 'sk-test' },
       { client },

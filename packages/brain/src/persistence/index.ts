@@ -45,4 +45,4 @@ export {
   brainMessageSchema,
   brainSuspendedRunSchema,
   brainThreadSchema,
-} from './schema/index.ts'
+} from './schemas/index.ts'

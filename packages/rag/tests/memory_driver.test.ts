@@ -6,7 +6,7 @@
  */
 
 import { describe, expect, test } from 'bun:test'
-import { MemoryDriver } from '../src/drivers/memory_driver.ts'
+import { MemoryDriver } from '../src/drivers/memory/memory_driver.ts'
 import { CollectionNotFoundError } from '../src/rag_error.ts'
 
 const driver = () => new MemoryDriver()

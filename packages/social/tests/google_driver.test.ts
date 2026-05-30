@@ -23,7 +23,7 @@ import {
 import {
   emailFromGoogleIdToken,
   GoogleSocialDriver,
-} from '../src/google/index.ts'
+} from '../src/drivers/google/index.ts'
 
 interface StubCall {
   url: string

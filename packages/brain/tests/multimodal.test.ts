@@ -16,16 +16,16 @@ import type {
   GenerateContentResponse,
 } from '@google/genai'
 import type OpenAI from 'openai'
-import { AnthropicProvider } from '../src/providers/anthropic_provider.ts'
-import { GeminiProvider } from '../src/providers/gemini_provider.ts'
-import { OpenAIProvider } from '../src/providers/openai_provider.ts'
+import { AnthropicBrainDriver } from '../src/drivers/anthropic/anthropic_brain_driver.ts'
+import { GeminiBrainDriver } from '../src/drivers/gemini/gemini_brain_driver.ts'
+import { OpenAIBrainDriver } from '../src/drivers/openai/openai_brain_driver.ts'
 import type { Message } from '../src/types.ts'
 
 const FAKE_BASE64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=='
 
 // ─── Anthropic ───────────────────────────────────────────────────────────
 
-describe('AnthropicProvider — ImageBlock translation', () => {
+describe('AnthropicBrainDriver — ImageBlock translation', () => {
   function makeFakeClient() {
     const calls: Array<{ params: Anthropic.MessageCreateParams }> = []
     const client = {
@@ -46,7 +46,7 @@ describe('AnthropicProvider — ImageBlock translation', () => {
 
   test('base64 image translates to Anthropic image block with media_type + data', async () => {
     const { client, calls } = makeFakeClient()
-    const provider = new AnthropicProvider(
+    const provider = new AnthropicBrainDriver(
       'anthropic',
       { driver: 'anthropic', apiKey: 'sk-test' },
       { client },
@@ -73,7 +73,7 @@ describe('AnthropicProvider — ImageBlock translation', () => {
 
   test('url image translates to Anthropic image block with url source', async () => {
     const { client, calls } = makeFakeClient()
-    const provider = new AnthropicProvider(
+    const provider = new AnthropicBrainDriver(
       'anthropic',
       { driver: 'anthropic', apiKey: 'sk-test' },
       { client },
@@ -98,7 +98,7 @@ describe('AnthropicProvider — ImageBlock translation', () => {
 
 // ─── OpenAI ──────────────────────────────────────────────────────────────
 
-describe('OpenAIProvider — ImageBlock translation', () => {
+describe('OpenAIBrainDriver — ImageBlock translation', () => {
   function makeFakeClient() {
     const calls: Array<{ params: OpenAI.Chat.ChatCompletionCreateParams }> = []
     const client = {
@@ -120,7 +120,7 @@ describe('OpenAIProvider — ImageBlock translation', () => {
 
   test('base64 image becomes image_url with data: URI', async () => {
     const { client, calls } = makeFakeClient()
-    const provider = new OpenAIProvider(
+    const provider = new OpenAIBrainDriver(
       'openai',
       { driver: 'openai', apiKey: 'sk-test' },
       { client },
@@ -148,7 +148,7 @@ describe('OpenAIProvider — ImageBlock translation', () => {
 
   test('url image becomes image_url with the raw URL', async () => {
     const { client, calls } = makeFakeClient()
-    const provider = new OpenAIProvider(
+    const provider = new OpenAIBrainDriver(
       'openai',
       { driver: 'openai', apiKey: 'sk-test' },
       { client },
@@ -174,7 +174,7 @@ describe('OpenAIProvider — ImageBlock translation', () => {
 
   test('text-only message stays as a string (backward compat)', async () => {
     const { client, calls } = makeFakeClient()
-    const provider = new OpenAIProvider(
+    const provider = new OpenAIBrainDriver(
       'openai',
       { driver: 'openai', apiKey: 'sk-test' },
       { client },
@@ -190,7 +190,7 @@ describe('OpenAIProvider — ImageBlock translation', () => {
 
 // ─── Gemini ──────────────────────────────────────────────────────────────
 
-describe('GeminiProvider — ImageBlock translation', () => {
+describe('GeminiBrainDriver — ImageBlock translation', () => {
   function makeFakeClient() {
     const calls: Array<{ params: GenerateContentParameters }> = []
     const client = {
@@ -211,7 +211,7 @@ describe('GeminiProvider — ImageBlock translation', () => {
 
   test('base64 image becomes inlineData', async () => {
     const { client, calls } = makeFakeClient()
-    const provider = new GeminiProvider(
+    const provider = new GeminiBrainDriver(
       'google',
       { driver: 'google', apiKey: 'sk-test' },
       { client },
@@ -236,7 +236,7 @@ describe('GeminiProvider — ImageBlock translation', () => {
 
   test('url image becomes fileData (mime guessed from extension)', async () => {
     const { client, calls } = makeFakeClient()
-    const provider = new GeminiProvider(
+    const provider = new GeminiBrainDriver(
       'google',
       { driver: 'google', apiKey: 'sk-test' },
       { client },

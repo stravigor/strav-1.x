@@ -102,7 +102,7 @@ V1 deliberately ships a minimal feature set. Things you might expect that aren't
 
 ### Stateful conversations (OpenAI Responses)
 
-When the thread's underlying provider is `OpenAIResponsesProvider`,
+When the thread's underlying provider is `OpenAIResponsesBrainDriver`,
 `Thread` auto-threads `previous_response_id` across `send()` calls.
 The last response id is stored on `thread.lastResponseId` (and
 included in `toJSON()` so persisted threads keep the pointer when

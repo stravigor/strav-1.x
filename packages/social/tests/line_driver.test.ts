@@ -17,7 +17,7 @@ import {
   SocialProviderError,
   StateMismatchError,
 } from '../src/index.ts'
-import { emailFromLineIdToken, LineSocialDriver } from '../src/line/index.ts'
+import { emailFromLineIdToken, LineSocialDriver } from '../src/drivers/line/index.ts'
 
 interface StubCall {
   url: string

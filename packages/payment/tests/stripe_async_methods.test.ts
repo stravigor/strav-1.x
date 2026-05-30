@@ -19,7 +19,7 @@ import {
   STRIPE_SUPPORTED_METHOD_KINDS,
   StripePaymentDriver,
   stripeNextAction,
-} from '../src/stripe/index.ts'
+} from '../src/drivers/stripe/index.ts'
 import { ProviderUnsupportedError } from '../src/index.ts'
 
 describe('stripeNextAction', () => {
