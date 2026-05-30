@@ -117,7 +117,11 @@ describe.skipIf(!PG_AVAILABLE)('M5 e2e: rag end-to-end against Postgres + pgvect
           stores: { pg: { driver: 'pgvector' } },
         },
       },
-      schemas: [tenantSchema, articleSchema, ragVectorSchema],
+      // ragVectorSchema is created by `applyRagVectorMigration` below —
+      // listing it under `schemas:` would re-emit CREATE TABLE and
+      // conflict. Keep tenantSchema + articleSchema here since they
+      // have no companion migration helper.
+      schemas: [tenantSchema, articleSchema],
       migrations: [
         (db, registry) => applyRagVectorMigration(db, { dimension: 4, registry }),
       ],
