@@ -167,7 +167,7 @@ let repo: UserRepository
 
 beforeEach(() => {
   db = new FakeUserDb()
-  repo = new UserRepository(db as unknown as PostgresDatabase)
+  repo = new UserRepository({ db: db as unknown as PostgresDatabase })
 })
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -179,14 +179,14 @@ describe('Repository — subclass requirements', () => {
     class Bad extends Repository<User> {
       static override readonly model: ModelClass = User as unknown as ModelClass
     }
-    expect(() => new Bad(db as unknown as PostgresDatabase)).toThrow(/static schema/)
+    expect(() => new Bad({ db: db as unknown as PostgresDatabase })).toThrow(/static schema/)
   })
 
   test('throws when subclass is missing `static model`', () => {
     class Bad extends Repository<User> {
       static override readonly schema = userSchema
     }
-    expect(() => new Bad(db as unknown as PostgresDatabase)).toThrow(/static model/)
+    expect(() => new Bad({ db: db as unknown as PostgresDatabase })).toThrow(/static model/)
   })
 })
 

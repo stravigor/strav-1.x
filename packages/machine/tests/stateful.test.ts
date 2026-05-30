@@ -83,7 +83,7 @@ class TestOrderRepository extends stateful(Repository<Order>, orderMachine) {
 function repo(events?: EventBus): TestOrderRepository {
   // Repository's constructor only needs `db` to satisfy the type; the
   // mixin's `transition()` doesn't touch it. Pass a sentinel cast.
-  return new TestOrderRepository(undefined as unknown as PostgresDatabase, events)
+  return new TestOrderRepository({ db: undefined as unknown as PostgresDatabase, events })
 }
 
 function makeOrder(overrides: Partial<Order> = {}): Order {

@@ -14,10 +14,7 @@
  * shows up in this code — the database enforces isolation.
  */
 
-// biome-ignore lint/style/useImportType: PostgresDatabase needs to be a value import — the @inject() decorator below resolves the constructor param via reflect-metadata, which requires the runtime class reference.
-import { PostgresDatabase, Repository } from '@strav/database'
-// biome-ignore lint/style/useImportType: EventBus has the same constraint as PostgresDatabase.
-import { EventBus, inject } from '@strav/kernel'
+import { Repository } from '@strav/database'
 import { BrainThread } from './brain_thread.ts'
 import { brainThreadSchema } from './schema/brain_thread_schema.ts'
 
@@ -27,15 +24,9 @@ export interface ListThreadsOptions {
   offset?: number
 }
 
-@inject()
 export class BrainThreadRepository extends Repository<BrainThread> {
   static override readonly schema = brainThreadSchema
   static override readonly model = BrainThread
-
-  // biome-ignore lint/complexity/noUselessConstructor: explicit constructor forces TypeScript to emit `design:paramtypes` metadata on the subclass for the @inject() decorator above.
-  constructor(db: PostgresDatabase, events: EventBus) {
-    super(db, events)
-  }
 
   /**
    * List threads for a given app-defined user, newest-first. Empty

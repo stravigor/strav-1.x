@@ -117,7 +117,7 @@ function applyUpdate(
 function makeRepo(): { repo: UserRepository; events: EventBus; db: FakeUserDb } {
   const db = new FakeUserDb()
   const events = new EventBus()
-  const repo = new UserRepository(db as unknown as PostgresDatabase, events)
+  const repo = new UserRepository({ db: db as unknown as PostgresDatabase, events })
   return { repo, events, db }
 }
 
@@ -174,7 +174,7 @@ describe('Repository.create — lifecycle events', () => {
 
   test('no events fire when the Repository has no EventBus', async () => {
     const db = new FakeUserDb()
-    const repo = new UserRepository(db as unknown as PostgresDatabase)
+    const repo = new UserRepository({ db: db as unknown as PostgresDatabase })
     // Should succeed without throwing, no events to listen to.
     const created = await repo.create({ email: 'a@b.com' } as Partial<User>)
     expect(created.email).toBe('a@b.com')

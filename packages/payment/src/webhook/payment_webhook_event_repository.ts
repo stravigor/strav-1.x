@@ -16,22 +16,14 @@
  *     crashed mid-dispatch).
  */
 
-// biome-ignore lint/style/useImportType: PostgresDatabase value import for @inject() metadata.
-import { PostgresDatabase, quoteIdent, Repository } from '@strav/database'
-// biome-ignore lint/style/useImportType: EventBus value import for @inject() metadata.
-import { EventBus, inject, ulid } from '@strav/kernel'
+import { quoteIdent, Repository } from '@strav/database'
+import { ulid } from '@strav/kernel'
 import { PaymentWebhookEvent } from './payment_webhook_event.ts'
 import { paymentWebhookEventSchema } from './payment_webhook_event_schema.ts'
 
-@inject()
 export class PaymentWebhookEventRepository extends Repository<PaymentWebhookEvent> {
   static override readonly schema = paymentWebhookEventSchema
   static override readonly model = PaymentWebhookEvent
-
-  // biome-ignore lint/complexity/noUselessConstructor: explicit constructor forces TS to emit `design:paramtypes` for @inject().
-  constructor(db: PostgresDatabase, events: EventBus) {
-    super(db, events)
-  }
 
   /**
    * Atomically record receipt of an event. Returns the inserted

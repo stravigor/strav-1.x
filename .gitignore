@@ -41,3 +41,5 @@ coverage/
 # Preliminary research dirs (root-anchored — keeps `docs/**/guides/` tracked).
 /guides
 /spec
+docs/code-checklist.md
+docs/code-quality.md

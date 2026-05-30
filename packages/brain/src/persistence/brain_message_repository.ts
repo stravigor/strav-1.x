@@ -13,10 +13,8 @@
  *     pagination UIs.
  */
 
-// biome-ignore lint/style/useImportType: PostgresDatabase needs to be a value import for @inject().
-import { PostgresDatabase, quoteIdent, Repository, type RepositoryScope } from '@strav/database'
-// biome-ignore lint/style/useImportType: EventBus value import for @inject().
-import { EventBus, inject, ulid } from '@strav/kernel'
+import { quoteIdent, Repository, type RepositoryScope } from '@strav/database'
+import { ulid } from '@strav/kernel'
 import type { ChatUsage, ContentBlock } from '../types.ts'
 import { BrainMessage, type BrainMessageRole } from './brain_message.ts'
 import { brainMessageSchema } from './schema/brain_message_schema.ts'
@@ -37,15 +35,9 @@ export interface LoadMessagesOptions {
   offset?: number
 }
 
-@inject()
 export class BrainMessageRepository extends Repository<BrainMessage> {
   static override readonly schema = brainMessageSchema
   static override readonly model = BrainMessage
-
-  // biome-ignore lint/complexity/noUselessConstructor: explicit constructor for @inject() metadata emission.
-  constructor(db: PostgresDatabase, events: EventBus) {
-    super(db, events)
-  }
 
   /**
    * Insert a new turn at the next `turn_index` for the thread. The

@@ -8,26 +8,19 @@
  *     console command (lands with `@strav/cli`). Returns the affected
  *     row count.
  *
- * `@inject()` makes the container resolve `PostgresDatabase` via the
- * Repository base constructor.
+ * Repository takes an options bag (`{ db, events?, registry?, cipher? }`)
+ * so subclasses can't drop a slot — see `docs/code-quality.md` §4.1.
+ * App factories bind via `app.singleton(SessionRepository, (c) => new
+ * SessionRepository({ db: c.resolve(PostgresDatabase), events: c.resolve(EventBus) }))`.
  */
 
-// biome-ignore lint/style/useImportType: PostgresDatabase needs to be a value import — the @inject() decorator below resolves the constructor param via reflect-metadata, which requires the runtime class reference. `import type` erases it; the container then resolves the param to `Object` and the wiring silently breaks.
-import { PostgresDatabase, quoteIdent, Repository } from '@strav/database'
-// biome-ignore lint/style/useImportType: EventBus has the same constraint as PostgresDatabase — reflect-metadata needs the runtime class for @inject() param resolution.
-import { EventBus, inject } from '@strav/kernel'
+import { quoteIdent, Repository } from '@strav/database'
 import { Session } from './session.ts'
 import { sessionSchema } from './session_schema.ts'
 
-@inject()
 export class SessionRepository extends Repository<Session> {
   static override readonly schema = sessionSchema
   static override readonly model = Session
-
-  // biome-ignore lint/complexity/noUselessConstructor: explicit constructor forces TypeScript to emit `design:paramtypes` metadata on the subclass for the @inject() decorator above — without it the container resolves the inherited constructor to no params and the repo never gets its dependencies.
-  constructor(db: PostgresDatabase, events: EventBus) {
-    super(db, events)
-  }
 
   /** Find a session by id only if it's still valid (expires_at > now()). */
   async findValid(id: string, now: Date = new Date()): Promise<Session | null> {

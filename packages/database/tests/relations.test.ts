@@ -174,7 +174,7 @@ describe('QueryBuilder.with — hasMany', () => {
       { id: 'p3', title: 'Post3', user_id: 'u2', created_at: new Date(), updated_at: new Date() },
     ])
     const registry = new SchemaRegistry().registerAll([userSchema, postSchema])
-    const repo = new UserRepository(db as unknown as PostgresDatabase, undefined, registry)
+    const repo = new UserRepository({ db: db as unknown as PostgresDatabase, registry })
     const users = await repo.query().with('posts').get()
     expect(users).toHaveLength(2)
     expect(users[0]?.posts).toHaveLength(2)
@@ -191,7 +191,7 @@ describe('QueryBuilder.with — hasMany', () => {
     ])
     db.setRows('post', [])
     const registry = new SchemaRegistry().registerAll([userSchema, postSchema])
-    const repo = new UserRepository(db as unknown as PostgresDatabase, undefined, registry)
+    const repo = new UserRepository({ db: db as unknown as PostgresDatabase, registry })
     const users = await repo.query().with('posts').get()
     expect(users[0]?.posts).toEqual([])
   })
@@ -200,7 +200,7 @@ describe('QueryBuilder.with — hasMany', () => {
     const db = new SpyDb()
     db.setRows('user', [])
     const registry = new SchemaRegistry().registerAll([userSchema, postSchema])
-    const repo = new UserRepository(db as unknown as PostgresDatabase, undefined, registry)
+    const repo = new UserRepository({ db: db as unknown as PostgresDatabase, registry })
     const users = await repo.query().with('posts').get()
     expect(users).toEqual([])
     expect(db.queries.filter((q) => /FROM "post"/i.test(q.sql))).toEqual([])
@@ -215,7 +215,7 @@ describe('QueryBuilder.with — hasMany', () => {
       { id: 'p1', title: 'P', user_id: 'u1', created_at: new Date(), updated_at: new Date() },
     ])
     const registry = new SchemaRegistry().registerAll([userSchema, postSchema])
-    const repo = new UserRepository(db as unknown as PostgresDatabase, undefined, registry)
+    const repo = new UserRepository({ db: db as unknown as PostgresDatabase, registry })
     const user = await repo.query().with('posts').first()
     expect(user?.posts).toHaveLength(1)
   })
@@ -234,7 +234,7 @@ describe('QueryBuilder.with — belongsTo', () => {
       { id: 'u2', email: 'b@b.com', created_at: new Date(), updated_at: new Date() },
     ])
     const registry = new SchemaRegistry().registerAll([userSchema, postSchema])
-    const repo = new PostRepository(db as unknown as PostgresDatabase, undefined, registry)
+    const repo = new PostRepository({ db: db as unknown as PostgresDatabase, registry })
     const posts = await repo.query().with('author').get()
     expect(posts).toHaveLength(3)
     expect((posts[0]?.author as Record<string, unknown>).id).toBe('u1')
@@ -253,7 +253,7 @@ describe('QueryBuilder.with — belongsTo', () => {
     ])
     db.setRows('user', [])
     const registry = new SchemaRegistry().registerAll([userSchema, postSchema])
-    const repo = new PostRepository(db as unknown as PostgresDatabase, undefined, registry)
+    const repo = new PostRepository({ db: db as unknown as PostgresDatabase, registry })
     const posts = await repo.query().with('author').get()
     expect(posts[0]?.author).toBeNull()
   })
@@ -265,7 +265,7 @@ describe('QueryBuilder.with — error cases', () => {
     db.setRows('user', [
       { id: 'u1', email: 'a@b.com', created_at: new Date(), updated_at: new Date() },
     ])
-    const repo = new UserRepository(db as unknown as PostgresDatabase) // no registry
+    const repo = new UserRepository({ db: db as unknown as PostgresDatabase }) // no registry
     await expect(repo.query().with('posts').get()).rejects.toThrow(/requires a SchemaRegistry/)
   })
 
@@ -275,7 +275,7 @@ describe('QueryBuilder.with — error cases', () => {
       { id: 'u1', email: 'a@b.com', created_at: new Date(), updated_at: new Date() },
     ])
     const registry = new SchemaRegistry().registerAll([userSchema, postSchema])
-    const repo = new UserRepository(db as unknown as PostgresDatabase, undefined, registry)
+    const repo = new UserRepository({ db: db as unknown as PostgresDatabase, registry })
     await expect(repo.query().with('bogus').get()).rejects.toThrow(/no relation named "bogus"/)
   })
 
@@ -307,7 +307,7 @@ describe('QueryBuilder.paginate', () => {
         updated_at: new Date(),
       })),
     )
-    const repo = new UserRepository(db as unknown as PostgresDatabase)
+    const repo = new UserRepository({ db: db as unknown as PostgresDatabase })
     const page1 = await repo.query().paginate({ page: 1, perPage: 2 })
     expect(page1.total).toBe(5)
     expect(page1.page).toBe(1)
@@ -324,7 +324,7 @@ describe('QueryBuilder.paginate', () => {
   test('OFFSET is calculated as (page - 1) * perPage', async () => {
     const db = new SpyDb()
     db.setRows('user', [])
-    const repo = new UserRepository(db as unknown as PostgresDatabase)
+    const repo = new UserRepository({ db: db as unknown as PostgresDatabase })
     await repo.query().paginate({ page: 4, perPage: 10 })
     const select = nonNull(
       db.queries.find((q) => /SELECT .* FROM "user"/i.test(q.sql) && q.sql.includes('LIMIT')),
@@ -336,7 +336,7 @@ describe('QueryBuilder.paginate', () => {
   test('totalPages is 0 when there are no rows', async () => {
     const db = new SpyDb()
     db.setRows('user', [])
-    const repo = new UserRepository(db as unknown as PostgresDatabase)
+    const repo = new UserRepository({ db: db as unknown as PostgresDatabase })
     const page = await repo.query().paginate({ page: 1, perPage: 10 })
     expect(page.total).toBe(0)
     expect(page.totalPages).toBe(0)
@@ -347,14 +347,14 @@ describe('QueryBuilder.paginate', () => {
     db.setRows('user', [
       { id: 'u1', email: 'a@b.com', created_at: new Date(), updated_at: new Date() },
     ])
-    const repo = new UserRepository(db as unknown as PostgresDatabase)
+    const repo = new UserRepository({ db: db as unknown as PostgresDatabase })
     await repo.query().paginate({ page: 1, perPage: 10 })
     expect(db.queries.some((q) => q.sql.includes('LIMIT 10'))).toBe(true)
     expect(db.queries.some((q) => /COUNT\(\*\)/i.test(q.sql))).toBe(true)
   })
 
   test('throws on invalid page / perPage', async () => {
-    const repo = new UserRepository(new SpyDb() as unknown as PostgresDatabase)
+    const repo = new UserRepository({ db: new SpyDb() as unknown as PostgresDatabase })
     await expect(repo.query().paginate({ page: 0, perPage: 10 })).rejects.toThrow(
       /positive integer/,
     )
@@ -373,7 +373,7 @@ describe('QueryBuilder.paginate', () => {
       { id: 'p1', title: 'P', user_id: 'u1', created_at: new Date(), updated_at: new Date() },
     ])
     const registry = new SchemaRegistry().registerAll([userSchema, postSchema])
-    const repo = new UserRepository(db as unknown as PostgresDatabase, undefined, registry)
+    const repo = new UserRepository({ db: db as unknown as PostgresDatabase, registry })
     const result: PaginatedResult<User> = await repo
       .query()
       .with('posts')

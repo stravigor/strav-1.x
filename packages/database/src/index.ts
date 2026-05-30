@@ -127,6 +127,7 @@ export {
   quoteIdent,
   type RawSqlBody,
   Repository,
+  type RepositoryOptions,
   type RepositoryCreatedEvent,
   type RepositoryCreatingEvent,
   type RepositoryDeletedEvent,

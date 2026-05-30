@@ -23,10 +23,8 @@
  * authenticates.
  */
 
-// biome-ignore lint/style/useImportType: PostgresDatabase needs to be a value import — the @inject() decorator below resolves the constructor param via reflect-metadata, which requires the runtime class reference.
-import { PostgresDatabase, quoteIdent, Repository } from '@strav/database'
-// biome-ignore lint/style/useImportType: EventBus has the same constraint as PostgresDatabase — reflect-metadata needs the runtime class for @inject() param resolution.
-import { constantTimeEqual, EventBus, inject, randomToken, sha256, ulid } from '@strav/kernel'
+import { quoteIdent, Repository } from '@strav/database'
+import { constantTimeEqual, randomToken, sha256, ulid } from '@strav/kernel'
 import { AccessToken } from './access_token.ts'
 import { accessTokenSchema } from './access_token_schema.ts'
 
@@ -45,15 +43,9 @@ export interface MintedToken {
   model: AccessToken
 }
 
-@inject()
 export class AccessTokenRepository extends Repository<AccessToken> {
   static override readonly schema = accessTokenSchema
   static override readonly model = AccessToken
-
-  // biome-ignore lint/complexity/noUselessConstructor: explicit constructor forces TypeScript to emit `design:paramtypes` for @inject() — without it the container resolves the inherited params as `Object` and the wiring silently breaks.
-  constructor(db: PostgresDatabase, events: EventBus) {
-    super(db, events)
-  }
 
   /**
    * Mint a fresh token and persist its hash. Returns the plaintext +

@@ -294,7 +294,7 @@ class FakeTokenDb {
 describe('AccessTokenRepository.createToken', () => {
   test('mints a plaintext + persists the SHA-256 hash of the secret half', async () => {
     const db = new FakeTokenDb()
-    const repo = new AccessTokenRepository(db as unknown as PostgresDatabase, new EventBus())
+    const repo = new AccessTokenRepository({ db: db as unknown as PostgresDatabase, events: new EventBus() })
     const minted = await repo.createToken('user-1', 'CI token')
     const parts = minted.plaintext.split('|')
     expect(parts).toHaveLength(2)
@@ -311,7 +311,7 @@ describe('AccessTokenRepository.createToken', () => {
 
   test('sets expires_at when expiresInSeconds is given', async () => {
     const db = new FakeTokenDb()
-    const repo = new AccessTokenRepository(db as unknown as PostgresDatabase, new EventBus())
+    const repo = new AccessTokenRepository({ db: db as unknown as PostgresDatabase, events: new EventBus() })
     const before = Date.now()
     const minted = await repo.createToken('user-1', 'short', { expiresInSeconds: 60 })
     const expiresMs = nonNull(minted.model.expires_at).getTime()
@@ -323,7 +323,7 @@ describe('AccessTokenRepository.createToken', () => {
 describe('AccessTokenRepository.findByPlaintext', () => {
   test('returns null for malformed plaintext (no separator)', async () => {
     const db = new FakeTokenDb()
-    const repo = new AccessTokenRepository(db as unknown as PostgresDatabase, new EventBus())
+    const repo = new AccessTokenRepository({ db: db as unknown as PostgresDatabase, events: new EventBus() })
     expect(await repo.findByPlaintext('no-separator-here')).toBeNull()
     expect(await repo.findByPlaintext('|missing-id')).toBeNull()
     expect(await repo.findByPlaintext('missing-secret|')).toBeNull()
@@ -331,13 +331,13 @@ describe('AccessTokenRepository.findByPlaintext', () => {
 
   test('returns null when the id half references no row', async () => {
     const db = new FakeTokenDb()
-    const repo = new AccessTokenRepository(db as unknown as PostgresDatabase, new EventBus())
+    const repo = new AccessTokenRepository({ db: db as unknown as PostgresDatabase, events: new EventBus() })
     expect(await repo.findByPlaintext('ghost|x')).toBeNull()
   })
 
   test('returns null when the secret hash does not match', async () => {
     const db = new FakeTokenDb()
-    const repo = new AccessTokenRepository(db as unknown as PostgresDatabase, new EventBus())
+    const repo = new AccessTokenRepository({ db: db as unknown as PostgresDatabase, events: new EventBus() })
     const minted = await repo.createToken('user-1', 'name')
     const idPart = nonNull(minted.plaintext.split('|')[0])
     expect(await repo.findByPlaintext(`${idPart}|wrong-secret`)).toBeNull()
@@ -345,7 +345,7 @@ describe('AccessTokenRepository.findByPlaintext', () => {
 
   test('returns the row when the secret matches', async () => {
     const db = new FakeTokenDb()
-    const repo = new AccessTokenRepository(db as unknown as PostgresDatabase, new EventBus())
+    const repo = new AccessTokenRepository({ db: db as unknown as PostgresDatabase, events: new EventBus() })
     const minted = await repo.createToken('user-2', 'name')
     const found = nonNull(await repo.findByPlaintext(minted.plaintext))
     expect(found.id).toBe(minted.model.id)
@@ -354,7 +354,7 @@ describe('AccessTokenRepository.findByPlaintext', () => {
 
   test('returns null when the row is expired', async () => {
     const db = new FakeTokenDb()
-    const repo = new AccessTokenRepository(db as unknown as PostgresDatabase, new EventBus())
+    const repo = new AccessTokenRepository({ db: db as unknown as PostgresDatabase, events: new EventBus() })
     const minted = await repo.createToken('user-3', 'name', { expiresInSeconds: 60 })
     // Look it up with a "now" past the expiry.
     const future = new Date(Date.now() + 120_000)
@@ -366,7 +366,7 @@ describe('AccessTokenRepository.findByPlaintext', () => {
 describe('AccessTokenRepository.revokeAllForUser', () => {
   test('deletes every row matching user_id, returns the count', async () => {
     const db = new FakeTokenDb()
-    const repo = new AccessTokenRepository(db as unknown as PostgresDatabase, new EventBus())
+    const repo = new AccessTokenRepository({ db: db as unknown as PostgresDatabase, events: new EventBus() })
     await repo.createToken('victim', 'a')
     await repo.createToken('victim', 'b')
     await repo.createToken('survivor', 'c')

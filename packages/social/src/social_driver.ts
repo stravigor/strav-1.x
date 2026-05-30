@@ -5,10 +5,48 @@
  * (`config.social.providers[name]`). The manager holds one
  * driver per configured name and routes calls into it.
  *
- * Methods drivers don't support throw `ProviderUnsupportedError`
- * synchronously. The driver's `capabilities` set declares the
- * supported feature set — apps that branch on capability avoid
- * the throw by checking first.
+ * ## Capability gating — the "honest LSP violation" pattern
+ *
+ * Strictly speaking, the interface below violates Liskov substitution
+ * because `FacebookSocialDriver.refresh()` throws synchronously instead
+ * of returning `Promise<OAuthTokens>` (Facebook doesn't issue refresh
+ * tokens). Same shape for any future driver that lacks an operation
+ * its interface declares.
+ *
+ * The framework prefers this trade-off over the alternative (every
+ * provider gets its own narrowed sub-interface, every app does a
+ * `if (isRefreshable(driver))` narrowing dance) for three reasons:
+ *
+ *   1. **Discoverability**: apps see ONE `SocialDriver` interface
+ *      with all the operations a sign-in flow needs. They learn the
+ *      surface once, not per-adapter.
+ *
+ *   2. **Capability flags are the typed truth**: each driver
+ *      declares `capabilities: ReadonlySet<SocialCapability>`. Apps
+ *      that care about portability check the flag and branch — the
+ *      `unsupported` throw becomes the safety net for callers who
+ *      forgot, not the primary API.
+ *
+ *   3. **Failures are loud and synchronous**. Drivers use the
+ *      `unsupported(provider, op, reason?)` helper so the throw
+ *      happens on the function call, NOT after a network round-trip
+ *      had a chance to bill the user / consume rate limit. Apps fail
+ *      fast.
+ *
+ * Apps that want compile-time safety against unsupported ops wrap the
+ * driver themselves:
+ *
+ * ```ts
+ * function refreshableDriver(d: SocialDriver) {
+ *   if (!d.capabilities.has('tokens.refresh')) return null
+ *   return d  // narrowed by convention; refresh() is now safe to call.
+ * }
+ * ```
+ *
+ * A split into `SocialDriver` + `RefreshableSocialDriver` + ... may
+ * land later (`docs/code-quality.md` action item #4) — but doing so
+ * carries the manager's `use(name): SocialDriver` return type through
+ * a wider refactor. Until then, the capability set IS the contract.
  */
 
 import type { OAuthTokens, SocialProfile } from './dto/index.ts'

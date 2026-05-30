@@ -6,16 +6,13 @@
  *   - extend `retrievable(Repository<Article>)`
  *   - declare static schema + model
  *   - declare an explicit constructor that takes the standard
- *     Repository deps PLUS RagManager, and assign `this.rag`
+ *     `RepositoryOptions` bag PLUS RagManager, and assign `this.rag`
  *   - override `toContent` / `toMetadata` to build the
  *     indexable text + filterable metadata from the row shape
  */
 
-// biome-ignore lint/style/useImportType: classes are value imports for @inject() metadata.
-import { PostgresDatabase, Repository } from '@strav/database'
-// biome-ignore lint/style/useImportType: same.
-import { EventBus, inject } from '@strav/kernel'
-// biome-ignore lint/style/useImportType: same.
+import { Repository, type RepositoryOptions } from '@strav/database'
+// biome-ignore lint/style/useImportType: RagManager is needed at runtime — it's stored on `this.rag`.
 import { RagManager, retrievable } from '@strav/rag'
 import { articleSchema } from '../database/schemas/article_schema.ts'
 import { Article } from './article.ts'
@@ -28,13 +25,12 @@ import { Article } from './article.ts'
 type RepoCtor = new (...args: any[]) => Repository<Article>
 const RepoBase = Repository as unknown as RepoCtor
 
-@inject()
 export class ArticleRepository extends retrievable<Article, RepoCtor>(RepoBase) {
   static readonly schema = articleSchema
   static readonly model = Article
 
-  constructor(db: PostgresDatabase, events: EventBus, rag: RagManager) {
-    super(db, events)
+  constructor(options: RepositoryOptions, rag: RagManager) {
+    super(options)
     this.rag = rag
   }
 

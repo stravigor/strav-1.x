@@ -22,7 +22,7 @@
  */
 
 import { HttpKernel, MiddlewareRegistry } from '@strav/http'
-import { type Application, ConfigError, ConfigRepository, ServiceProvider } from '@strav/kernel'
+import { type Application, ConfigError, ConfigRepository, EventBus, ServiceProvider } from '@strav/kernel'
 
 // Side-effect import — installs the HttpContext.auth augmentation so the
 // enricher below typechecks against the widened ctx.
@@ -115,8 +115,22 @@ export class AuthProvider extends ServiceProvider {
     // the container resolves their PostgresDatabase constructor param
     // automatically. Bound here so apps using `driver: 'session' | 'token'`
     // get them for free; apps not using them don't pay (lazy resolution).
-    app.singleton(SessionRepository)
-    app.singleton(AccessTokenRepository)
+    app.singleton(
+      SessionRepository,
+      (c) =>
+        new SessionRepository({
+          db: c.resolve(PostgresDatabase),
+          events: c.resolve(EventBus),
+        }),
+    )
+    app.singleton(
+      AccessTokenRepository,
+      (c) =>
+        new AccessTokenRepository({
+          db: c.resolve(PostgresDatabase),
+          events: c.resolve(EventBus),
+        }),
+    )
     app.singleton(Gate)
 
     app.singleton(MagicLinkManager, (c) => {

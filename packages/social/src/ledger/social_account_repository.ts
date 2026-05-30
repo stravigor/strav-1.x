@@ -26,10 +26,8 @@
  * encrypt/decrypt throws `ConfigError`.
  */
 
-// biome-ignore lint/style/useImportType: PostgresDatabase + SchemaRegistry value imports for @inject() metadata.
-import { PostgresDatabase, quoteIdent, Repository, SchemaRegistry } from '@strav/database'
-// biome-ignore lint/style/useImportType: Cipher + EventBus value imports for @inject() metadata.
-import { Cipher, EventBus, inject, ulid } from '@strav/kernel'
+import { quoteIdent, Repository } from '@strav/database'
+import { ulid } from '@strav/kernel'
 import type { OAuthTokens, SocialProfile } from '../dto/index.ts'
 import { SocialAccount } from './social_account.ts'
 import { socialAccountSchema } from './social_account_schema.ts'
@@ -48,20 +46,9 @@ export interface DisconnectInput {
   provider: string
 }
 
-@inject()
 export class SocialAccountRepository extends Repository<SocialAccount> {
   static override readonly schema = socialAccountSchema
   static override readonly model = SocialAccount
-
-  // biome-ignore lint/complexity/noUselessConstructor: explicit constructor forces TS to emit `design:paramtypes` for @inject(). The fourth param is the Cipher for @encrypt token columns — apps must register EncryptionProvider before this repository resolves.
-  constructor(
-    db: PostgresDatabase,
-    events: EventBus,
-    registry?: SchemaRegistry,
-    cipher?: Cipher,
-  ) {
-    super(db, events, registry, cipher)
-  }
 
   /**
    * Upsert a social account by `(provider, provider_user_id)`.

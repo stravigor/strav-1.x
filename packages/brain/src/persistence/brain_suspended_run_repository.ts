@@ -12,10 +12,7 @@
  *     filtered by `user_id` or `thread_id`.
  */
 
-// biome-ignore lint/style/useImportType: PostgresDatabase value import for @inject().
-import { PostgresDatabase, Repository } from '@strav/database'
-// biome-ignore lint/style/useImportType: EventBus value import for @inject().
-import { EventBus, inject } from '@strav/kernel'
+import { Repository } from '@strav/database'
 import { BrainSuspendedRun, type BrainSuspendedRunStatus } from './brain_suspended_run.ts'
 import { brainSuspendedRunSchema } from './schema/brain_suspended_run_schema.ts'
 
@@ -29,15 +26,9 @@ export interface ListPendingOptions {
   offset?: number
 }
 
-@inject()
 export class BrainSuspendedRunRepository extends Repository<BrainSuspendedRun> {
   static override readonly schema = brainSuspendedRunSchema
   static override readonly model = BrainSuspendedRun
-
-  // biome-ignore lint/complexity/noUselessConstructor: explicit constructor for @inject() metadata emission.
-  constructor(db: PostgresDatabase, events: EventBus) {
-    super(db, events)
-  }
 
   /** Flip status to `resumed` after `brain.resumeTools(state, ...)` succeeds. */
   async markResumed(run: BrainSuspendedRun): Promise<BrainSuspendedRun> {

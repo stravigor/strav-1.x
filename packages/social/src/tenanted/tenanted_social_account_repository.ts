@@ -11,10 +11,8 @@
  * branching on a tenancy flag.
  */
 
-// biome-ignore lint/style/useImportType: PostgresDatabase value import for @inject() metadata.
-import { PostgresDatabase, quoteIdent, Repository, SchemaRegistry } from '@strav/database'
-// biome-ignore lint/style/useImportType: Cipher + EventBus value imports for @inject() metadata.
-import { Cipher, EventBus, inject, ulid } from '@strav/kernel'
+import { quoteIdent, Repository } from '@strav/database'
+import { ulid } from '@strav/kernel'
 import type { OAuthTokens, SocialProfile } from '../dto/index.ts'
 import { SocialAccountAlreadyLinkedError } from '../ledger/social_account_repository.ts'
 import { TenantedSocialAccount } from './tenanted_social_account.ts'
@@ -32,20 +30,9 @@ export interface DisconnectInput {
   provider: string
 }
 
-@inject()
 export class TenantedSocialAccountRepository extends Repository<TenantedSocialAccount> {
   static override readonly schema = tenantedSocialAccountSchema
   static override readonly model = TenantedSocialAccount
-
-  // biome-ignore lint/complexity/noUselessConstructor: explicit constructor forces TS to emit `design:paramtypes` for @inject(). The fourth param is the Cipher for @encrypt token columns.
-  constructor(
-    db: PostgresDatabase,
-    events: EventBus,
-    registry?: SchemaRegistry,
-    cipher?: Cipher,
-  ) {
-    super(db, events, registry, cipher)
-  }
 
   async connect(input: ConnectInput): Promise<TenantedSocialAccount> {
     const existing = await this.findByProviderIdentity(

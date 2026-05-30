@@ -249,7 +249,7 @@ describe('@cast — Repository.hydrate runs fromDb', () => {
       created_at: new Date(),
       updated_at: new Date(),
     }
-    const repo = new OrderRepository(db as unknown as PostgresDatabase)
+    const repo = new OrderRepository({ db: db as unknown as PostgresDatabase })
     const order = await repo.find('o-1')
     expect(order).not.toBeNull()
     expect(order?.total).toBeInstanceOf(Money)
@@ -260,7 +260,7 @@ describe('@cast — Repository.hydrate runs fromDb', () => {
     const db = new SpyDb()
     const created = new Date('2026-05-28T10:00:00Z')
     db.scriptedRow = { id: 'o-1', total: '12.00', created_at: created, updated_at: created }
-    const repo = new OrderRepository(db as unknown as PostgresDatabase)
+    const repo = new OrderRepository({ db: db as unknown as PostgresDatabase })
     const order = await repo.find('o-1')
     expect(order?.id).toBe('o-1')
     expect(order?.created_at).toBe(created)
@@ -276,7 +276,7 @@ describe('@cast — Repository.create / update run toDb', () => {
       created_at: new Date(),
       updated_at: new Date(),
     }
-    const repo = new OrderRepository(db as unknown as PostgresDatabase)
+    const repo = new OrderRepository({ db: db as unknown as PostgresDatabase })
     await repo.create({ id: 'o-1', total: new Money(50) } as unknown as Partial<Order>)
     const insert = nonNull(db.queriedOne.find((q) => q.sql.startsWith('INSERT')))
     // Params include the casted '50.00' string, not the Money object.
@@ -292,7 +292,7 @@ describe('@cast — Repository.create / update run toDb', () => {
       created_at: new Date(),
       updated_at: new Date(),
     }
-    const repo = new OrderRepository(db as unknown as PostgresDatabase)
+    const repo = new OrderRepository({ db: db as unknown as PostgresDatabase })
     const existing = new Order()
     existing.id = 'o-1'
     existing.total = new Money(50)
@@ -493,7 +493,7 @@ describe('@ulid — Repository.create auto-generates + validates', () => {
       created_at: new Date(),
       updated_at: new Date(),
     }
-    const repo = new JobRepository(db as unknown as PostgresDatabase)
+    const repo = new JobRepository({ db: db as unknown as PostgresDatabase })
     await repo.create({ id: 'j-1' } as unknown as Partial<Job>)
     const insert = nonNull(db.queriedOne.find((q) => q.sql.startsWith('INSERT')))
     // emitInsert sees the auto-filled ULID — it's in the params positional list.
@@ -510,7 +510,7 @@ describe('@ulid — Repository.create auto-generates + validates', () => {
       created_at: new Date(),
       updated_at: new Date(),
     }
-    const repo = new JobRepository(db as unknown as PostgresDatabase)
+    const repo = new JobRepository({ db: db as unknown as PostgresDatabase })
     await repo.create({ id: 'j-1', correlation_id: supplied } as unknown as Partial<Job>)
     const insert = nonNull(db.queriedOne.find((q) => q.sql.startsWith('INSERT')))
     expect(insert.params).toContain(supplied)
@@ -518,7 +518,7 @@ describe('@ulid — Repository.create auto-generates + validates', () => {
 
   test('Repository.create rejects a non-ULID before hitting the DB', async () => {
     const db = new SpyDb()
-    const repo = new JobRepository(db as unknown as PostgresDatabase)
+    const repo = new JobRepository({ db: db as unknown as PostgresDatabase })
     await expect(
       repo.create({ id: 'j-1', correlation_id: 'nope' } as unknown as Partial<Job>),
     ).rejects.toBeInstanceOf(ValidationError)
@@ -529,7 +529,7 @@ describe('@ulid — Repository.create auto-generates + validates', () => {
 describe('@ulid — Repository.update validates but does not auto-generate', () => {
   test('Repository.update rejects a non-ULID before hitting the DB', async () => {
     const db = new SpyDb()
-    const repo = new JobRepository(db as unknown as PostgresDatabase)
+    const repo = new JobRepository({ db: db as unknown as PostgresDatabase })
     const existing = new Job()
     existing.id = 'j-1'
     existing.correlation_id = '01HZ8N3ZQVYJEXMP9YK0F0F0F0'
@@ -550,7 +550,7 @@ describe('@ulid — Repository.update validates but does not auto-generate', () 
       created_at: new Date(),
       updated_at: new Date(),
     }
-    const repo = new JobRepository(db as unknown as PostgresDatabase)
+    const repo = new JobRepository({ db: db as unknown as PostgresDatabase })
     const existing = new Job()
     existing.id = 'j-1'
     existing.correlation_id = '01HZ8N3ZQVYJEXMP9YK0F0F0F0'
@@ -746,12 +746,7 @@ describe('@encrypt — Repository.create encrypts on write', () => {
       created_at: new Date(),
       updated_at: new Date(),
     }
-    const repo = new SecretRepository(
-      db as unknown as PostgresDatabase,
-      undefined,
-      undefined,
-      realCipher,
-    )
+    const repo = new SecretRepository({ db: db as unknown as PostgresDatabase, cipher: realCipher })
     await repo.create({ id: 's-1', ssn: '123-45-6789' } as unknown as Partial<Secret>)
     const insert = nonNull(db.queriedOne.find((q) => q.sql.startsWith('INSERT')))
     const ssnParam = insert.params.find((p) => p instanceof Uint8Array)
@@ -767,12 +762,7 @@ describe('@encrypt — Repository.create encrypts on write', () => {
       created_at: new Date(),
       updated_at: new Date(),
     }
-    const repo = new SecretRepository(
-      db as unknown as PostgresDatabase,
-      undefined,
-      undefined,
-      realCipher,
-    )
+    const repo = new SecretRepository({ db: db as unknown as PostgresDatabase, cipher: realCipher })
     const model = await repo.create({ id: 's-1', ssn: '123-45-6789' } as unknown as Partial<Secret>)
     expect(model.ssn).toBe('123-45-6789')
   })
@@ -787,12 +777,7 @@ describe('@encrypt — Repository.find decrypts on read', () => {
       created_at: new Date(),
       updated_at: new Date(),
     }
-    const repo = new SecretRepository(
-      db as unknown as PostgresDatabase,
-      undefined,
-      undefined,
-      realCipher,
-    )
+    const repo = new SecretRepository({ db: db as unknown as PostgresDatabase, cipher: realCipher })
     const found = await repo.find('s-1')
     expect(found?.ssn).toBe('top-secret')
   })
@@ -806,12 +791,7 @@ describe('@encrypt — Repository.find decrypts on read', () => {
       created_at: new Date(),
       updated_at: new Date(),
     }
-    const repo = new SecretRepository(
-      db as unknown as PostgresDatabase,
-      undefined,
-      undefined,
-      realCipher,
-    )
+    const repo = new SecretRepository({ db: db as unknown as PostgresDatabase, cipher: realCipher })
     const found = await repo.find('s-1')
     expect(found?.ssn).toBe('postgres-bytea')
   })
@@ -826,12 +806,7 @@ describe('@encrypt — Repository.update', () => {
       created_at: new Date(),
       updated_at: new Date(),
     }
-    const repo = new SecretRepository(
-      db as unknown as PostgresDatabase,
-      undefined,
-      undefined,
-      realCipher,
-    )
+    const repo = new SecretRepository({ db: db as unknown as PostgresDatabase, cipher: realCipher })
     const existing = new Secret()
     existing.id = 's-1'
     existing.ssn = 'old-value'
@@ -848,7 +823,7 @@ describe('@encrypt — Repository.update', () => {
 describe('@encrypt — Repository without a Cipher', () => {
   test('Repository with @encrypt model + no cipher throws on create', async () => {
     const db = new SpyDb()
-    const repo = new UnconfiguredSecretRepository(db as unknown as PostgresDatabase)
+    const repo = new UnconfiguredSecretRepository({ db: db as unknown as PostgresDatabase })
     await expect(
       repo.create({ id: 's-1', ssn: 'should-fail' } as unknown as Partial<Secret>),
     ).rejects.toThrow(/no Cipher is wired/)
@@ -857,12 +832,10 @@ describe('@encrypt — Repository without a Cipher', () => {
 
   test('Repository with @encrypt model + base Cipher throws on first encrypt call', async () => {
     const db = new SpyDb()
-    const repo = new SecretRepository(
-      db as unknown as PostgresDatabase,
-      undefined,
-      undefined,
-      new Cipher(), // unconfigured base
-    )
+    const repo = new SecretRepository({
+      db: db as unknown as PostgresDatabase,
+      cipher: new Cipher(), // unconfigured base
+    })
     await expect(
       repo.create({ id: 's-1', ssn: 'still-fails' } as unknown as Partial<Secret>),
     ).rejects.toThrow(/no encryption key/i)
@@ -881,7 +854,7 @@ describe('@encrypt — Repository without a Cipher', () => {
       static override readonly schema = secretSchema
       static override readonly model: ModelClass = PlainSecret as unknown as ModelClass
     }
-    const repo = new PlainRepo(db as unknown as PostgresDatabase)
+    const repo = new PlainRepo({ db: db as unknown as PostgresDatabase })
     const created = await repo.create({
       id: 's-1',
       ssn: 'cleartext',

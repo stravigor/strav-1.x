@@ -214,8 +214,10 @@ describe.skipIf(!PG_AVAILABLE)('M5 e2e: rag end-to-end against Postgres + pgvect
 
     tenants = app.resolve(TenantManager)
     articles = new ArticleRepository(
-      app.resolve(PostgresDatabase),
-      app.resolve(EventBus),
+      {
+        db: app.resolve(PostgresDatabase),
+        events: app.resolve(EventBus),
+      },
       app.resolve(RagManager),
     )
 

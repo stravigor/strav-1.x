@@ -76,10 +76,10 @@ export class PaymentProvider extends ServiceProvider {
     app.singleton(
       PaymentWebhookEventRepository,
       (c) =>
-        new PaymentWebhookEventRepository(
-          c.resolve(PostgresDatabase),
-          c.resolve(EventBus),
-        ),
+        new PaymentWebhookEventRepository({
+          db: c.resolve(PostgresDatabase),
+          events: c.resolve(EventBus),
+        }),
     )
   }
 

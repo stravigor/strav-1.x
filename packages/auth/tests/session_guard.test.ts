@@ -388,7 +388,7 @@ class SpyDb {
 describe('SessionRepository.findValid', () => {
   test('emits a SELECT with id = $1 AND expires_at > $2 LIMIT 1', async () => {
     const db = new SpyDb()
-    const repo = new SessionRepository(db as unknown as PostgresDatabase, new EventBus())
+    const repo = new SessionRepository({ db: db as unknown as PostgresDatabase, events: new EventBus() })
     const now = new Date('2026-05-28T12:00:00Z')
     await repo.findValid('sess-x', now)
     const lastSelect = nonNull(db.queries.find((q) => q.sql.startsWith('SELECT')))
@@ -404,7 +404,7 @@ describe('SessionRepository.deleteExpired', () => {
   test('emits DELETE WHERE expires_at <= $1, returns affected count', async () => {
     const db = new SpyDb()
     db.scriptedExecute = 3
-    const repo = new SessionRepository(db as unknown as PostgresDatabase, new EventBus())
+    const repo = new SessionRepository({ db: db as unknown as PostgresDatabase, events: new EventBus() })
     const cutoff = new Date('2026-05-28T12:00:00Z')
     const removed = await repo.deleteExpired(cutoff)
     expect(removed).toBe(3)
@@ -418,7 +418,7 @@ describe('SessionRepository.killAllForUser', () => {
   test('emits DELETE WHERE user_id = $1, returns affected count', async () => {
     const db = new SpyDb()
     db.scriptedExecute = 5
-    const repo = new SessionRepository(db as unknown as PostgresDatabase, new EventBus())
+    const repo = new SessionRepository({ db: db as unknown as PostgresDatabase, events: new EventBus() })
     const removed = await repo.killAllForUser('user-1')
     expect(removed).toBe(5)
     const exec = nonNull(
@@ -441,7 +441,7 @@ describe('SessionRepository.patchPayload', () => {
       created_at: new Date(),
       updated_at: new Date(),
     }
-    const repo = new SessionRepository(db as unknown as PostgresDatabase, new EventBus())
+    const repo = new SessionRepository({ db: db as unknown as PostgresDatabase, events: new EventBus() })
     const existing = makeSession('sess-1', 'u', new Date(Date.now() + 60_000))
     existing.payload = { csrf_token: 'abc' }
     const next = await repo.patchPayload(existing, { locale: 'en' })
@@ -462,7 +462,7 @@ describe('SessionRepository.patchPayload', () => {
       created_at: new Date(),
       updated_at: new Date(),
     }
-    const repo = new SessionRepository(db as unknown as PostgresDatabase, new EventBus())
+    const repo = new SessionRepository({ db: db as unknown as PostgresDatabase, events: new EventBus() })
     const fresh = makeSession('sess-2', 'u', new Date(Date.now() + 60_000))
     // .payload is null by default — Model class field defaults to undefined
     // but the spread `...(null ?? {})` handles it.
@@ -490,7 +490,7 @@ describe('SessionRepository.patchPayload', () => {
     events.on('session.updated', () => {
       fired.push('updated')
     })
-    const repo = new SessionRepository(db as unknown as PostgresDatabase, events)
+    const repo = new SessionRepository({ db: db as unknown as PostgresDatabase, events })
     const s = makeSession('sess-3', 'u', new Date(Date.now() + 60_000))
     await repo.patchPayload(s, { x: 1 })
     expect(fired).toEqual(['updating', 'updated'])

@@ -4,13 +4,12 @@
  * its collection without juggling `RagManager` calls by hand.
  *
  * ```ts
- * @inject()
  * export class ArticleRepository extends retrievable(Repository<Article>) {
  *   static override readonly schema = articleSchema
  *   static override readonly model = Article
  *
- *   constructor(db: PostgresDatabase, events: EventBus, rag: RagManager) {
- *     super(db, events)
+ *   constructor(options: RepositoryOptions, rag: RagManager) {
+ *     super(options)
  *     this.rag = rag
  *   }
  *

@@ -29,7 +29,13 @@ export {
   type OpenAIResponsesProviderConfig,
   type ProviderConfig,
 } from './brain_config.ts'
-export { BrainError } from './brain_error.ts'
+export {
+  BrainConfigError,
+  BrainError,
+  BrainProviderError,
+  BrainUsageError,
+  UnknownProviderError,
+} from './brain_error.ts'
 export {
   type AgentResolver,
   BrainManager,

@@ -193,7 +193,7 @@ describe.skipIf(!PG_AVAILABLE)('integration: Postgres smoke', () => {
 
     // Acme creates a post — only Acme should see it via Repository.
     await tenants.withTenant('01TENANTAAA000000000000001', async () => {
-      const posts = new PostRepository(db)
+      const posts = new PostRepository({ db })
       await posts.create({
         tenant_id: '01TENANTAAA000000000000001',
         title: 'Acme welcome',
@@ -202,7 +202,7 @@ describe.skipIf(!PG_AVAILABLE)('integration: Postgres smoke', () => {
 
     // Globex creates its own post.
     await tenants.withTenant('01TENANTBBB000000000000002', async () => {
-      const posts = new PostRepository(db)
+      const posts = new PostRepository({ db })
       await posts.create({
         tenant_id: '01TENANTBBB000000000000002',
         title: 'Globex welcome',
@@ -211,7 +211,7 @@ describe.skipIf(!PG_AVAILABLE)('integration: Postgres smoke', () => {
 
     // From Acme's tenant scope, only Acme rows are visible.
     const acmeView = await tenants.withTenant('01TENANTAAA000000000000001', async () => {
-      const posts = new PostRepository(db)
+      const posts = new PostRepository({ db })
       return posts.all()
     })
     expect(acmeView).toHaveLength(1)
@@ -219,7 +219,7 @@ describe.skipIf(!PG_AVAILABLE)('integration: Postgres smoke', () => {
 
     // From Globex's tenant scope, only Globex rows.
     const globexView = await tenants.withTenant('01TENANTBBB000000000000002', async () => {
-      const posts = new PostRepository(db)
+      const posts = new PostRepository({ db })
       return posts.all()
     })
     expect(globexView).toHaveLength(1)
@@ -231,7 +231,7 @@ describe.skipIf(!PG_AVAILABLE)('integration: Postgres smoke', () => {
 
     // Acme inserts three ledger rows.
     const acmeRows = await tenants.withTenant('01TENANTAAA000000000000001', async () => {
-      const ledgers = new LedgerRepository(db)
+      const ledgers = new LedgerRepository({ db })
       const a = await ledgers.create({
         tenant_id: '01TENANTAAA000000000000001',
         description: 'opening balance',
@@ -251,7 +251,7 @@ describe.skipIf(!PG_AVAILABLE)('integration: Postgres smoke', () => {
 
     // Globex inserts two ledger rows — ids start fresh at 1 (per-tenant).
     const globexRows = await tenants.withTenant('01TENANTBBB000000000000002', async () => {
-      const ledgers = new LedgerRepository(db)
+      const ledgers = new LedgerRepository({ db })
       const a = await ledgers.create({
         tenant_id: '01TENANTBBB000000000000002',
         description: 'globex opening',

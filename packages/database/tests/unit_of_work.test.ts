@@ -184,7 +184,7 @@ class SpyDb implements Database {
 describe('Repository — explicit { tx } parameter', () => {
   test('routes through the supplied tx, not the default db', async () => {
     const db = new SpyDb()
-    const repo = new UserRepository(db as unknown as PostgresDatabase, new EventBus())
+    const repo = new UserRepository({ db: db as unknown as PostgresDatabase, events: new EventBus() })
     await db.transaction(async (tx) => {
       await repo.find('id-1', { tx })
     })
@@ -194,7 +194,7 @@ describe('Repository — explicit { tx } parameter', () => {
 
   test('without opts, uses the default db (no transaction)', async () => {
     const db = new SpyDb()
-    const repo = new UserRepository(db as unknown as PostgresDatabase, new EventBus())
+    const repo = new UserRepository({ db: db as unknown as PostgresDatabase, events: new EventBus() })
     await repo.find('id-1')
     expect(db.defaultCalls.length).toBe(1)
     expect(db.txCalls.length).toBe(0)
@@ -205,7 +205,7 @@ describe('Repository — ambient UoW.run scope', () => {
   test('Repository.find inside uow.run uses the tx automatically', async () => {
     const db = new SpyDb()
     const uow = new UnitOfWork(db, new EventBus())
-    const repo = new UserRepository(db as unknown as PostgresDatabase, new EventBus())
+    const repo = new UserRepository({ db: db as unknown as PostgresDatabase, events: new EventBus() })
     await uow.run(async () => {
       await repo.find('id-1')
     })
@@ -216,7 +216,7 @@ describe('Repository — ambient UoW.run scope', () => {
   test('explicit { tx } overrides the ambient scope', async () => {
     const db = new SpyDb()
     const uow = new UnitOfWork(db, new EventBus())
-    const repo = new UserRepository(db as unknown as PostgresDatabase, new EventBus())
+    const repo = new UserRepository({ db: db as unknown as PostgresDatabase, events: new EventBus() })
     // Build an explicit "other" tx that ISN'T the one UoW will open.
     const otherTx: DatabaseExecutor = {
       query: async () => [],
@@ -253,7 +253,7 @@ describe('Repository post-events inside UoW.run', () => {
       fired.push('created')
     })
     const uow = new UnitOfWork(db, events)
-    const repo = new UserRepository(db as unknown as PostgresDatabase, events)
+    const repo = new UserRepository({ db: db as unknown as PostgresDatabase, events })
     await uow.run(async () => {
       await repo.create({ email: 'a@b.com' } as Partial<User>)
       // Inside the callback, the event hasn't fired yet — it's queued.
@@ -271,7 +271,7 @@ describe('Repository post-events inside UoW.run', () => {
       fired.push('created')
     })
     const uow = new UnitOfWork(db, events)
-    const repo = new UserRepository(db as unknown as PostgresDatabase, events)
+    const repo = new UserRepository({ db: db as unknown as PostgresDatabase, events })
     await expect(
       uow.run(async () => {
         await repo.create({ email: 'a@b.com' } as Partial<User>)
@@ -288,7 +288,7 @@ describe('Repository post-events inside UoW.run', () => {
       throw new Error('veto')
     })
     const uow = new UnitOfWork(db, events)
-    const repo = new UserRepository(db as unknown as PostgresDatabase, events)
+    const repo = new UserRepository({ db: db as unknown as PostgresDatabase, events })
     await expect(
       uow.run(async () => {
         await repo.create({ email: 'a@b.com' } as Partial<User>)
@@ -306,7 +306,7 @@ describe('Repository post-events inside UoW.run', () => {
       throw new Error('listener-failed')
     })
     const uow = new UnitOfWork(db, events)
-    const repo = new UserRepository(db as unknown as PostgresDatabase, events)
+    const repo = new UserRepository({ db: db as unknown as PostgresDatabase, events })
     // UoW.run resolves — listener errors on non-cancelable events route
     // through the bus's `onListenerError` rather than propagating.
     await uow.run(async () => {
@@ -327,7 +327,7 @@ describe('Repository post-events inside UoW.run', () => {
     events.on('user.created', () => {
       fired.push('created')
     })
-    const repo = new UserRepository(db as unknown as PostgresDatabase, events)
+    const repo = new UserRepository({ db: db as unknown as PostgresDatabase, events })
     await repo.create({ email: 'a@b.com' } as Partial<User>)
     expect(fired).toEqual(['created'])
   })
@@ -343,7 +343,7 @@ describe('Repository post-events inside UoW.run', () => {
       fired.push('B')
     })
     const uow = new UnitOfWork(db, events)
-    const repo = new UserRepository(db as unknown as PostgresDatabase, events)
+    const repo = new UserRepository({ db: db as unknown as PostgresDatabase, events })
     await uow.run(async () => {
       await repo.create({ email: 'a@b.com' } as Partial<User>)
       await repo.create({ email: 'a@b.com' } as Partial<User>)

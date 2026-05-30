@@ -14,17 +14,21 @@ export class MakeRepository extends MakeCommand {
     const base = pascal(name).replace(/Repository$/, '')
     const cls = `${base}Repository`
     const model = base
-    return `import { inject } from '@strav/kernel'
-import { type Database, PostgresDatabase, Repository } from '@strav/database'
+    return `import { Repository } from '@strav/database'
 import { ${model} } from '../models/${snake(model)}.ts'
 import { ${snake(model)}Schema } from '../../database/schemas/${snake(model)}_schema.ts'
 
-@inject()
 export class ${cls} extends Repository<${model}> {
-  constructor(db: PostgresDatabase) {
-    super(db, ${snake(model)}Schema)
-  }
+  static override readonly schema = ${snake(model)}Schema
+  static override readonly model = ${model}
 }
+
+// Bind in your ServiceProvider:
+//
+//   app.singleton(${cls}, (c) => new ${cls}({
+//     db: c.resolve(PostgresDatabase),
+//     events: c.resolve(EventBus),
+//   }))
 `
   }
 }

@@ -7,6 +7,7 @@ import {
   LoggerProvider,
   ServiceProvider,
 } from '@strav/kernel'
+import { PostRepository } from '../app/Repositories/post_repository.ts'
 import { TenantMiddleware } from '../app/Http/Middleware/tenant_middleware.ts'
 import { registerRoutes } from '../app/Http/routes.ts'
 import appConfig from '../config/app.ts'
@@ -40,6 +41,21 @@ class AppProvider extends ServiceProvider {
     app.singleton(
       TenantManager,
       (c) => new TenantManager(c.resolve(PostgresDatabase), c.resolve(EventBus)),
+    )
+
+    // Repositories — bind explicitly. Repository's options-bag
+    // constructor (`{ db, events?, registry?, cipher? }`) doesn't
+    // round-trip through @inject() auto-construction (the param is
+    // an interface, not a runtime class). PostsController declares
+    // `posts: PostRepository` and the container resolves it via this
+    // binding.
+    app.singleton(
+      PostRepository,
+      (c) =>
+        new PostRepository({
+          db: c.resolve(PostgresDatabase),
+          events: c.resolve(EventBus),
+        }),
     )
 
     // Middleware + routes register here (not in boot()) because

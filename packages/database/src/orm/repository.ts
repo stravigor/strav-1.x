@@ -117,6 +117,18 @@ export interface RepositoryRestoredEvent<TModel> {
   model: TModel
 }
 
+/**
+ * Repository constructor options. Single bag instead of positional
+ * args so subclasses + factories can't drop a slot (was the silent
+ * footgun before 2026-05; see `docs/code-quality.md` §4.1).
+ */
+export interface RepositoryOptions {
+  db: PostgresDatabase
+  events?: EventBus
+  registry?: SchemaRegistry
+  cipher?: Cipher
+}
+
 export abstract class Repository<TModel extends object> {
   /** The schema this Repository operates on. Subclasses MUST set this. */
   static readonly schema: Schema
@@ -125,26 +137,35 @@ export abstract class Repository<TModel extends object> {
 
   protected readonly schema: Schema
   protected readonly modelCtor: ModelClass<TModel & { constructor: ModelClass<TModel> }>
+  protected readonly db: PostgresDatabase
+  protected readonly events?: EventBus
+  protected readonly registry?: SchemaRegistry
+  protected readonly cipher?: Cipher
 
   /**
-   * `events` is optional so subclasses that don't need lifecycle hooks can
-   * stay as-is (and so apps under test can construct a Repository without
-   * wiring a bus). `registry` is optional too — apps that use eager
-   * loading via `query().with(...)` need it; everything else works without.
-   * `cipher` is auto-resolved when `EncryptionProvider` is registered;
-   * apps without encryption see the base `Cipher` class, which throws
-   * on first use — so Models with `@encrypt` fields fail loudly at the
-   * first encrypt/decrypt call, while Models without `@encrypt` never
-   * trip it. All four are auto-resolved by the container when the
-   * subclass's constructor declares them (the @inject() flow reads
-   * paramtypes via reflect-metadata).
+   * Options bag — every dep is optional so subclasses pick what they
+   * need. The bag form replaced a positional `(db, events?, registry?,
+   * cipher?)` signature in 2026-05 because forwarding subclasses kept
+   * dropping `registry` and silently landing `cipher` in the wrong slot
+   * — `@encrypt` fields then failed at runtime with "no Cipher is
+   * wired". The bag eliminates that whole class of bug (see
+   * `docs/code-quality.md` §4.1).
+   *
+   *   - `db` — required; PostgreSQL connection.
+   *   - `events` — optional; the lifecycle bus subclasses dispatch to.
+   *     Tests construct a Repository without it.
+   *   - `registry` — optional; required by apps that use eager loading
+   *     via `query().with(...)`.
+   *   - `cipher` — optional; resolved automatically when
+   *     `EncryptionProvider` is registered. Models without `@encrypt`
+   *     never trip the no-cipher path; Models with `@encrypt` throw
+   *     loudly on first call, naming `EncryptionProvider` in the message.
    */
-  constructor(
-    protected readonly db: PostgresDatabase,
-    protected readonly events?: EventBus,
-    protected readonly registry?: SchemaRegistry,
-    protected readonly cipher?: Cipher,
-  ) {
+  constructor(options: RepositoryOptions) {
+    this.db = options.db
+    if (options.events) this.events = options.events
+    if (options.registry) this.registry = options.registry
+    if (options.cipher) this.cipher = options.cipher
     const Ctor = this.constructor as unknown as {
       schema?: Schema
       model?: ModelClass<TModel & { constructor: ModelClass<TModel> }>

@@ -25,7 +25,7 @@
  * class OrderRepository extends stateful(Repository<Order>, orderMachine) {
  *   static override readonly schema = orderSchema
  *   static override readonly model = Order
- *   constructor(db: PostgresDatabase, events: EventBus) { super(db, events) }
+ *   // (No explicit constructor needed — Repository's options-bag form is inherited.)
  * }
  *
  * const order = await orderRepo.find('o1')

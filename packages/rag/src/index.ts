@@ -19,7 +19,7 @@ export {
 export {
   applyRagVectorMigration,
   type ApplyRagVectorMigrationOptions,
-} from './migrations.ts'
+} from './apply_rag_vector_migration.ts'
 export {
   CollectionNotFoundError,
   EmbeddingError,

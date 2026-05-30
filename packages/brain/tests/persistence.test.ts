@@ -124,7 +124,7 @@ describe('BrainMessageRepository.appendTurn', () => {
       response_id: null,
       created_at: new Date(),
     }]
-    const repo = new BrainMessageRepository(asPg(db), new EventBus())
+    const repo = new BrainMessageRepository({ db: asPg(db), events: new EventBus() })
     await repo.appendTurn({
       threadId: 'th-1',
       role: 'user',
@@ -161,7 +161,7 @@ describe('BrainMessageRepository.appendTurn', () => {
       response_id: null,
       created_at: new Date(),
     }]
-    const repo = new BrainMessageRepository(asPg(db), new EventBus())
+    const repo = new BrainMessageRepository({ db: asPg(db), events: new EventBus() })
     const out = await repo.appendTurn({
       threadId: 'th-2',
       role: 'assistant',
@@ -183,7 +183,7 @@ describe('BrainMessageRepository.appendTurn', () => {
 describe('BrainMessageRepository.loadForThread', () => {
   test('SELECTs by thread_id ORDER BY turn_index ASC', async () => {
     const db = new SpyDb()
-    const repo = new BrainMessageRepository(asPg(db), new EventBus())
+    const repo = new BrainMessageRepository({ db: asPg(db), events: new EventBus() })
     await repo.loadForThread('th-1')
     const select = db.queries.find((q) => q.sql.startsWith('SELECT'))
     expect(select?.sql).toContain('"brain_message"')
@@ -209,7 +209,7 @@ describe('BrainThreadRepository.updateResponseId', () => {
       created_at: new Date(),
       updated_at: new Date(),
     }]
-    const repo = new BrainThreadRepository(asPg(db), new EventBus())
+    const repo = new BrainThreadRepository({ db: asPg(db), events: new EventBus() })
     const thread = Object.assign(new BrainThread(), {
       id: 'th-1',
       tenant_id: 't',
@@ -234,7 +234,7 @@ describe('BrainThreadRepository.updateResponseId', () => {
 describe('BrainSuspendedRunRepository.listPending', () => {
   test('SELECTs where status=pending, with optional user_id and thread_id filters', async () => {
     const db = new SpyDb()
-    const repo = new BrainSuspendedRunRepository(asPg(db), new EventBus())
+    const repo = new BrainSuspendedRunRepository({ db: asPg(db), events: new EventBus() })
     await repo.listPending({ userId: 'u1', threadId: 'th-1', limit: 10 })
     const select = db.queries.find((q) => q.sql.startsWith('SELECT'))
     expect(select?.sql).toContain('"brain_suspended_run"')
@@ -476,9 +476,9 @@ describe('DatabaseBrainStore', () => {
         created_at: now, updated_at: now,
       },
     ]
-    const threads = new BrainThreadRepository(asPg(db), new EventBus())
-    const messages = new BrainMessageRepository(asPg(db), new EventBus())
-    const suspended = new BrainSuspendedRunRepository(asPg(db), new EventBus())
+    const threads = new BrainThreadRepository({ db: asPg(db), events: new EventBus() })
+    const messages = new BrainMessageRepository({ db: asPg(db), events: new EventBus() })
+    const suspended = new BrainSuspendedRunRepository({ db: asPg(db), events: new EventBus() })
     const store = new DatabaseBrainStore(threads, messages, suspended)
     await store.appendTurn('th-1', {
       role: 'assistant',

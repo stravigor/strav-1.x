@@ -104,6 +104,29 @@ export class BrainManager {
   }
 
   /**
+   * Register an additional provider after construction. Apps that
+   * wire a custom adapter (a fine-tuned model server, a fork of
+   * Anthropic with extra knobs, an internal LLM) use this to add it
+   * to the registry without going through `config.brain.providers`.
+   *
+   * Overwrites any existing provider under the same name.
+   *
+   * ```ts
+   * brain.extend('internal', new InternalLlmProvider({ baseUrl }))
+   * const reply = await brain.chat(messages, { provider: 'internal' })
+   * ```
+   *
+   * Mirrors `RagManager.extend(name, factory)` / `PaymentManager.extend(name, factory)`
+   * — the OCP escape hatch every multi-driver Strav manager exposes.
+   */
+  extend(name: string, provider: Provider): void {
+    if (!name) {
+      throw new BrainError('BrainManager.extend: provider name must be a non-empty string.')
+    }
+    this.providers.set(name, provider)
+  }
+
+  /**
    * One-shot chat: send the messages, await the full reply.
    *
    * Accepts either a bare prompt string (treated as a single

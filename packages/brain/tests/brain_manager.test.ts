@@ -216,3 +216,32 @@ describe('BrainManager — countTokens()', () => {
     expect(await brain.countTokens('hello')).toBeNull()
   })
 })
+
+// ─── extend() ────────────────────────────────────────────────────────────
+
+describe('BrainManager — extend()', () => {
+  test('registers a post-construction provider that routing can resolve', async () => {
+    const a = new StubProvider('a')
+    const brain = new BrainManager({ default: 'a', providers: { a } })
+    const custom = new StubProvider('custom')
+    brain.extend('custom', custom)
+    await brain.chat('q', { provider: 'custom' })
+    expect(custom.chatCalls).toHaveLength(1)
+  })
+
+  test('overwrites any existing provider under the same name', async () => {
+    const a = new StubProvider('a')
+    const b = new StubProvider('b')
+    const brain = new BrainManager({ default: 'a', providers: { a } })
+    brain.extend('a', b)
+    await brain.chat('q')
+    expect(a.chatCalls).toHaveLength(0)
+    expect(b.chatCalls).toHaveLength(1)
+  })
+
+  test('throws on empty name', () => {
+    const a = new StubProvider('a')
+    const brain = new BrainManager({ default: 'a', providers: { a } })
+    expect(() => brain.extend('', a)).toThrow(/non-empty string/)
+  })
+})

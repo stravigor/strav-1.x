@@ -155,12 +155,7 @@ class SocialAppProvider extends ServiceProvider {
     app.singleton(
       SocialAccountRepository,
       (c) =>
-        new SocialAccountRepository(
-          c.resolve(PostgresDatabase),
-          c.resolve(EventBus),
-          c.resolve(SchemaRegistry),
-          c.resolve(Cipher),
-        ),
+        new SocialAccountRepository({ db: c.resolve(PostgresDatabase), events: c.resolve(EventBus), registry: c.resolve(SchemaRegistry), cipher: c.resolve(Cipher) }),
     )
   }
 }
