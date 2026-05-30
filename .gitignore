@@ -23,6 +23,7 @@ storage/uploads/
 .env
 .env.local
 .env.*.local
+.env.test
 
 # Bun
 .bun-cache/

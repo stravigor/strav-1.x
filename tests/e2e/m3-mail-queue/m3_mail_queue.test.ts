@@ -39,7 +39,7 @@ import {
   type MailConfig,
   MailManager,
   type Message,
-} from '@strav/signal'
+} from '@strav/mail'
 import {
   createTestDatabase,
   isPostgresAvailable,
@@ -99,7 +99,7 @@ describe.skipIf(!PG_AVAILABLE)('M3 e2e: queue → Mailable → ArrayTransport', 
     // do the same in production).
     const { ConfigProvider, LoggerProvider } = await import('@strav/kernel')
     const { DatabaseProvider, PostgresDatabase: PgDb } = await import('@strav/database')
-    const { MailProvider } = await import('@strav/signal')
+    const { MailProvider } = await import('@strav/mail')
 
     app = new Application()
     app.useProviders([

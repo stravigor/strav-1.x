@@ -8,6 +8,6 @@
     "@strav/kernel": "workspace:*",
     "@strav/database": "workspace:*",
     "@strav/queue": "workspace:*",
-    "@strav/signal": "workspace:*"
+    "@strav/mail": "workspace:*"
   }
 }

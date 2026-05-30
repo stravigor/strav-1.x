@@ -1,6 +1,6 @@
-# @strav/signal — API Reference
+# @strav/mail — API Reference
 
-> **Status:** Mail core + `Mailable` queue-dispatch + production HTTP transports (Resend, SendGrid, Mailgun) shipped. All transports are pure-fetch (no SDK deps, no nodemailer). Notifications + broadcast + SSE + inbound parsers follow in later slices.
+> **Status:** Outbound mail core + `Mailable` queue-dispatch + production HTTP transports (Resend, SendGrid, Mailgun) + Postmark & Mailgun inbound webhook parsers shipped. All pure-fetch (no SDK deps, no nodemailer). Multi-channel notification fan-out lives in `@strav/notification`.
 
 ## `Message`
 
@@ -233,6 +233,60 @@ The `h:` prefix is Mailgun's convention for "add this as a real outbound header"
 
 **Failure.** Same shape as Resend / SendGrid — `MailTransportError` with `context.provider = 'mailgun'`, plus the same `status` / `retryable` / `providerError` fields.
 
+## `AlibabaDmTransport`
+
+```ts
+class AlibabaDmTransport implements Transport {
+  constructor(opts: AlibabaDmTransportOptions)
+  send(message: Message): Promise<void>
+}
+
+interface AlibabaDmTransportOptions {
+  accessKeyId: string                            // Alibaba Cloud AccessKey ID
+  accessKeySecret: string                        // Alibaba Cloud AccessKey Secret
+  accountName: string                            // verified DirectMail sender (set in DM console)
+  endpoint?: string                              // default 'https://dm.aliyuncs.com'
+  tagName?: string                               // optional DM TagName for every send
+  clickTrace?: boolean                           // enable DM click-tracking; default false
+  fetch?: typeof fetch                           // override for tests
+  now?: () => Date                               // deterministic clock for tests
+  nonce?: () => string                           // deterministic SignatureNonce for tests
+}
+```
+
+Sends mail via Alibaba Cloud DirectMail's `SingleSendMail` RPC API. POSTs `application/x-www-form-urlencoded` to the endpoint URL. Use this for senders deployed inside Alibaba Cloud or targeting Chinese / South-East Asian inboxes — domestic deliverability to QQ, 163, NetEase and SEA-region ISPs is markedly better than Western providers.
+
+**Auth.** RPC v1 signature — HMAC-SHA1 over a percent-encoded, sorted-key canonical query string, keyed by `{accessKeySecret}&`. Computed per request; no SDK dependency.
+
+**Region routing.** DirectMail is region-scoped. Defaults to the global endpoint (`https://dm.aliyuncs.com`); override `endpoint` for SEA deployments:
+
+| Region | Endpoint |
+|---|---|
+| Singapore | `https://dm.ap-southeast-1.aliyuncs.com` |
+| Sydney | `https://dm.ap-southeast-2.aliyuncs.com` |
+| Kuala Lumpur | `https://dm.ap-southeast-3.aliyuncs.com` |
+| Jakarta | `https://dm.ap-southeast-5.aliyuncs.com` |
+
+**`accountName` vs `message.from`.** DirectMail enforces that every send originate from an `AccountName` pre-registered in the DM console — there is no per-message override of the envelope sender. Configure the verified account on the transport; use `message.from.name` to vary the display name per send.
+
+**Field mapping.**
+
+| `Message` | DM RPC field |
+|---|---|
+| `to` | `ToAddress` (comma-joined, up to 100) |
+| `from.name` | `FromAlias` |
+| `subject` | `Subject` |
+| `html` / `text` | `HtmlBody` / `TextBody` |
+| `replyTo` | `ReplyToAddress=true` + `ReplyAddress` (+ `ReplyAddressAlias`) — first reply-to only |
+
+**Limitations imposed by `SingleSendMail`** — the transport throws `MailTransportError` (non-retryable) before the network round-trip rather than silently dropping data:
+
+- **No cc / bcc.** The API has no cc / bcc fields. Merging into `to` would expose recipient addresses to each other — send a separate message per recipient set instead.
+- **No attachments.** Use SMTP relay or `BatchSendMail` with a template-uploaded file if you need attachments.
+- **No custom headers.** `message.headers` is silently dropped. Use the `tagName` option for tagging — DM's analytics consume `TagName`, not arbitrary headers.
+
+**Failure.** Same shape as Resend / SendGrid / Mailgun — `MailTransportError` with `context.provider = 'alibaba'`, plus `status` / `retryable` / `providerError`. DM error bodies are JSON of the form `{ Code, Message, RequestId, HostId }` and land verbatim in `context.providerError`.
+
 ## `MailTransportError`
 
 ```ts
@@ -270,9 +324,18 @@ type MailTransportConfig =
   | { driver: 'resend'; apiKey: string; endpoint?: string }
   | { driver: 'sendgrid'; apiKey: string; endpoint?: string }
   | { driver: 'mailgun'; apiKey: string; domain: string; endpoint?: string }
+  | {
+      driver: 'alibaba'
+      accessKeyId: string
+      accessKeySecret: string
+      accountName: string
+      endpoint?: string
+      tagName?: string
+      clickTrace?: boolean
+    }
 ```
 
-The `apiKey` (and Mailgun's `domain`) field is validated at construction — an empty string throws `ConfigError` at provider boot, never at first send. Pull keys from env vars in `config/mail.ts`; never hard-code them.
+Each driver's required fields are validated at construction — empty `apiKey` (Resend / SendGrid / Mailgun), missing `domain` (Mailgun), missing `accessKeyId` / `accessKeySecret` / `accountName` (Alibaba) all throw `ConfigError` at provider boot, never at first send. Pull credentials from env vars in `config/mail.ts`; never hard-code them.
 
 The shape `config/mail.ts` exports. Validated eagerly by `MailManager` at construction — bad config throws `ConfigError` at provider boot, never at first send.
 
@@ -364,7 +427,7 @@ const registry = new JobRegistry().register(WelcomeEmail)
 Simple — no extra deps:
 
 ```ts
-import { Mailable } from '@strav/signal'
+import { Mailable } from '@strav/mail'
 
 class WelcomeEmail extends Mailable<{ name: string }> {
   static override readonly jobName = 'mail.welcome'
@@ -385,7 +448,7 @@ With extra deps:
 
 ```ts
 import { inject } from '@strav/kernel'
-import { Mailable, MailManager } from '@strav/signal'
+import { Mailable, MailManager } from '@strav/mail'
 
 @inject()
 class InvoiceEmail extends Mailable<{ userId: string }> {
@@ -451,7 +514,7 @@ class WelcomeEmail extends Mailable<{ name: string }> {
 
 ```ts
 // config/mail.ts
-import type { MailConfig } from '@strav/signal'
+import type { MailConfig } from '@strav/mail'
 
 function defaultTransport(): string {
   if (process.env.NODE_ENV === 'test') return 'array'
@@ -492,15 +555,113 @@ export default {
 } satisfies LoggerConfig
 ```
 
+## Inbound webhooks
+
+Provider webhooks normalise to a single `ParsedInboundMail` shape so application code stays provider-agnostic.
+
+### `ParsedInboundMail`
+
+```ts
+interface ParsedInboundMail {
+  from: ParsedInboundAddress
+  to: ParsedInboundAddress[]
+  cc: ParsedInboundAddress[]
+  bcc: ParsedInboundAddress[]
+  replyTo?: ParsedInboundAddress
+  subject: string
+  text?: string
+  html?: string
+  date?: Date
+  headers: Record<string, string>            // lowercased names; last value wins on duplicates
+  attachments: ParsedInboundAttachment[]
+  messageId?: string                          // RFC 5322 Message-ID, angle brackets stripped
+  inReplyTo?: string                          // angle brackets stripped
+  references: string[]                        // each element has angle brackets stripped
+  isAutoGenerated: boolean                    // honor before any auto-reply — mail-loop guard
+  providerMessageId?: string                  // e.g. Postmark MessageID
+}
+
+interface ParsedInboundAddress {
+  address: string
+  name?: string
+}
+
+interface ParsedInboundAttachment {
+  filename: string
+  contentType: string
+  content: Buffer
+  size: number
+  cid?: string                                // Content-ID for inline images, brackets stripped
+}
+```
+
+### `InboundWebhookInput` / `InboundWebhookParser`
+
+```ts
+interface InboundWebhookInput {
+  body: string | Buffer                       // Buffer preferred — signature checks need exact bytes
+  headers: Record<string, string | undefined> // keys MUST be lowercased
+}
+
+interface InboundWebhookParser {
+  parse(input: InboundWebhookInput): Promise<ParsedInboundMail>
+}
+```
+
+### `PostmarkInboundParser`
+
+```ts
+import { PostmarkInboundParser } from '@strav/mail'
+
+const parser = new PostmarkInboundParser()
+const mail = await parser.parse({ body: rawJsonBody, headers: req.headers })
+```
+
+Postmark does NOT sign inbound webhooks. Protect the webhook URL at the HTTP layer (Basic auth, IP allow-list) before invoking `parse()`.
+
+- Throws `MailInboundError` on malformed JSON.
+- Reads RFC-5322 `Message-Id` from `Headers[]`; `payload.MessageID` is exposed as `providerMessageId`.
+- Decodes base64 `Attachments[].Content` into `Buffer`.
+
+### `MailgunInboundParser`
+
+```ts
+import { MailgunInboundParser } from '@strav/mail'
+
+const parser = new MailgunInboundParser({
+  webhookSigningKey: env.MAILGUN_SIGNING_KEY,  // distinct from the sending API key
+  maxAgeSeconds: 300,                          // default 300 — replay window
+})
+
+const mail = await parser.parse({ body: rawMultipartBody, headers: req.headers })
+```
+
+- Throws `ConfigError` if `webhookSigningKey` is empty.
+- Throws `MailInboundError` if `content-type` is not `multipart/*` or the body is unparseable.
+- Throws `AuthError` on missing signature/token/timestamp, signature mismatch, or timestamps outside the replay window.
+- Signature verification is constant-time (`crypto.timingSafeEqual`).
+- Walks `attachment-count` + `attachment-N` fields and reads multipart parts as `Buffer`.
+
+### `isAutoGeneratedMessage(headers)`
+
+```ts
+import { isAutoGeneratedMessage } from '@strav/mail'
+```
+
+True when any of `Auto-Submitted` (≠ `no`), `Precedence: bulk|junk|list`, or `X-Auto-Response-Suppress` is set. Honour this before any auto-reply path — skipping it creates mail loops.
+
+### `MailInboundError`
+
+`StravError` subclass — `code: 'mail-inbound-error'`, `status: 400`. Raised when the webhook payload itself is malformed. Signature / signing-key failures use `AuthError`; misconfiguration uses `ConfigError`.
+
 ## What this doesn't ship yet
 
-The mail layer covers synchronous + queued + production HTTP delivery across three transports (Resend, SendGrid, Mailgun). All pure-fetch, no SDK deps, no `nodemailer`.
+The mail layer covers synchronous + queued + production HTTP delivery across four transports (Resend, SendGrid, Mailgun, Alibaba DirectMail) plus Postmark + Mailgun inbound webhook parsers. All pure-fetch, no SDK deps, no `nodemailer`.
 
 **No SMTP transport.** SMTP requires either a heavyweight Node-stdlib dep (`nodemailer`) or hand-rolled wire-protocol code over `Bun.connect`. Strav 1.x deliberately stays pure-fetch — apps that need SMTP send through a transactional provider (Resend / SendGrid / Mailgun) that fronts the SMTP relay for them, or write their own `Transport` implementation.
 
-Still to land in subsequent signal slices:
+Still to land:
 
-- **Inbound parsers** — Postmark + Mailgun webhook bodies → normalised `InboundMessage`.
 - **Notifications** — `BaseNotification` + `Notifiable` mixin + `notifications` table + channel drivers (mail, database, webhook, broadcast).
 - **Broadcast** — pub/sub primitive + channel auth.
 - **SSE** — kernel-level handler + `AsyncIterable<SSEEvent>` runtime.

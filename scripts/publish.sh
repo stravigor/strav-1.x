@@ -63,7 +63,7 @@ ALL_PACKAGES=(
   view queue social payment machine
 
   # Tier 4 — depend on tier 3
-  signal durable brain
+  mail durable brain
 
   # Tier 5 — depend on tier 4
   cli rag

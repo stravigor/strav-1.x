@@ -33,6 +33,7 @@ import { ConfigError, type Container, type Logger, type LogManager } from '@stra
 import type { MailableClass, MailablePayloadOf } from './mailable.ts'
 import type { MailRecipient, Message } from './message.ts'
 import type { Transport } from './transport.ts'
+import { AlibabaDmTransport } from './transports/alibaba_transport.ts'
 import { ArrayTransport } from './transports/array_transport.ts'
 import { LogTransport } from './transports/log_transport.ts'
 import { MailgunTransport } from './transports/mailgun_transport.ts'
@@ -87,6 +88,27 @@ interface MailgunTransportConfig {
   endpoint?: string
 }
 
+interface AlibabaDmTransportConfig {
+  driver: 'alibaba'
+  /** Alibaba Cloud AccessKey ID. */
+  accessKeyId: string
+  /** Alibaba Cloud AccessKey Secret. */
+  accessKeySecret: string
+  /** Verified DirectMail sender account (set in the DM console). */
+  accountName: string
+  /**
+   * Override the base URL — defaults to `https://dm.aliyuncs.com` (global).
+   * SEA: `https://dm.ap-southeast-1.aliyuncs.com` (Singapore),
+   * `https://dm.ap-southeast-3.aliyuncs.com` (Kuala Lumpur),
+   * `https://dm.ap-southeast-5.aliyuncs.com` (Jakarta).
+   */
+  endpoint?: string
+  /** Optional `TagName` attached to every send. */
+  tagName?: string
+  /** Enable DM click-tracking. Default false. */
+  clickTrace?: boolean
+}
+
 /**
  * Discriminated union — every shipping driver gets an entry. Adding a
  * new driver here + a new `case` in `buildTransport` is the contract;
@@ -98,6 +120,7 @@ export type MailTransportConfig =
   | ResendTransportConfig
   | SendGridTransportConfig
   | MailgunTransportConfig
+  | AlibabaDmTransportConfig
 
 export interface MailConfig {
   /**
@@ -244,6 +267,15 @@ export class MailManager {
           domain: cfg.domain,
           endpoint: cfg.endpoint,
         })
+      case 'alibaba':
+        return new AlibabaDmTransport({
+          accessKeyId: cfg.accessKeyId,
+          accessKeySecret: cfg.accessKeySecret,
+          accountName: cfg.accountName,
+          endpoint: cfg.endpoint,
+          tagName: cfg.tagName,
+          clickTrace: cfg.clickTrace,
+        })
     }
   }
 
@@ -253,7 +285,7 @@ export class MailManager {
         `Mail: default transport "${config.default}" is not defined in transports.`,
       )
     }
-    const knownDrivers = new Set(['array', 'log', 'resend', 'sendgrid', 'mailgun'])
+    const knownDrivers = new Set(['array', 'log', 'resend', 'sendgrid', 'mailgun', 'alibaba'])
     for (const [name, cfg] of Object.entries(config.transports)) {
       if (!knownDrivers.has(cfg.driver)) {
         throw new ConfigError(
@@ -272,6 +304,18 @@ export class MailManager {
         throw new ConfigError(
           `Mail: transport "${name}" (mailgun) requires a non-empty \`domain\`.`,
         )
+      }
+      if (cfg.driver === 'alibaba') {
+        if (!cfg.accessKeyId || !cfg.accessKeySecret) {
+          throw new ConfigError(
+            `Mail: transport "${name}" (alibaba) requires \`accessKeyId\` and \`accessKeySecret\`.`,
+          )
+        }
+        if (!cfg.accountName) {
+          throw new ConfigError(
+            `Mail: transport "${name}" (alibaba) requires \`accountName\` — the verified DirectMail sender.`,
+          )
+        }
       }
     }
   }

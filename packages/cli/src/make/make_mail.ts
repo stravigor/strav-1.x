@@ -11,7 +11,7 @@ export class MakeMail extends MakeCommand {
 
   protected stub(name: string): string {
     const cls = pascal(name)
-    return `import { Mailable, type Message } from '@strav/signal'
+    return `import { Mailable, type Message } from '@strav/mail'
 
 export class ${cls} extends Mailable<unknown> {
   build(payload: unknown): Message {

@@ -35,7 +35,7 @@ Cross-package symbol matrix. Apps assembling Strav often need to remember which 
 | `MagicLink`, `TotpManager` | `@strav/auth` | Magic-link + TOTP (M3.5 auth-extras). |
 | **Queue + signal + view** | | |
 | `Queue`, `Job`, `Worker`, `DatabaseQueue`, `SyncQueue` | `@strav/queue` | Job dispatch. |
-| `Signal`, `signalEmail`, transactional mail | `@strav/signal` | Mail / transactional notifications. Composes with `@strav/view`. |
+| `Signal`, `signalEmail`, transactional mail | `@strav/mail` | Mail / transactional notifications. Composes with `@strav/view`. |
 | `View`, `template`, `render` | `@strav/view` | Template rendering. |
 | **Brain (LLM)** | | |
 | `BrainManager`, `BrainProvider`, `Agent`, `BrainError` | `@strav/brain` | LLM abstraction. |

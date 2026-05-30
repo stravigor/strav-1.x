@@ -59,7 +59,7 @@ export class MagicLinkController {
     if (!user) return ctx.response.ok({ sent: true })  // don't leak existence
 
     const url = await this.links.create(user.id, { ttl: '15m', redirectTo: '/dashboard' })
-    await SendMagicLinkEmail.dispatch({ email, url })  // @strav/signal + @strav/queue
+    await SendMagicLinkEmail.dispatch({ email, url })  // @strav/mail + @strav/queue
     return ctx.response.ok({ sent: true })
   }
 
